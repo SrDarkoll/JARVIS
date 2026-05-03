@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="JARVIS icon">
+  <rect width="256" height="256" rx="48" fill="#0a0f1a"/>
+  <circle cx="128" cy="128" r="86" fill="none" stroke="#22d3ee" stroke-width="12"/>
+  <circle cx="128" cy="128" r="44" fill="#22d3ee" opacity="0.18"/>
+  <path d="M128 68v36M128 152v36M68 128h36M152 128h36" stroke="#67e8f9" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="128" cy="128" r="12" fill="#67e8f9"/>
+</svg>

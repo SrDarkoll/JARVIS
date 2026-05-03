@@ -1,0 +1,528 @@
+import sys
+import os
+
+sys.stdout.reconfigure(encoding="utf-8")
+import io
+import wave
+
+from utils.jarvis_text import repair_unicode, normalize_admin_treatment
+
+import asyncio
+import hmac
+import importlib.util
+import json
+import re
+import threading
+import tempfile
+import time as _time
+import traceback
+from datetime import datetime
+from urllib.parse import urlparse
+
+import psutil  # pyright: ignore[reportMissingModuleSource]
+import requests as http_requests  # pyright: ignore[reportMissingModuleSource]
+from quart import (
+    Quart,
+    Response,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+    send_file,
+    send_from_directory,
+)  # pyright: ignore[reportMissingImports]
+from langchain_core.messages import HumanMessage  # pyright: ignore[reportMissingImports]
+from telegram import Bot, Update  # pyright: ignore[reportMissingImports]
+from telegram.ext import Application, ContextTypes, MessageHandler, filters  # pyright: ignore[reportMissingImports]
+
+from core import core_tools
+from core import jarvis_brain
+from core.brain import brain_state
+from services import security_manager
+from utils.jarvis_auth import (
+    verify_authorization as _verify_authorization,
+    authorize_by_biometrics as _authorize_by_biometrics,
+    revoke_authorization as _revoke_authorization,
+    get_auth_snapshot as _get_auth_snapshot,
+    activate_guest_profile as _activate_guest_profile,
+)
+from core import jarvis_config
+from core.jarvis_config import (
+    BASE_DIR,
+    BRIEFING_HOUR,
+    BRIEFING_TELEGRAM_SENT_FILE,
+    HEARTBEAT_INTERVAL,
+    MODEL_PATH,
+    NEWSAPI_KEY,
+    OBS_DIR,
+    PLUGINS_DIR,
+    PROACTIVE_ENABLED,
+    PROACTIVE_COOLDOWN,
+    ROOT_DIR,
+    SECURITY_AUDIT_FILE,
+    SECURITY_POLICY_FILE,
+    SRC_DIR,
+    TELEGRAM_CHAT_ID,
+    TELEGRAM_TOKEN,
+    TTS_PRONUN_FILE,
+    get_cors_origins,
+)
+from core.app_config import init_app_config, get_app_config
+from core.runtime_logger import log_info, log_warning, log_error
+from core.jarvis_observability import obs_event, obs_inc, obs_snapshot, obs_tail
+from core.service_container import services
+from core.jarvis_state import heartbeat_state, reminders_lock
+from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
+from engines.tts_engine import TTSEngine
+from services.telegram_manager import telegram_manager
+from services.monitoring_service import monitoring_service
+from api.tts_routes import tts_bp, init_tts_routes, TTSRoutesConfig
+from api.api_routes import api_bp, init_api_routes
+from api.chat_routes import chat_bp, init_chat_routes, ChatRoutesConfig
+from api.security_routes import security_bp, init_security_routes, SecurityRoutesConfig
+from api.voice_routes import voice_bp, init_voice_routes, VoiceRoutesConfig
+from api.status_routes import status_bp, init_status_routes, StatusRoutesConfig
+from api.language_routes import language_bp, init_language_routes
+from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
+
+# SAFE IMPORT OF BIOMETRICS
+try:
+    from voice import voice_id_motor, VOICE_ID_AVAILABLE
+    from voice.pipeline import (
+        normalize_to_wav as _normalize_to_wav,
+        bytes_are_valid_wav as _bytes_are_valid_wav,
+        transcribe_audio,
+        slugify_guest_name as _slugify_guest_name,
+        normalize_guest_name as _normalize_guest_name,
+        is_owner_alias as _is_owner_alias,
+        cleanup_pending_voice_registration as _cleanup_pending_voice_registration,
+        cancel_pending_voice_registration as _cancel_pending_voice_registration,
+        get_pending as _get_pending,
+        set_pending as _set_pending,
+        pop_pending as _pop_pending,
+        RESERVED_OWNER_ALIASES,
+        OWNER_SIMILARITY_OVERRIDE,
+        _PENDING_VOICE_REGISTRATION,
+        normalize_transcript_hint as _normalize_transcript_hint,
+        reconstruct_transcription_by_pauses as _reconstruct_transcription_by_pauses,
+        hint_needs_retry_whisper as _hint_needs_whisper,
+        normalize_transcript_confidence as _normalize_transcript_confidence,
+    )
+
+    BIOMETRICS_ENABLED = bool(VOICE_ID_AVAILABLE)
+except ImportError as _bio_err:
+    print(f"[VOICE] Voice package not found: {_bio_err}. Biometrics disabled.")
+    voice_id_motor = None
+    BIOMETRICS_ENABLED = False
+    transcribe_audio = lambda audio, hint="", whisper_model=None: hint
+
+# --- COMPATIBILITY SHIMS ---
+DEFAULT_PROFILE_ID = jarvis_brain.DEFAULT_PROFILE_ID
+SHARED_PROFILE_ID = "shared"
+
+# Import jarvis_settings for language hot-swap
+import sys as _sys
+if jarvis_config.ROOT_DIR not in _sys.path:
+    _sys.path.insert(0, jarvis_config.ROOT_DIR)
+try:
+    import jarvis_settings
+except ImportError:
+    class jarvis_settings:
+        ASSISTANT_NAME = "J.A.R.V.I.S."
+        ASSISTANT_FULLNAME = "Just A Rather Very Intelligent System"
+        OWNER_TITLE = "Administrator"
+        COMPANY_NAME = "YOUR_COMPANY"
+        LOCATION = "YOUR_CITY, YOUR_COUNTRY"
+        LANGUAGE = "en"
+        LOCALE = "en-US"
+
+APP_CONFIG = init_app_config(jarvis_settings)
+for _cfg_warn in APP_CONFIG.validation_warnings:
+    log_warning("App config validation warning", detail=_cfg_warn)
+
+_real_transcribe_audio = transcribe_audio
+
+
+def transcribe_audio(
+    audio_bytes,
+    transcript_hint="",
+    whisper_model=None,
+    transcript_confidence=None,
+):
+    wm = whisper_model or globals().get("whisper_model")
+    hint = _normalize_transcript_hint(transcript_hint)
+    hint_conf = _normalize_transcript_confidence(transcript_confidence)
+    # "Doubtful" logic for test compatibility (Fix B)
+    is_doubtful = "?" in hint or "¿" in hint or len(hint.split()) < 3
+    is_doubtful = _hint_needs_whisper(hint, hint_conf)
+    if is_doubtful and wm:
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.write(fd, audio_bytes)
+            os.close(fd)
+            try:
+                res = _transcribe_with_whisper_file(tmp_path)
+                if res:
+                    return res
+            finally:
+                try:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    return _real_transcribe_audio(
+        audio_bytes,
+        transcript_hint,
+        whisper_model=wm,
+        transcript_confidence=hint_conf,
+    )
+
+
+def _transcribe_with_whisper_file(wav_path):
+    wm = globals().get("whisper_model")
+    if not wm:
+        return ""
+    try:
+        segments, _ = wm.transcribe(
+            wav_path,
+            language=get_current_language(),
+            vad_filter=True,
+            beam_size=1,
+            condition_on_previous_text=False,
+        )
+        return " ".join([s.text for s in segments]).strip()
+    except Exception:
+        return ""
+
+
+# -------------------------------
+
+
+try:
+    from faster_whisper import WhisperModel  # pyright: ignore[reportMissingImports]
+except ImportError:
+    WhisperModel = None
+
+SECURITY_POLICY_DEFAULT = {
+    "strict_mode": False,
+    "blocked_tools": [],
+    "allowed_web_domains": [
+        "google.com",
+        "youtube.com",
+        "facebook.com",
+        "instagram.com",
+        "x.com",
+        "mail.google.com",
+        "spotify.com",
+        "search.brave.com",
+    ],
+    "allow_system_browser_fallback": False,
+    "safe_apps": [
+        "chrome",
+        "google chrome",
+        "firefox",
+        "edge",
+        "microsoft edge",
+        "word",
+        "excel",
+        "powerpoint",
+        "paint",
+        "cmd",
+        "terminal",
+        "browser",
+        "task manager",
+        "discord",
+        "vscode",
+        "visual studio code",
+        "spotify",
+        "steam",
+        "obs",
+        "opera",
+        "brave",
+    ],
+    "max_tool_errors_5m": 12,
+    "tool_policies": {},
+}
+
+SECURITY_POLICY: dict = {}
+SECURITY_STATE = {
+    "last_update": "",
+    "last_block_reason": "",
+    "last_block_ts": "",
+}
+
+PROACTIVE_STATE = {
+    "enabled": True,
+    "cooldown_seconds": 600,
+    "alerts": [],
+    "last_alert_by_key": {},
+    "tool_errors_window": [],
+    "last_health_check": "",
+}
+
+SECURITY_LOCK = threading.RLock()
+PROACTIVE_LOCK = threading.RLock()
+TTS_LOCK = threading.RLock()
+TTS_API_LOCK = threading.RLock()
+BRIEFING_TELEGRAM_LOCK = threading.RLock()
+WARN_ONCE_LOCK = threading.RLock()
+
+WEATHER_UPDATE_LOCK = threading.RLock()
+
+_WARN_ONCE_ERRORS: dict[str, str] = {}
+try:
+    TTS_MAX_CHARS = int((os.getenv("JARVIS_TTS_MAX_CHARS") or "420").strip() or "420")
+except Exception as e:
+    print(f"[WARN] TTS_MAX_CHARS parse error: {e}")
+    TTS_MAX_CHARS = 420
+
+
+def _warn_once(key: str, err: Exception | str) -> None:
+    msg = str(err or "").strip() or "unknown error"
+    with WARN_ONCE_LOCK:
+        prev = _WARN_ONCE_ERRORS.get(key)
+        if prev == msg:
+            return
+        _WARN_ONCE_ERRORS[key] = msg
+    log_warning("Runtime warning", key=key, error=msg)
+    try:
+        obs_event("internal_warning", key=key, error=msg[:300])
+    except Exception as e:
+        log_warning("obs_event failed in _warn_once", error=str(e))
+
+
+def _install_runtime_error_hooks() -> None:
+    def _thread_hook(args):
+        try:
+            name = getattr(args.thread, "name", "thread")
+            exc = getattr(args, "exc_value", None)
+            tb = getattr(args, "exc_traceback", None)
+            log_error("Unhandled thread exception", thread=name, error=str(exc))
+            if tb:
+                traceback.print_exception(args.exc_type, exc, tb)
+            obs_event("thread_unhandled_exception", thread=name, error=str(exc)[:300])
+        except Exception as e:
+            log_warning("obs_event failed in thread hook", error=str(e))
+
+    def _sys_hook(exc_type, exc_value, exc_tb):
+        try:
+            log_error("Unhandled process exception", error=str(exc_value))
+            traceback.print_exception(exc_type, exc_value, exc_tb)
+            obs_event("process_unhandled_exception", error=str(exc_value)[:300])
+        except Exception as e:
+            log_warning("obs_event failed in sys hook", error=str(e))
+
+    threading.excepthook = _thread_hook
+    sys.excepthook = _sys_hook
+
+
+_install_runtime_error_hooks()
+
+from core.jarvis_context import context
+
+security_manager.inject_dependencies(
+    {
+        "_obs_inc": obs_inc,
+        "_obs_event": obs_event,
+        "_repair_unicode": repair_unicode,
+        "_invoke_tool": None,
+        "_reload_plugins_runtime": None,
+        "send_telegram_sync": None,
+        "_normalize_web_destination": core_tools._normalize_web_destination,
+        "verify_authorization": _verify_authorization,
+        "normalize_admin_treatment": normalize_admin_treatment,
+        "SECURITY_POLICY_DEFAULT": SECURITY_POLICY_DEFAULT,
+        "SECURITY_POLICY_FILE": SECURITY_POLICY_FILE,
+        "SECURITY_AUDIT_FILE": SECURITY_AUDIT_FILE,
+        "SECURITY_POLICY": SECURITY_POLICY,
+        "SECURITY_STATE": SECURITY_STATE,
+        "SECURITY_LOCK": SECURITY_LOCK,
+        "PROACTIVE_STATE": PROACTIVE_STATE,
+        "PROACTIVE_LOCK": PROACTIVE_LOCK,
+    }
+)
+
+_load_security_policy = security_manager._load_security_policy
+_security_snapshot = security_manager._security_snapshot
+_security_tail = security_manager._security_tail
+_proactive_snapshot = security_manager._proactive_snapshot
+_update_security_policy = security_manager._update_security_policy
+_execute_control_action = security_manager._execute_control_action
+_proactive_push_alert = security_manager._proactive_push_alert
+_load_security_policy()
+
+with PROACTIVE_LOCK:
+    _app_cfg = get_app_config()
+    PROACTIVE_STATE["enabled"] = _app_cfg.toggles.proactive_enabled
+    PROACTIVE_STATE["cooldown_seconds"] = _app_cfg.toggles.proactive_cooldown
+
+_cors_origins = list(get_app_config().cors_origins)
+
+from quart_cors import cors
+
+# Initialize the Quart application
+app = Quart(
+    __name__,
+    template_folder=os.path.join(SRC_DIR, "frontend", "templates"),
+    static_folder=os.path.join(SRC_DIR, "frontend", "static"),
+    static_url_path="/static",
+)
+app = cors(app, allow_origin=_cors_origins)
+app.register_blueprint(tts_bp)
+app.register_blueprint(api_bp)
+app.register_blueprint(chat_bp)
+app.register_blueprint(security_bp)
+app.register_blueprint(voice_bp)
+app.register_blueprint(status_bp)
+app.register_blueprint(language_bp)
+
+_LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost", ""}
+_CRITICAL_API_PATHS = {
+    "/api/auth_status",
+    "/api/control/quick",
+    "/api/language",
+    "/api/observability",
+    "/api/operator/status",
+    "/api/profiles",
+    "/api/plugins",
+    "/api/plugins/reload",
+    "/api/proactive",
+    "/api/proactive/clear",
+    "/api/security",
+    "/api/security/policy",
+    "/api/setup/status",
+    "/api/tts/pronunciation",
+    "/api/tts/pronunciation/reset",
+    "/api/voice/registration/admin/capture",
+    "/api/voice/registration/admin/init",
+}
+
+
+def _is_loopback(addr: str | None) -> bool:
+    return str(addr or "").strip().lower() in _LOOPBACK_ADDRS
+
+
+def _is_critical_api_path(path: str) -> bool:
+    normalized = (path or "").rstrip("/") or "/"
+    if normalized in _CRITICAL_API_PATHS:
+        return True
+    return any(normalized.startswith(prefix + "/") for prefix in _CRITICAL_API_PATHS)
+
+
+@app.before_request
+async def _require_token_for_critical_routes():
+    if request.method == "OPTIONS":
+        return None
+    if not _is_critical_api_path(request.path):
+        return None
+
+    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
+    if configured_token:
+        supplied = (request.headers.get("X-JARVIS-API-TOKEN") or "").strip()
+        if hmac.compare_digest(supplied, configured_token):
+            return None
+        obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
+        return jsonify({"error": "Invalid or missing token."}), 401
+
+    if _is_loopback(request.remote_addr):
+        return None
+
+    obs_event("api_token_required", path=request.path, ip=request.remote_addr)
+    return jsonify({"error": "Token required for critical routes."}), 401
+
+context.update(
+    {
+        "app": app,
+        "obs_inc": obs_inc,
+        "obs_event": obs_event,
+        "news_cache": services.news_cache,
+        "weather_cache": services.weather_cache,
+        "reminders": services.get_reminders(),
+        "reminders_lock": reminders_lock,
+    }
+)
+
+IP_LAST_CALL = {}
+CHAT_LIMIT_SECONDS = 1.0
+TTS_LIMIT_SECONDS = 0.35
+IP_LAST_CALL_MAX_SIZE = 10000
+_IP_LAST_CALL_LOCK = threading.Lock()
+
+
+def _check_rate_limit(ip, limit, endpoint):
+    ip_norm = (str(ip or "unknown")).strip().lower()
+    if ip_norm in {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"}:
+        return True, 0.0
+    key = (ip_norm, endpoint)
+    now = _time.time()
+    with _IP_LAST_CALL_LOCK:
+        last = IP_LAST_CALL.get(key, 0.0)
+        elapsed = now - last
+        if elapsed < limit:
+            return False, max(0.0, limit - elapsed)
+        if len(IP_LAST_CALL) >= IP_LAST_CALL_MAX_SIZE:
+            oldest_entries = sorted(IP_LAST_CALL.items(), key=lambda x: x[1])[
+                : IP_LAST_CALL_MAX_SIZE // 4
+            ]
+            for old_key, _ in oldest_entries:
+                del IP_LAST_CALL[old_key]
+        IP_LAST_CALL[key] = now
+        return True, 0.0
+
+
+os.makedirs(OBS_DIR, exist_ok=True)
+os.makedirs(PLUGINS_DIR, exist_ok=True)
+
+from core.service_container import services
+
+services.obs_inc = obs_inc
+services.obs_event = obs_event
+services.repair_unicode = repair_unicode
+services.security_audit = security_manager._security_audit
+services.security_guard = security_manager._security_guard
+services.security_allow_fallback = security_manager._security_allow_system_browser_fallback
+services.proactive_tool_error = security_manager._proactive_register_tool_error
+services.reminders = services.get_reminders()
+services.reminders_lock = reminders_lock
+services.SRC_DIR = SRC_DIR
+services.ROOT_DIR = ROOT_DIR
+
+# Initialize the brain
+jarvis_brain.init_brain(app)
+
+# Inject dependencies from the brain
+services.invoke_tool = jarvis_brain._invoke_tool
+services.reload_plugins = jarvis_brain._reload_plugins_runtime
+
+# Synchronize with core_tools (shim) for legacy plugins if necessary
+core_tools.inject_dependencies(
+    {"news_cache": services.news_cache, "weather_cache": services.weather_cache}
+)
+security_manager.inject_dependencies(
+    {
+        "_invoke_tool": jarvis_brain._invoke_tool,
+        "_reload_plugins_runtime": jarvis_brain._reload_plugins_runtime,
+    }
+)
+
+from core import jarvis_state
+
+DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
+memory_lock = jarvis_state.memory_lock
+_profiles_memory = jarvis_state._profiles_memory
+
+TTS_PRONUN_MAP: dict = {}
+
+
+def _normalize_tts_map(data: dict | None) -> dict:
+    source = data or {}
+    out = {}
+    for k, v in source.items():
+        key = repair_unicode(str(k or "")).strip().lower()
+        val = repair_unicode(str(v or "")).strip()
+        if key and val:
+            out[key] = val
+    return out

@@ -1,0 +1,113 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.pyc
+*.pyo
+*.pyd
+
+# Entorno virtual
+.env
+.env.*
+!.env.example
+.venv
+venv/
+ENV/
+
+# Local scratch / test runtime
+scratch/
+tmp/
+temp/
+
+# J.A.R.V.I.S. Logs & Cache
+src/backend/logs/
+src/backend/faiss_index/
+src/backend/*.db
+src/backend/*.sqlite
+src/backend/*.sqlite3
+src/backend/*.db-journal
+src/backend/*.db-shm
+src/backend/*.db-wal
+src/backend/*.jsonl
+src/backend/*.json
+!src/backend/utils/*.json
+src/backend/.cache*/
+src/backend/ultimo_briefing.json
+src/backend/tg_voice.ogg
+src/backend/debug_web.log
+*.log
+*.pid
+media/*.wav
+media/*.ogg
+media/*.mp3
+media/*.webm
+media/*.png
+media/*.jpg
+media/*.jpeg
+media/screenshots/
+!media/placeholder.ogg
+!media/favicon.svg
+!src/backend/plugins/*.json
+
+# IA cache / generated model artifacts
+models/rvc_voice/
+**/.cache/
+**/.cache/**
+.cache/huggingface/
+src/.cache/
+src/.cache/**
+src/.spotify_cache
+src/.spotify_cache/
+src/.spotify_cache/**
+src/backend/engines/.cache/
+src/backend/engines/.cache/**
+src/backend/.cache-jarvis/
+
+# Desktop shell runtime
+desktop_session.json
+WebView2/
+
+# IDEs
+.vscode/
+.idea/
+.claude/settings.local.json
+.claude/*.local.json
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# J.A.R.V.I.S. Datos Personales & Memoria
+memoria_jarvis*.json
+memoria_jarvis*.db
+tts_pronunciacion*.json
+voice_profiles/
+*.tmp
+*.bak
+*.swp
+*~
+# Spotify authentication tokens
+.cache-*
+.spotify_cache
+.spotify_cache/
+

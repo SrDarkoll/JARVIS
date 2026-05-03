@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:;">
+    <title>J.A.R.V.I.S. | HUD Central</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="/media/favicon.svg">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="hud-background">
+        <div class="hex-grid"></div>
+        <div class="scan-line-vertical"></div>
+        <div class="vignette-overlay"></div>
+    </div>
+
+    <div id="loader" class="loader-overlay" role="button" tabindex="0">
+        <div class="loader-content">
+            <div class="loader-ring"></div>
+            <h1 class="glitch-text" data-i18n="init_text" data-text="INICIALIZANDO J.A.R.V.I.S.">INICIALIZANDO J.A.R.V.I.S.</h1>
+            <div class="progress-bar-tech">
+                <div class="progress-fill"></div>
+            </div>
+            <p class="status-msg"><span data-i18n="boot_os">Arrancando Core OS v.1.0</span> <span class="blink">_</span></p>
+        </div>
+    </div>
+
+    <main id="app" class="hidden">
+        <header class="top-nav">
+            <div class="system-time">
+                <span id="clock" class="hud-font">00:00:00</span>
+                <span id="date" class="hud-font-alt">--/--/----</span>
+            </div>
+            <div class="stark-logo">
+                <video autoplay loop muted playsinline class="main-logo-video">
+                    <!-- Agrega tu propio video logo aqui: <source src="/media/tu_logo.mp4" type="video/mp4"> -->
+                    Logo Principal Animado
+                </video>
+            </div>
+            <div class="system-status">
+                <select id="lang-selector" class="tech-select">
+                    <option value="en">EN</option>
+                    <option value="es">ES</option>
+                </select>
+                <span class="status-indicator online"></span>
+                <span class="hud-font" data-i18n="system_online">SISTEMA EN LÍNEA</span>
+            </div>
+        </header>
+
+        <section class="main-interface">
+            <div class="side-panel left">
+                <div class="module-box tech-panel">
+                    <div class="panel-corners"></div>
+                    <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="metrics_title">MÉTRICAS DEL SISTEMA</span> <span class="icon-bracket">]</span></h3>
+
+                    <div class="metric-item">
+                        <div class="metric-label-row">
+                            <span class="label" data-i18n="cpu_label">NÚCLEO CPU</span>
+                            <span id="cpu-value" class="metric-num">--%</span>
+                        </div>
+                        <div class="bar-tech">
+                            <div id="cpu-bar" class="fill-tech" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label-row">
+                            <span class="label" data-i18n="temp_label">TEMPERATURA NÚCLEO</span>
+                            <span id="temp-value" class="metric-num">--°C</span>
+                        </div>
+                        <div class="bar-tech">
+                            <div id="temp-bar" class="fill-tech warning-fill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label-row">
+                            <span class="label" data-i18n="ram_label">NIVEL DE ENERGÍA (RAM)</span>
+                            <span id="ram-value" class="metric-num">--%</span>
+                        </div>
+                        <div class="bar-tech">
+                            <div id="energy-bar" class="fill-tech" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label-row">
+                            <span class="label" data-i18n="latency_label">LATENCIA API</span>
+                            <span id="latency-value" class="metric-num">-- ms</span>
+                        </div>
+                        <div class="bar-tech">
+                            <div id="latency-bar" class="fill-tech alt-fill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="module-box tech-panel">
+                    <div class="panel-corners"></div>
+                    <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="env_title">ENTORNO</span> <span class="icon-bracket">]</span></h3>
+                    <div class="weather-data">
+                        <div class="weather-display">
+                            <div id="temp-display" class="temp glow-text">--&deg;C</div>
+                            <div id="weather-desc" class="desc hud-font-alt" data-i18n="sync_sensors">Sincronizando sensores...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="center-stage">
+                <div class="crosshair top-left"></div>
+                <div class="crosshair top-right"></div>
+                <div class="crosshair bottom-left"></div>
+                <div class="crosshair bottom-right"></div>
+
+                <div class="core-container">
+                    <div class="arc-reactor" id="jarvis-core">
+                        <canvas id="arc-canvas"></canvas>
+                    </div>
+                </div>
+
+                <div class="voice-meter" aria-hidden="true">
+                    <div class="voice-waves" id="voice-waves">
+                        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                </div>
+
+                <div class="transcript-container tech-glass">
+                    <div class="decor-line"></div>
+                    <p id="transcript" class="fade-in" data-i18n="default_transcript">"A la espera de sus órdenes, Administrador."</p>
+                    <div class="decor-line"></div>
+                </div>
+
+                <section id="operator-console" class="operator-console tech-glass" aria-live="polite">
+                    <div class="operator-console-header">
+                        <span class="operator-title" data-i18n="operator_center_title">MISSION CENTER</span>
+                        <strong id="operator-mode-label" class="operator-mode" data-i18n="operator_syncing">SYNCING</strong>
+                    </div>
+                    <div class="operator-console-grid">
+                        <div class="operator-mission-node">
+                            <div class="operator-kicker" data-i18n="operator_active_mission">ACTIVE MISSION</div>
+                            <div id="operator-mission-title" class="operator-mission-title" data-i18n="operator_no_active_mission">No active mission</div>
+                            <div class="operator-progress-track">
+                                <div id="operator-mission-progress-bar" class="operator-progress-fill" style="width: 0%;"></div>
+                            </div>
+                            <div id="operator-mission-meta" class="operator-meta-line" data-i18n="operator_zero_steps">0 steps prepared</div>
+                            <div id="operator-steps" class="operator-steps custom-scrollbar">
+                                <span class="operator-empty" data-i18n="operator_empty_steps">Waiting for supervised plan.</span>
+                            </div>
+                        </div>
+                        <div class="operator-state-node">
+                            <div class="operator-state-row">
+                                <span data-i18n="operator_profile">PROFILE</span>
+                                <strong id="operator-profile-label">--</strong>
+                            </div>
+                            <div class="operator-state-row">
+                                <span data-i18n="operator_memory">MEMORY</span>
+                                <strong id="operator-memory-count">--</strong>
+                            </div>
+                            <div class="operator-state-row">
+                                <span data-i18n="operator_guard">GUARD</span>
+                                <strong id="operator-guard-summary">--</strong>
+                            </div>
+                            <div class="operator-state-row">
+                                <span data-i18n="operator_audit">AUDIT</span>
+                                <strong id="operator-audit-count">--</strong>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div id="widget-container" class="widget-overlay"></div>
+            </div>
+
+            <div class="side-panel right">
+                <div class="module-box tech-panel terminal-panel">
+                    <div class="panel-corners"></div>
+                    <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="log_title">REGISTRO SISTEMA</span> <span class="icon-bracket">]</span></h3>
+                    <div id="log-content" class="log-entries custom-scrollbar">
+                        <div class="log-entry" data-i18n="log_conn">> Conexión neuronal establecida.</div>
+                        <div class="log-entry" data-i18n="log_periph">> Módulos periféricos verificados.</div>
+                        <div class="log-entry" data-i18n="log_welcome">> Bienvenido de vuelta, Administrador.</div>
+                    </div>
+                </div>
+
+                <div class="module-box tech-panel control-center custom-scrollbar">
+                    <div class="panel-corners"></div>
+                    <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="cmd_panel_title">PANEL DE COMANDOS</span> <span class="icon-bracket">]</span></h3>
+                    <div class="control-status hud-font-alt">
+                        <div class="control-row">
+                            <span class="label" data-i18n="strict_override">OVERRIDE ESTRICTO</span>
+                            <strong id="security-mode-label" class="glow-text">--</strong>
+                        </div>
+                        <div class="control-row">
+                            <span class="label" data-i18n="proactive_ai">I.A. PROACTIVA</span>
+                            <strong id="proactive-mode-label" class="glow-text">--</strong>
+                        </div>
+                        <div class="control-row">
+                            <span class="label" data-i18n="net_blocks">BLOQUEOS RED</span>
+                            <strong id="security-blocked-count" class="glow-text-warning">0</strong>
+                        </div>
+                    </div>
+                    <div class="control-actions">
+                        <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RCGR PLUGINS</button>
+                        <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">TGL ESTRICTO</button>
+                        <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">TGL PROACTIVO</button>
+                        <button class="quick-action tech-btn" data-action="voice_enroll_admin" data-i18n="btn_enroll_admin">REG VOZ ADMIN</button>
+                        <button class="quick-action tech-btn" data-action="rutina_trabajo" data-i18n="btn_work_routine">RTN TRABAJO</button>
+                        <button class="quick-action tech-btn" data-action="rutina_gaming" data-i18n="btn_gaming_routine">RTN GAMING</button>
+                        <button class="quick-action tech-btn" data-action="rutina_buenos_dias" data-i18n="btn_morning_routine">RTN MAÑANA</button>
+                        <button class="quick-action tech-btn full-width" data-action="analizar_pantalla" data-i18n="btn_analyze_hud">ANALIZAR HUD ÓPTICO</button>
+                    </div>
+                    <div id="proactive-alerts" class="control-alerts custom-scrollbar">
+                        <div class="control-empty" data-i18n="proactive_clean">Escaneo proactivo limpio.</div>
+                    </div>
+                    <div class="control-divider"></div>
+                    <div class="control-row control-row-title">
+                        <span class="label" data-i18n="voice_obs">OBS VOZ</span>
+                        <strong id="voice-observability-count" class="glow-text">0</strong>
+                    </div>
+                    <div id="voice-observability-content" class="control-alerts voice-observability custom-scrollbar">
+                        <div class="control-empty" data-i18n="no_voice_events">Sin eventos de voz.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <footer class="bottom-controls">
+            <button id="activate-btn" class="voice-btn-tech">
+                <div class="btn-scanline"></div>
+                <svg viewBox="0 0 24 24" width="22" height="22" class="mic-icon">
+                    <path fill="currentColor"
+                        d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66-1.34 3 3 3z" />
+                    <path fill="currentColor"
+                        d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+                </svg>
+                <span class="btn-text" id="btn-voice-text" data-i18n="btn_init_voice">INICIAR ENLACE DE VOZ</span>
+                <div class="btn-corners"></div>
+            </button>
+        </footer>
+    </main>
+
+    <script defer src="{{ url_for('static', filename='vendor/three.min.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('ServiceWorker registrado:', reg.scope))
+                    .catch(err => console.log('ServiceWorker error:', err));
+            });
+        }
+    </script>
+</body>
+
+</html>
