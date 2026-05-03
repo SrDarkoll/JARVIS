@@ -157,7 +157,7 @@ winget install eSpeak-NG.eSpeak-NG
    ```
 
 2. **Ejecutar el script de setup:**
-   - **Windows:** `.\setup.ps1`
+   - **Windows:** `setup.bat` (o `.\setup.ps1` en PowerShell)
    - **Linux/macOS/WSL:** `./setup.sh`
 
 ## 💻 Ejecutando J.A.R.V.I.S
