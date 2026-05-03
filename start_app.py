@@ -29,7 +29,7 @@ def start_app():
         url = desktop_session.origin
         webview_storage_dir = desktop_session.webview_storage_dir
     except Exception as e:
-        print(f"[SISTEMA] Desktop session fallback: {e}")
+        print(f"[SYSTEM] Desktop session fallback: {e}")
         url = "http://localhost:5002"
         webview_storage_dir = os.path.join(
             os.environ.get("LOCALAPPDATA") or root_dir,
@@ -38,12 +38,12 @@ def start_app():
         )
         os.makedirs(webview_storage_dir, exist_ok=True)
 
-    print("--- Iniciando J.A.R.V.I.S. Desktop Engine ---")
+    print("--- Starting J.A.R.V.I.S. Desktop Engine ---")
 
     # 2. Start backend if needed
     backend_proc = None
     if not is_backend_running(url):
-        print("[SISTEMA] Arrancando servidor backend...")
+        print("[SYSTEM] Starting backend server...")
         # Inherit stdout/stderr so startup diagnostics remain visible.
         backend_proc = subprocess.Popen(
             [sys.executable, backend_script],
@@ -54,18 +54,18 @@ def start_app():
         intentos = 0
         while intentos < 90:
             if is_backend_running(url):
-                print("[SISTEMA] Servidor listo.")
+                print("[SYSTEM] Server ready.")
                 break
             time.sleep(1)
             intentos += 1
             if intentos % 10 == 0:
-                print(f"[SISTEMA] Esperando al nucleo ({intentos}s)...")
+                print(f"[SYSTEM] Waiting for core ({intentos}s)...")
         else:
-            print("[ERROR] El nucleo no respondio tras 90s. Revisa la terminal.")
+            print("[ERROR] Core did not respond after 90s. Check terminal.")
             if backend_proc: backend_proc.terminate()
             return
     else:
-        print("[SISTEMA] Servidor ya esta en ejecucion.")
+        print("[SYSTEM] Server is already running.")
 
     # 3. Create desktop window
     window = webview.create_window(
@@ -80,7 +80,7 @@ def start_app():
     )
 
     def on_closed():
-        print("[SISTEMA] Cerrando aplicacion...")
+        print("[SYSTEM] Closing application...")
         if backend_proc:
             backend_proc.terminate()
         os._exit(0)
@@ -88,7 +88,7 @@ def start_app():
     window.events.closed += on_closed
 
     # 4. Start desktop app with persistent Edge Chromium storage.
-    print("[SISTEMA] Abriendo interfaz de usuario...")
+    print("[SYSTEM] Opening user interface...")
     webview.start(
         gui='edgechromium', 
         debug=False,
