@@ -11,7 +11,7 @@ try:
     from langchain_community.vectorstores import FAISS
     from langchain_core.documents import Document
 
-    FAISS DISPONIBLE = True
+    FAISS_DISPONIBLE = True
 except ImportError:
     FAISS_DISPONIBLE = False
 

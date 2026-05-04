@@ -5,7 +5,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 import io
 import wave
 
-from utils.jarvis_text import repair_unicode, normalize_admin_treatment
+from utils.jarvis_text import reparar_unicode, normalizar_tratamiento_admin
 
 import asyncio
 import hmac
@@ -40,23 +40,23 @@ from core import jarvis_brain
 from core.brain import brain_state
 from services import security_manager
 from utils.jarvis_auth import (
-    verify_authorization as _verify_authorization,
-    authorize_by_biometrics as _authorize_by_biometrics,
-    revoke_authorization as _revoke_authorization,
+    verificar_autorizacion as _verify_authorization,
+    autorizar_por_biometria as _authorize_by_biometrics,
+    revocar_autorizacion as _revoke_authorization,
     get_auth_snapshot as _get_auth_snapshot,
-    activate_guest_profile as _activate_guest_profile,
+    activar_perfil_invitado as _activate_guest_profile,
 )
 from core import jarvis_config
 from core.jarvis_config import (
     BASE_DIR,
-    BRIEFING_HOUR,
+    BRIEFING_HORA,
     BRIEFING_TELEGRAM_SENT_FILE,
-    HEARTBEAT_INTERVAL,
+    HEARTBEAT_INTERVALO,
     MODEL_PATH,
     NEWSAPI_KEY,
     OBS_DIR,
     PLUGINS_DIR,
-    PROACTIVE_ENABLED,
+    PROACTIVE_ACTIVO,
     PROACTIVE_COOLDOWN,
     ROOT_DIR,
     SECURITY_AUDIT_FILE,
@@ -71,7 +71,7 @@ from core.app_config import init_app_config, get_app_config
 from core.runtime_logger import log_info, log_warning, log_error
 from core.jarvis_observability import obs_event, obs_inc, obs_snapshot, obs_tail
 from core.service_container import services
-from core.jarvis_state import heartbeat_state, reminders_lock
+from core.jarvis_state import heartbeat_state, recordatorios_lock
 from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
 from engines.tts_engine import TTSEngine
 from services.telegram_manager import telegram_manager
@@ -87,14 +87,14 @@ from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
 
 # SAFE IMPORT OF BIOMETRICS
 try:
-    from voice import voice_id_motor, VOICE_ID_AVAILABLE
+    from voice import voice_id_motor, VOICE_ID_DISPONIBLE as VOICE_ID_AVAILABLE
     from voice.pipeline import (
-        normalize_to_wav as _normalize_to_wav,
-        bytes_are_valid_wav as _bytes_are_valid_wav,
-        transcribe_audio,
+        normalizar_a_wav as _normalize_to_wav,
+        bytes_es_wav_valido as _bytes_are_valid_wav,
+        transcribir_audio as transcribe_audio,
         slugify_guest_name as _slugify_guest_name,
-        normalize_guest_name as _normalize_guest_name,
-        is_owner_alias as _is_owner_alias,
+        normalizar_nombre_invitado as _normalize_guest_name,
+        es_alias_owner as _is_owner_alias,
         cleanup_pending_voice_registration as _cleanup_pending_voice_registration,
         cancel_pending_voice_registration as _cancel_pending_voice_registration,
         get_pending as _get_pending,
@@ -103,10 +103,10 @@ try:
         RESERVED_OWNER_ALIASES,
         OWNER_SIMILARITY_OVERRIDE,
         _PENDING_VOICE_REGISTRATION,
-        normalize_transcript_hint as _normalize_transcript_hint,
-        reconstruct_transcription_by_pauses as _reconstruct_transcription_by_pauses,
-        hint_needs_retry_whisper as _hint_needs_whisper,
-        normalize_transcript_confidence as _normalize_transcript_confidence,
+        normalizar_transcript_hint as _normalize_transcript_hint,
+        reconstruir_transcripcion_por_pausas as _reconstruct_transcription_by_pauses,
+        hint_necesita_reintento_whisper as _hint_needs_whisper,
+        normalizar_confianza_transcript as _normalize_transcript_confidence,
     )
 
     BIOMETRICS_ENABLED = bool(VOICE_ID_AVAILABLE)
@@ -327,13 +327,13 @@ security_manager.inject_dependencies(
     {
         "_obs_inc": obs_inc,
         "_obs_event": obs_event,
-        "_repair_unicode": repair_unicode,
+        "_repair_unicode": reparar_unicode,
         "_invoke_tool": None,
         "_reload_plugins_runtime": None,
         "send_telegram_sync": None,
-        "_normalize_web_destination": core_tools._normalize_web_destination,
+        "_normalize_web_destination": core_tools._normalizar_destino_web,
         "verify_authorization": _verify_authorization,
-        "normalize_admin_treatment": normalize_admin_treatment,
+        "normalize_admin_treatment": normalizar_tratamiento_admin,
         "SECURITY_POLICY_DEFAULT": SECURITY_POLICY_DEFAULT,
         "SECURITY_POLICY_FILE": SECURITY_POLICY_FILE,
         "SECURITY_AUDIT_FILE": SECURITY_AUDIT_FILE,
@@ -349,14 +349,14 @@ _load_security_policy = security_manager._load_security_policy
 _security_snapshot = security_manager._security_snapshot
 _security_tail = security_manager._security_tail
 _proactive_snapshot = security_manager._proactive_snapshot
-_update_security_policy = security_manager._update_security_policy
-_execute_control_action = security_manager._execute_control_action
+_actualizar_security_policy = security_manager._actualizar_security_policy
+_ejecutar_accion_control = security_manager._ejecutar_accion_control
 _proactive_push_alert = security_manager._proactive_push_alert
 _load_security_policy()
 
 with PROACTIVE_LOCK:
     _app_cfg = get_app_config()
-    PROACTIVE_STATE["enabled"] = _app_cfg.toggles.proactive_enabled
+    PROACTIVE_STATE["enabled"] = _app_cfg.toggles.proactive_activo
     PROACTIVE_STATE["cooldown_seconds"] = _app_cfg.toggles.proactive_cooldown
 
 _cors_origins = list(get_app_config().cors_origins)
@@ -438,10 +438,10 @@ context.update(
         "app": app,
         "obs_inc": obs_inc,
         "obs_event": obs_event,
-        "news_cache": services.news_cache,
+        "noticias_cache": services.noticias_cache,
         "weather_cache": services.weather_cache,
         "reminders": services.get_reminders(),
-        "reminders_lock": reminders_lock,
+        "recordatorios_lock": recordatorios_lock,
     }
 )
 
@@ -480,13 +480,13 @@ from core.service_container import services
 
 services.obs_inc = obs_inc
 services.obs_event = obs_event
-services.repair_unicode = repair_unicode
+services.repair_unicode = reparar_unicode
 services.security_audit = security_manager._security_audit
 services.security_guard = security_manager._security_guard
 services.security_allow_fallback = security_manager._security_allow_system_browser_fallback
 services.proactive_tool_error = security_manager._proactive_register_tool_error
 services.reminders = services.get_reminders()
-services.reminders_lock = reminders_lock
+services.recordatorios_lock = recordatorios_lock
 services.SRC_DIR = SRC_DIR
 services.ROOT_DIR = ROOT_DIR
 
@@ -494,25 +494,25 @@ services.ROOT_DIR = ROOT_DIR
 jarvis_brain.init_brain(app)
 
 # Inject dependencies from the brain
-services.invoke_tool = jarvis_brain._invoke_tool
-services.reload_plugins = jarvis_brain._reload_plugins_runtime
+services.invoke_tool = jarvis_brain._invocar_tool
+services.reload_plugins = jarvis_brain._recargar_plugins_runtime
 
 # Synchronize with core_tools (shim) for legacy plugins if necessary
 core_tools.inject_dependencies(
-    {"news_cache": services.news_cache, "weather_cache": services.weather_cache}
+    {"noticias_cache": services.noticias_cache, "weather_cache": services.weather_cache}
 )
 security_manager.inject_dependencies(
     {
-        "_invoke_tool": jarvis_brain._invoke_tool,
-        "_reload_plugins_runtime": jarvis_brain._reload_plugins_runtime,
+        "_invocar_tool": jarvis_brain._invocar_tool,
+        "_recargar_plugins_runtime": jarvis_brain._recargar_plugins_runtime,
     }
 )
 
 from core import jarvis_state
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
-memory_lock = jarvis_state.memory_lock
-_profiles_memory = jarvis_state._profiles_memory
+memory_lock = jarvis_state.memoria_lock
+_profiles_memory = jarvis_state._perfiles_memoria
 
 TTS_PRONUN_MAP: dict = {}
 
@@ -521,8 +521,25 @@ def _normalize_tts_map(data: dict | None) -> dict:
     source = data or {}
     out = {}
     for k, v in source.items():
-        key = repair_unicode(str(k or "")).strip().lower()
-        val = repair_unicode(str(v or "")).strip()
+        key = reparar_unicode(str(k or "")).strip().lower()
+        val = reparar_unicode(str(v or "")).strip()
         if key and val:
             out[key] = val
     return out
+
+
+# ---------------------------------------------------------------------------
+# Compatibility aliases (original Spanish names used by test_smoke.py)
+# ---------------------------------------------------------------------------
+transcribir_audio = transcribe_audio
+_normalizar_a_wav = _normalize_to_wav
+_transcribir_con_whisper_archivo = _transcribe_with_whisper_file
+
+
+def _aplicar_pronunciacion_tts(texto: str) -> str:
+    """Module-level shim that applies TTS pronunciation rules."""
+    engine = TTSEngine.__new__(TTSEngine)
+    engine.tts_lock = TTS_LOCK
+    engine.tts_pronun_map = dict(TTS_PRONUN_DEFAULT)
+    engine.reparar_unicode = reparar_unicode
+    return engine.aplicar_pronunciacion(texto)
