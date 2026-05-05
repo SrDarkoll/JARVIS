@@ -543,3 +543,16 @@ def _aplicar_pronunciacion_tts(texto: str) -> str:
     engine.tts_pronun_map = dict(TTS_PRONUN_DEFAULT)
     engine.reparar_unicode = reparar_unicode
     return engine.aplicar_pronunciacion(texto)
+
+if __name__ == "__main__":
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+
+    config = Config()
+    config.bind = ["localhost:5002"]
+    config.use_reloader = False
+
+    try:
+        asyncio.run(serve(app, config))
+    except KeyboardInterrupt:
+        pass
