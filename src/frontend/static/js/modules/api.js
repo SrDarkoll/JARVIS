@@ -20,13 +20,13 @@ export const API = {
         return data;
     },
 
-    async fetchNoticias() {
+    async fetchNews() {
         const res = await fetch('/api/noticias');
         if (!res.ok) throw new Error('api_noticias_fail');
         return await res.json();
     },
 
-    async fetchObservabilidad(limit = 30) {
+    async fetchObservability(limit = 30) {
         const res = await fetch(`/api/observabilidad?limit=${Math.max(10, Math.min(Number(limit) || 30, 120))}`, { cache: 'no-store' });
         if (!res.ok) throw new Error('api_observabilidad_fail');
         return await res.json();

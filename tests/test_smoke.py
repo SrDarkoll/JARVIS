@@ -187,6 +187,20 @@ def test_flask_test_client_basic_routes():
     assert r.status_code in (200, 401, 503)
 
 
+def test_admin_voice_registration_requires_token_off_loopback(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/voice/registro/admin/iniciar",
+        environ_base={"REMOTE_ADDR": "192.168.1.30"},
+    )
+    assert r.status_code == 401
+    data = r.get_json() or {}
+    assert data.get("error") == "Token required for critical routes."
+
+
 def test_status_endpoint_returns_telemetry():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
     from api import voice_routes

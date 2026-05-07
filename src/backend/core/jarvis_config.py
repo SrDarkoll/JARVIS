@@ -6,8 +6,12 @@ import os
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
-# Set HuggingFace token from environment or default
-os.environ.setdefault("HF_TOKEN", "fake_token_for_testing")
+if os.getenv("JARVIS_TEST_MODE") == "1":
+    os.environ.setdefault("HF_TOKEN", "fake_token_for_testing")
+os.environ.setdefault("WANDB_MODE", "disabled")
+os.environ.setdefault("WANDB_DISABLED", "true")
+os.environ.setdefault("WANDB_DISABLE_SERVICE", "true")
+os.environ.setdefault("WANDB_SILENT", "true")
 
 
 def _normalize_fs_path(path: str) -> str:

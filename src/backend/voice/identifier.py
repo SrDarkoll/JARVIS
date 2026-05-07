@@ -21,13 +21,21 @@ import soundfile as sf
 
 VOICE_ID_DISPONIBLE = False
 
-try:
-    from speechbrain.inference import SpeakerRecognition
+if os.getenv("JARVIS_TEST_MODE") == "1":
+    print("[VOICE_ID] Disabled in test mode.")
+else:
+    try:
+        from speechbrain.inference import SpeakerRecognition
 
-    VOICE_ID_DISPONIBLE = True
-    print("[VOICE_ID] Speechbrain ECAPA-VoxCeleb available.")
-except ImportError as e:
-    print(f"[VOICE_ID] Speechbrain no available: {e}")
+        VOICE_ID_DISPONIBLE = True
+        print("[VOICE_ID] Speechbrain ECAPA-VoxCeleb available.")
+    except ImportError as e:
+        print(f"[VOICE_ID] Speechbrain no available: {e}")
+
+try:
+    SpeakerRecognition
+except NameError:
+    SpeakerRecognition = None
 
 from core.jarvis_config import BASE_DIR
 from core.jarvis_observability import obs_event

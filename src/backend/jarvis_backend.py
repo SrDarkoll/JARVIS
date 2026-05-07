@@ -1,6 +1,29 @@
 import sys
 import os
 
+os.environ.setdefault("WANDB_MODE", "disabled")
+os.environ.setdefault("WANDB_DISABLED", "true")
+os.environ.setdefault("WANDB_DISABLE_SERVICE", "true")
+os.environ.setdefault("WANDB_SILENT", "true")
+if os.getenv("JARVIS_TEST_MODE") == "1" and os.name == "nt":
+    import tempfile as _safe_tempfile
+
+    _OriginalTemporaryDirectory = _safe_tempfile.TemporaryDirectory
+
+    class _WindowsTestTemporaryDirectory(_OriginalTemporaryDirectory):
+        def __init__(self, *args, **kwargs):
+            kwargs["ignore_cleanup_errors"] = True
+            super().__init__(*args, **kwargs)
+            self._ignore_cleanup_errors = True
+
+        def cleanup(self):
+            try:
+                return super().cleanup()
+            except PermissionError:
+                return None
+
+    _safe_tempfile.TemporaryDirectory = _WindowsTestTemporaryDirectory
+
 sys.stdout.reconfigure(encoding="utf-8")
 import io
 import wave
@@ -71,7 +94,7 @@ from core.app_config import init_app_config, get_app_config
 from core.runtime_logger import log_info, log_warning, log_error
 from core.jarvis_observability import obs_event, obs_inc, obs_snapshot, obs_tail
 from core.service_container import services
-from core.jarvis_state import heartbeat_state, recordatorios_lock
+from core.jarvis_state import heartbeat_state, recordatorios_lock as reminders_lock
 from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
 from engines.tts_engine import TTSEngine
 from services.telegram_manager import telegram_manager
@@ -162,7 +185,11 @@ def transcribe_audio(
             os.write(fd, audio_bytes)
             os.close(fd)
             try:
-                res = _transcribe_with_whisper_file(tmp_path)
+                transcriber = globals().get(
+                    "_transcribir_con_whisper_archivo",
+                    _transcribe_with_whisper_file,
+                )
+                res = transcriber(tmp_path)
                 if res:
                     return res
             finally:
@@ -280,6 +307,59 @@ except Exception as e:
     TTS_MAX_CHARS = 420
 
 
+class UnavailableTTSEngine:
+    """Lightweight TTS adapter used when Piper cannot be loaded."""
+
+    def __init__(self, model_path: str, pronun_file: str, repair_unicode_func):
+        self.model_path = model_path
+        self.pronun_file = pronun_file
+        self.reparar_unicode = repair_unicode_func
+        self.voice = None
+        self.tts_lock = TTS_LOCK
+        self.tts_pronun_map = dict(TTS_PRONUN_DEFAULT)
+
+    def reload_model(self, new_model_path: str) -> bool:
+        self.model_path = new_model_path
+        return False
+
+    def update_reglas(self, reglas_norm: dict, replace: bool = False) -> dict:
+        with self.tts_lock:
+            if replace:
+                self.tts_pronun_map.clear()
+            self.tts_pronun_map.update(reglas_norm or {})
+            return dict(self.tts_pronun_map)
+
+    def reset_reglas(self) -> dict:
+        with self.tts_lock:
+            self.tts_pronun_map.clear()
+            self.tts_pronun_map.update(dict(TTS_PRONUN_DEFAULT))
+            return dict(self.tts_pronun_map)
+
+    def aplicar_pronunciacion(self, texto: str) -> str:
+        engine = TTSEngine.__new__(TTSEngine)
+        engine.tts_lock = self.tts_lock
+        engine.tts_pronun_map = dict(self.tts_pronun_map)
+        engine.reparar_unicode = self.reparar_unicode
+        return engine.aplicar_pronunciacion(texto)
+
+    def sintetizar(self, texto: str) -> bytes:
+        raise RuntimeError("The Piper engine is not loaded.")
+
+
+def _build_tts_engine():
+    if os.getenv("JARVIS_TEST_MODE") == "1":
+        return UnavailableTTSEngine(MODEL_PATH, TTS_PRONUN_FILE, reparar_unicode)
+    try:
+        return TTSEngine(MODEL_PATH, TTS_PRONUN_FILE, reparar_unicode)
+    except Exception as e:
+        print(f"[WARN] TTS init failed: {e}")
+        return UnavailableTTSEngine(MODEL_PATH, TTS_PRONUN_FILE, reparar_unicode)
+
+
+tts_engine = _build_tts_engine()
+whisper_model = None
+
+
 def _warn_once(key: str, err: Exception | str) -> None:
     msg = str(err or "").strip() or "unknown error"
     with WARN_ONCE_LOCK:
@@ -327,13 +407,13 @@ security_manager.inject_dependencies(
     {
         "_obs_inc": obs_inc,
         "_obs_event": obs_event,
-        "_repair_unicode": reparar_unicode,
-        "_invoke_tool": None,
-        "_reload_plugins_runtime": None,
-        "send_telegram_sync": None,
-        "_normalize_web_destination": core_tools._normalizar_destino_web,
-        "verify_authorization": _verify_authorization,
-        "normalize_admin_treatment": normalizar_tratamiento_admin,
+        "_reparar_unicode": reparar_unicode,
+        "_invocar_tool": None,
+        "_recargar_plugins_runtime": None,
+        "enviar_telegram_sync": None,
+        "_normalizar_destino_web": core_tools._normalizar_destino_web,
+        "verificar_autorizacion": _verify_authorization,
+        "normalizar_tratamiento_admin": normalizar_tratamiento_admin,
         "SECURITY_POLICY_DEFAULT": SECURITY_POLICY_DEFAULT,
         "SECURITY_POLICY_FILE": SECURITY_POLICY_FILE,
         "SECURITY_AUDIT_FILE": SECURITY_AUDIT_FILE,
@@ -370,6 +450,9 @@ app = Quart(
     static_folder=os.path.join(SRC_DIR, "frontend", "static"),
     static_url_path="/static",
 )
+app.config["MAX_CONTENT_LENGTH"] = int(
+    (os.getenv("JARVIS_MAX_REQUEST_BYTES") or str(12 * 1024 * 1024)).strip()
+)
 app = cors(app, allow_origin=_cors_origins)
 app.register_blueprint(tts_bp)
 app.register_blueprint(api_bp)
@@ -385,8 +468,10 @@ _CRITICAL_API_PATHS = {
     "/api/control/quick",
     "/api/language",
     "/api/observability",
+    "/api/observabilidad",
     "/api/operator/status",
     "/api/profiles",
+    "/api/perfiles",
     "/api/plugins",
     "/api/plugins/reload",
     "/api/proactive",
@@ -396,8 +481,12 @@ _CRITICAL_API_PATHS = {
     "/api/setup/status",
     "/api/tts/pronunciation",
     "/api/tts/pronunciation/reset",
+    "/api/tts/pronunciacion",
+    "/api/tts/pronunciacion/reset",
     "/api/voice/registration/admin/capture",
     "/api/voice/registration/admin/init",
+    "/api/voice/registro/admin/capturar",
+    "/api/voice/registro/admin/iniciar",
 }
 
 
@@ -433,6 +522,31 @@ async def _require_token_for_critical_routes():
     obs_event("api_token_required", path=request.path, ip=request.remote_addr)
     return jsonify({"error": "Token required for critical routes."}), 401
 
+
+@app.after_request
+async def _set_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), geolocation=(), microphone=(self)",
+    )
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self' ws: wss:; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'",
+    )
+    return response
+
 context.update(
     {
         "app": app,
@@ -441,7 +555,7 @@ context.update(
         "noticias_cache": services.noticias_cache,
         "weather_cache": services.weather_cache,
         "reminders": services.get_reminders(),
-        "recordatorios_lock": recordatorios_lock,
+        "recordatorios_lock": reminders_lock,
     }
 )
 
@@ -480,13 +594,13 @@ from core.service_container import services
 
 services.obs_inc = obs_inc
 services.obs_event = obs_event
-services.repair_unicode = reparar_unicode
+services.reparar_unicode = reparar_unicode
 services.security_audit = security_manager._security_audit
 services.security_guard = security_manager._security_guard
 services.security_allow_fallback = security_manager._security_allow_system_browser_fallback
 services.proactive_tool_error = security_manager._proactive_register_tool_error
 services.reminders = services.get_reminders()
-services.recordatorios_lock = recordatorios_lock
+services.reminders_lock = reminders_lock
 services.SRC_DIR = SRC_DIR
 services.ROOT_DIR = ROOT_DIR
 
@@ -513,6 +627,80 @@ from core import jarvis_state
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 memory_lock = jarvis_state.memoria_lock
 _profiles_memory = jarvis_state._perfiles_memoria
+
+init_api_routes(services, os.getenv("JARVIS_BROWSER_MODE", "system"), ROOT_DIR)
+init_chat_routes(ChatRoutesConfig(IP_LAST_CALL, _IP_LAST_CALL_LOCK, CHAT_LIMIT_SECONDS))
+init_tts_routes(
+    TTSRoutesConfig(
+        tts_engine,
+        TTS_LOCK,
+        TTS_API_LOCK,
+        TTS_MAX_CHARS,
+        tts_engine.sintetizar,
+    )
+)
+init_security_routes(
+    SecurityRoutesConfig(
+        _security_snapshot,
+        _proactive_snapshot,
+        _actualizar_security_policy,
+        _ejecutar_accion_control,
+        SECURITY_POLICY,
+        PROACTIVE_STATE,
+        PROACTIVE_LOCK,
+        jarvis_brain,
+    )
+)
+init_voice_routes(
+    VoiceRoutesConfig(
+        voice_id_motor,
+        BIOMETRICS_ENABLED,
+        _PENDING_VOICE_REGISTRATION,
+        _normalize_to_wav,
+        _bytes_are_valid_wav,
+        _cleanup_pending_voice_registration,
+        _cancel_pending_voice_registration,
+        _get_pending,
+        _pop_pending,
+        _normalize_guest_name,
+        _slugify_guest_name,
+        _is_owner_alias,
+        RESERVED_OWNER_ALIASES,
+        OWNER_SIMILARITY_OVERRIDE,
+        _verify_authorization,
+        _authorize_by_biometrics,
+        _revoke_authorization,
+        _activate_guest_profile,
+        whisper_model,
+        jarvis_brain,
+        obs_event,
+        obs_snapshot,
+        reparar_unicode,
+        normalizar_tratamiento_admin,
+        _time,
+    )
+)
+init_status_routes(
+    StatusRoutesConfig(
+        services,
+        reminders_lock,
+        SECURITY_POLICY,
+        PROACTIVE_STATE,
+        PROACTIVE_LOCK,
+        PLUGINS_DIR,
+        DEFAULT_PROFILE_ID,
+        memory_lock,
+        _profiles_memory,
+        _proactive_snapshot,
+    )
+)
+init_language_routes(
+    {
+        "tts_engine": tts_engine,
+        "jarvis_settings": jarvis_settings,
+        "whisper_model_ref": globals(),
+    }
+)
 
 TTS_PRONUN_MAP: dict = {}
 

@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 from utils.jarvis_auth import verificar_autorizacion
 from tools._common import _normalizar_profile_id, jarvis_state, memoria_lock, _perfiles_memoria, MEMORIA_FILE, MEMORIA_PROFILES_FILE
 from core.service_container import services
+from services import security_manager
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -45,7 +46,7 @@ def _leer_volumen_actual() -> float:
         if not _VOL_AVAILABLE: return 0.0
         volume = _obtener_control_volumen()
         return max(0.0, min(100.0, volume.GetMasterVolumeLevelScalar() * 100.0))
-    except: return 0.0
+    except Exception: return 0.0
 
 def _ajustar_volumen_absoluto(objetivo: float) -> str:
     try:
@@ -173,6 +174,16 @@ def borrar_memoria() -> str:
     """Reseteo total de memoria. Autorización de nivel 5 obligatoria."""
     pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
     if not verificar_autorizacion(pid): return "ACCESO_DENEGADO."
+
+    security_manager._security_audit(
+        "memory_wipe",
+        level="critical",
+        tool="borrar_memoria",
+        reason="Wipe requested by authorized user",
+        source="tool_execution",
+        metadata={"profile_id": pid},
+    )
+
     jarvis_state.chat_history.clear()
     jarvis_state.DATOS_CURIOSOS = ""
     with memoria_lock: _perfiles_memoria.clear(); jarvis_state._msg_counter_by_profile.clear()

@@ -118,6 +118,10 @@ class MemoryRAG:
         self._lock = threading.Lock()
         self.lista = FAISS_DISPONIBLE
 
+        if os.getenv("JARVIS_TEST_MODE") == "1":
+            self.lista = False
+            return
+
         if not FAISS_DISPONIBLE:
             print("[RAG] FAISS/SentenceTransformers libraries not detected.")
             return

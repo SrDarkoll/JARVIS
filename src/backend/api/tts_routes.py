@@ -17,7 +17,7 @@ _tts_engine = None
 _tts_lock = None
 _tts_api_lock = None
 _tts_max_chars = 420
-_sintetizar_audio = None
+_synthesize_audio = None
 
 
 class TTSRoutesConfig:
@@ -27,25 +27,25 @@ class TTSRoutesConfig:
         tts_lock,
         tts_api_lock,
         tts_max_chars,
-        sintetizar_audio_fn,
+        synthesize_audio_fn,
     ):
         self.engine = engine
         self.tts_lock = tts_lock
         self.tts_api_lock = tts_api_lock
         self.tts_max_chars = tts_max_chars
-        self.sintetizar_audio_fn = sintetizar_audio_fn
+        self.synthesize_audio_fn = synthesize_audio_fn
 
 
 def init_tts_routes(config: TTSRoutesConfig):
-    global _tts_engine, _tts_lock, _tts_api_lock, _tts_max_chars, _sintetizar_audio
+    global _tts_engine, _tts_lock, _tts_api_lock, _tts_max_chars, _synthesize_audio
     _tts_engine = config.engine
     _tts_lock = config.tts_lock
     _tts_api_lock = config.tts_api_lock
     _tts_max_chars = config.tts_max_chars
-    _sintetizar_audio = config.sintetizar_audio_fn
+    _synthesize_audio = config.synthesize_audio_fn
 
 
-def _normalizar_tts_map(data):
+def _normalize_tts_map(data):
     from utils.jarvis_text import reparar_unicode
     source = data or {}
     out = {}
@@ -105,7 +105,7 @@ async def generate_tts():
 
         if _tts_engine is None or getattr(_tts_engine, "voice", None) is None:
             return _tts_unavailable_response()
-        if not callable(_sintetizar_audio):
+        if not callable(_synthesize_audio):
             return _tts_unavailable_response("Voice synthesizer not initialized")
 
         text = reparar_unicode(text)
@@ -114,7 +114,7 @@ async def generate_tts():
             text = text[:_tts_max_chars].rsplit(" ", 1)[0].strip()
 
         t0 = _time.time()
-        audio_bytes = _sintetizar_audio(text)
+        audio_bytes = _synthesize_audio(text)
         dur = _time.time() - t0
         obs_event("tts_ok", duration_ms=int(dur * 1000), chars=len(text))
 
@@ -140,29 +140,32 @@ async def generate_tts():
         _tts_api_lock.release()
 
 
+@tts_bp.route("/api/tts/pronunciation", methods=["GET"])
 @tts_bp.route("/api/tts/pronunciacion", methods=["GET"])
-def get_tts_pronunciacion():
+def get_tts_pronunciation():
     with _tts_engine.tts_lock:
         return jsonify({"rules": dict(_tts_engine.tts_pronun_map)})
 
 
+@tts_bp.route("/api/tts/pronunciation", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion", methods=["POST"])
-async def update_tts_pronunciacion():
+async def update_tts_pronunciation():
     data = (await request.get_json(silent=True)) or {}
-    reglas_input = data.get("rules", {})
-    if not isinstance(reglas_input, dict):
+    rules_input = data.get("rules", {})
+    if not isinstance(rules_input, dict):
         return jsonify({"error": "Object required"}), 400
-    reglas_norm = _normalizar_tts_map(reglas_input)
-    if not reglas_norm:
+    normalized_rules = _normalize_tts_map(rules_input)
+    if not normalized_rules:
         return jsonify({"error": "No rules"}), 400
     return jsonify(
         {
             "message": "Updated",
-            "rules": _tts_engine.update_reglas(reglas_norm, bool(data.get("replace", False))),
+            "rules": _tts_engine.update_reglas(normalized_rules, bool(data.get("replace", False))),
         }
     )
 
 
+@tts_bp.route("/api/tts/pronunciation/reset", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion/reset", methods=["POST"])
-def reset_tts_pronunciacion():
+def reset_tts_pronunciation():
     return jsonify({"message": "Reset", "rules": _tts_engine.reset_reglas()})

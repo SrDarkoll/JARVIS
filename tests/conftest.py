@@ -30,6 +30,7 @@ if str(BACKEND) not in sys.path:
 os.environ.setdefault("GROQ_API_KEY", "test-key-smoke")
 os.environ.setdefault("MINIMAX_API_KEY", "test-key-smoke")
 os.environ["JARVIS_TEST_MODE"] = "1"
+os.environ["JARVIS_AUTOCURACION"] = "false"
 os.environ["JARVIS_RUNTIME_DIR"] = str(TEST_RUNTIME_DIR)
 os.environ["JARVIS_DB_PATH"] = str(TEST_RUNTIME_DIR / "memoria_jarvis_test.db")
 os.environ["JARVIS_CACHE_DIR"] = str(TEST_RUNTIME_DIR / ".cache")
@@ -48,6 +49,11 @@ def _cleanup_runtime_dir() -> None:
 
 
 atexit.register(_cleanup_runtime_dir)
+
+
+@pytest.fixture(autouse=True)
+def _no_browser_tabs(monkeypatch):
+    monkeypatch.setattr("webbrowser.open", lambda *a, **kw: False)
 
 
 @pytest.fixture(autouse=True)

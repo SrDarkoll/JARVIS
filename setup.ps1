@@ -1,4 +1,9 @@
 # J.A.R.V.I.S. setup for Windows / PowerShell
+[CmdletBinding()]
+param(
+    [switch]$Dev
+)
+
 $ErrorActionPreference = "Stop"
 
 Write-Host "== J.A.R.V.I.S. setup =="
@@ -24,6 +29,9 @@ if (-not (Test-Path "venv")) {
 
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+if ($Dev) {
+    pip install -r requirements-dev.txt
+}
 
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "WARNING: ffmpeg is not on PATH. Voice/audio features need it." -ForegroundColor Yellow
@@ -69,3 +77,6 @@ if (-not (Test-Path ".env")) {
 
 Write-Host "Setup complete."
 Write-Host "Run: python start_app.py"
+if (-not $Dev) {
+    Write-Host "For test tools run: .\setup.ps1 -Dev"
+}

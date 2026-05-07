@@ -2,6 +2,10 @@
 set -euo pipefail
 
 echo "== J.A.R.V.I.S. setup =="
+DEV_MODE=0
+if [ "${1:-}" = "--dev" ]; then
+  DEV_MODE=1
+fi
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_CMD="python3"
@@ -21,6 +25,9 @@ source venv/bin/activate
 
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+if [ "$DEV_MODE" -eq 1 ]; then
+  pip install -r requirements-dev.txt
+fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "WARNING: ffmpeg is not on PATH. Voice/audio features need it."
@@ -67,3 +74,6 @@ fi
 
 echo "Setup complete."
 echo "Run: python start_app.py"
+if [ "$DEV_MODE" -ne 1 ]; then
+  echo "For test tools run: ./setup.sh --dev"
+fi

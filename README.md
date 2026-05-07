@@ -1,167 +1,45 @@
-# J.A.R.V.I.S
+# J.A.R.V.I.S.
 
-[🇺🇸 English](#english) | [🇪🇸 Español](#español)
+J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend and a vanilla browser frontend. The main target is Windows, although the backend and most web/API features can run on macOS and Linux when optional desktop/audio integrations are available.
 
-![J.A.R.V.I.S. HUD](./media/readme.png)
+This project is still alpha software. Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, and voice biometrics.
 
----
+## What Jarvis Can Do
 
-<a id="english"></a>
-
-# 🇺🇸 English
-
-J.A.R.V.I.S. is a local desktop AI assistant with a Python/Quart backend, voice input capabilities, Piper TTS, profile memory, local desktop tools, and optional integrations (Spotify, Telegram).
-
-The primary target is Windows. Some audio, desktop-control, and system telemetry features depend on Windows APIs.
-
-**⚠️ Important Recommendation:**
-We highly recommend running J.A.R.V.I.S. via the standalone desktop application (`start_app.py`) rather than your standard web browser. Traditional web browsers often experience microphone stability and permission issues which can disrupt the voice-activation features.
-
-**🛑 Disclaimer (Alpha Phase):**
-J.A.R.V.I.S. is currently in an **Alpha** stage. Please note that the system **contains several known bugs**, some features may be unstable, and the overall experience is still being refined. Use it at your own risk and feel free to report any issues you find in the Issues section.
-
-## ✨ Key Features
-
-- Voice chat with Whisper transcription and Piper TTS.
-- Real-time language switching between English and Spanish for prompts, TTS, UI labels, and assistant responses.
-- Administrator voice registration with multi-sample biometric profiles.
-- Guest recognition and short voice registration from phrases like "my name is Daniel" or "me llamo Daniel".
-- Per-profile memory: private facts, chat history, and shared facts.
-- Spotify playback commands and optional automix behavior.
-- Weather, news, reminders, and dynamic tool routing for time-sensitive queries.
+- Voice chat with browser speech hints, optional Whisper fallback, and Piper TTS.
+- English/Spanish UI and response mode.
+- Admin voice enrollment and guest voice profile registration.
+- Per-profile memory and shared memory facts.
+- Local reminders, weather, news summaries, time/date answers, and dynamic web search routing.
+- Spotify playback, playback controls, AutoMix, and dynamic mix generation using user top tracks, recent tracks, artist/genre context, and playlist fallbacks when the Spotify account permits it.
 - Telegram bot integration with `TELEGRAM_CHAT_ID` filtering.
-- Local system control gated by authorization and a security policy.
-- Observability endpoints for metrics, security auditing, voice identity diagnostics, and proactive monitoring.
-- Desktop shell using `pywebview` with persistent WebView2 storage.
+- Local desktop/system tools gated by authorization and security policy.
+- Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
+- Optional desktop shell through `pywebview` with persistent WebView2 storage.
 
-## 🏛️ Architecture
+## Repository Layout
 
-Main backend entry points:
+- `start_app.py` - desktop launcher.
+- `src/backend/jarvis_backend.py` - Quart/Hypercorn backend entrypoint.
+- `src/backend/api/` - HTTP route modules.
+- `src/backend/core/` - config, state, security, tool routing, and assistant brain.
+- `src/backend/tools/` - built-in tools such as search, Spotify, browser, system, and utilities.
+- `src/backend/voice/` - voice registration, transcription, and identity logic.
+- `src/frontend/` - static UI and templates.
+- `tests/` - regression and smoke tests.
+- `models/` - Piper voice models tracked with Git LFS.
 
-- `src/backend/jarvis_backend.py`: Main Quart/Hypercorn app at `http://localhost:5002`.
-- `src/backend/core/jarvis_brain.py`: Public brain facade.
-- `src/backend/core/brain/`: LLM routing, prompts, tool manager, and security engine.
-- `src/backend/api/`: HTTP adapters.
-- `src/backend/voice/`: Voice domain modules.
-- `src/backend/tools/`: Built-in assistant tools.
-- `src/backend/services/`: Monitoring, Telegram, memory, and security.
+## Requirements
 
-## 🛠️ Prerequisites & Local Dependencies
+Recommended:
 
-- **Python 3.11 or 3.12**
-- **Git LFS**: Required to download the large voice models correctly.
-- **FFmpeg**: Must be installed and added to your system `PATH` for audio conversion.
-- **eSpeak NG** (Windows): Required for Piper phonemization. Default installation path should be `C:\Program Files\eSpeak NG`.
+- Python 3.11 or 3.12.
+- Git LFS before cloning, because `.onnx` voice models are stored through LFS.
+- FFmpeg on `PATH` for audio conversion.
+- Windows: eSpeak NG for Piper phonemization, usually installed at `C:\Program Files\eSpeak NG`.
+- Windows desktop shell: Microsoft Edge WebView2 runtime, normally already present on Windows 10/11.
 
-### ⚡ Quick Install for Windows (Using Winget)
-
-Open a PowerShell terminal as Administrator and run:
-
-```powershell
-winget install Git.Git
-winget install GitHub.GitLFS
-winget install Gyan.FFmpeg
-winget install eSpeak-NG.eSpeak-NG
-```
-
-## 🚀 Clone & Setup
-
-1. **Clone the repository:**
-   Make sure you have Git LFS installed *before* cloning.
-
-   ```powershell
-   git lfs install
-   git clone <repo-url>
-   cd JARVIS
-   git lfs pull
-   ```
-
-2. **Run the setup script:**
-   - **Windows:** `.\setup.ps1`
-   - **Linux/macOS/WSL:** `./setup.sh`
-
-## 💻 Running J.A.R.V.I.S
-
-To start the assistant with the integrated Desktop Application (Recommended):
-
-```powershell
-python start_app.py
-```
-
-*If you strictly only want to run the backend and use a browser (not recommended), run `python src/backend/jarvis_backend.py` and navigate to `http://localhost:5002`.*
-
-## ⚙️ Environment Variables (.env)
-
-Copy `.env.example` to `.env` and add your API keys. Minimum required:
-
-- `GROQ_API_KEY`: Your Groq API key for fast LLM inference.
-- `JARVIS_API_TOKEN`: Recommended token for critical API routes.
-
-## 🔒 Security Model
-
-Tool execution is governed by the formal policy table in `src/backend/core/security/tool_policy.py`. Critical tools (e.g., read files, control PC) require an authorized administrator session. Keep J.A.R.V.I.S. bound to `localhost` unless you add production-grade authentication.
-
-## 🧪 Testing
-
-Run the full verification suite before committing:
-
-```powershell
-ruff check src\ tests\
-python -m pytest -q -p no:cacheprovider
-```
-
----
-
-<a id="español"></a>
-
-# 🇪🇸 Español
-
-J.A.R.V.I.S. es un asistente de IA local de escritorio con un backend en Python/Quart, capacidades de entrada de voz, TTS Piper, memoria por perfil, herramientas de escritorio locales e integraciones opcionales (Spotify, Telegram).
-
-El objetivo principal es Windows. Algunas funciones de audio, control de escritorio y telemetría del sistema dependen de las API de Windows.
-
-**⚠️ Recomendación Importante:**
-Recomendamos encarecidamente ejecutar J.A.R.V.I.S. a través de la aplicación de escritorio (`start_app.py`) en lugar de tu navegador web estándar. Los navegadores tradicionales suelen tener problemas de estabilidad y permisos con el micrófono.
-
-**🛑 Disclaimer (Fase Alpha):**
-J.A.R.V.I.S. se encuentra actualmente en una etapa **Alpha**. Ten en cuenta que el sistema **contiene varios errores y bugs conocidos**, algunas funciones podrían ser inestables y la experiencia en general aún está siendo pulida. Úsalo bajo tu propia responsabilidad y siéntete libre de reportar los fallos que encuentres en la sección de Issues.
-
-## ✨ Funciones Principales
-
-- Chat por voz con transcripción Whisper y TTS Piper.
-- Cambio de idioma en tiempo real entre inglés y español para prompts, TTS, etiquetas de UI y respuestas.
-- Registro de voz del administrador con perfil biométrico de varias muestras.
-- Reconocimiento de invitados y registro corto de voz.
-- Memoria por perfil: facts privados, historial de chat y facts compartidos.
-- Comandos de reproducción en Spotify y comportamiento opcional de automix.
-- Clima, noticias, recordatorios y ruteo dinámico de herramientas.
-- Integración con bot de Telegram y filtrado por `TELEGRAM_CHAT_ID`.
-- Control local del sistema detrás de autorización y política de seguridad.
-- Endpoints de observabilidad para métricas, auditoría y monitoreo.
-- Shell de escritorio con pywebview y almacenamiento persistente de WebView2.
-
-## 🏛️ Arquitectura
-
-Entradas principales del backend:
-
-- `src/backend/jarvis_backend.py`: app principal Quart/Hypercorn en `http://localhost:5002`.
-- `src/backend/core/jarvis_brain.py`: fachada pública del cerebro.
-- `src/backend/core/brain/`: ruteo LLM, prompts, tool manager y motor de seguridad.
-- `src/backend/api/`: adaptadores HTTP.
-- `src/backend/voice/`: módulos del dominio de voz.
-- `src/backend/tools/`: herramientas integradas del asistente.
-- `src/backend/services/`: monitoreo, Telegram, memoria y seguridad.
-
-## 🛠️ Requisitos del Sistema
-
-- **Python 3.11 o 3.12**
-- **Git LFS**: Requerido para descargar los modelos de voz pesados.
-- **FFmpeg**: Debe estar instalado y en el `PATH` para conversión de audio.
-- **eSpeak NG** (Windows): Requerido para la fonemización de Piper (`C:\Program Files\eSpeak NG`).
-
-### ⚡ Instalación Rápida en Windows (Usando Winget)
-
-Abre PowerShell como Administrador y ejecuta:
+Useful Windows install commands:
 
 ```powershell
 winget install Git.Git
@@ -170,48 +48,153 @@ winget install Gyan.FFmpeg
 winget install eSpeak-NG.eSpeak-NG
 ```
 
-## 🚀 Clonación e Instalación
+macOS/Linux can run the backend and web UI, but Windows-only features such as some telemetry, volume control, and native desktop control may degrade or return controlled error messages.
 
-1. **Clonar el repositorio:**
-   Asegúrate de tener Git LFS instalado *antes* de clonar.
+## Install From a Fresh Clone
 
-   ```powershell
-   git lfs install
-   git clone <repo-url>
-   cd JARVIS
-   git lfs pull
-   ```
+```powershell
+git lfs install
+git clone https://github.com/SrDarkoll/J.A.R.V.I.S.git
+cd J.A.R.V.I.S
+git lfs pull
+```
 
-2. **Ejecutar el script de setup:**
-   - **Windows:** `setup.bat` (o `.\setup.ps1` en PowerShell)
-   - **Linux/macOS/WSL:** `./setup.sh`
+Windows:
 
-## 💻 Ejecutando J.A.R.V.I.S
+```powershell
+.\setup.ps1
+```
 
-Para iniciar el asistente con la aplicación de escritorio (Recomendado):
+Windows with test tools:
+
+```powershell
+.\setup.ps1 -Dev
+```
+
+Linux/macOS:
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+Linux/macOS with test tools:
+
+```bash
+./setup.sh --dev
+```
+
+Manual setup:
+
+```bash
+python -m venv venv
+# Windows: .\venv\Scripts\Activate.ps1
+# Linux/macOS: source venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+## Environment
+
+Copy `.env.example` to `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Minimum for real LLM responses:
+
+- `GROQ_API_KEY` or `MINIMAX_API_KEY`
+
+Strongly recommended before LAN access or shared-machine use:
+
+- `JARVIS_API_TOKEN`
+
+Optional integrations:
+
+- Spotify: `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`
+- Telegram: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`
+- Search/news providers: `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`
+
+Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
+
+## Running
+
+Recommended desktop app:
 
 ```powershell
 python start_app.py
 ```
 
-*Si solo quieres levantar el backend y usar un navegador (no recomendado), ejecuta `python src/backend/jarvis_backend.py` y navega a `http://localhost:5002`.*
-
-## ⚙️ Variables de Entorno (.env)
-
-Copia `.env.example` a `.env` y añade tus claves de API. Requerido como mínimo:
-
-- `GROQ_API_KEY`: Para respuestas principales de chat/modelo.
-- `JARVIS_API_TOKEN`: Token recomendado para rutas críticas de API.
-
-## 🔒 Modelo de Seguridad
-
-La ejecución de herramientas se gobierna desde la política en `src/backend/core/security/tool_policy.py`. Herramientas críticas requieren sesión autorizada de administrador. Mantén J.A.R.V.I.S. enlazado a `localhost`.
-
-## 🧪 Pruebas
-
-Ejecuta la verificación completa antes de hacer commit:
+Backend only:
 
 ```powershell
-ruff check src\ tests\
-python -m pytest -q -p no:cacheprovider
+python src/backend/jarvis_backend.py
 ```
+
+Then open:
+
+```text
+http://localhost:5002
+```
+
+## Testing
+
+Install dev tools first:
+
+```powershell
+.\setup.ps1 -Dev
+```
+
+Run all tests:
+
+```powershell
+pytest -q
+```
+
+`pytest.ini` restricts collection to `tests/` and ignores local runtime/cache folders. This prevents old W&B/temp directories from breaking collection on Windows.
+
+Ruff is useful for future cleanup, but it is not currently enforced as a release gate because the codebase still has legacy style debt.
+
+## Spotify Notes
+
+Jarvis uses Spotify playback APIs and builds an AutoMix playlist/queue after a seed song or mix request. The mix strategy is:
+
+- start from the requested song/artist/genre seed;
+- add user top tracks when `user-top-read` is granted;
+- add recently played tracks when `user-read-recently-played` is granted;
+- add genre-based search results from seed artist genres and user top artist genres;
+- add playlist tracks from related playlist searches when the Spotify account and playlist visibility allow it;
+- fall back to album/artist context when personalization is unavailable.
+
+If you already authenticated Spotify before these scopes existed, delete `src/backend/.cache-jarvis` and authenticate again.
+
+Spotify API limitations:
+
+- Spotify does not expose a general "users also listen to" endpoint for arbitrary users.
+- Some recommendation/audio-analysis style endpoints are not available to all apps or have changed over time. Jarvis treats audio features as optional and falls back when unavailable.
+- Playlist content access may be limited by Spotify app mode, ownership, collaboration, and privacy.
+- Direct playback control requires Spotify Premium and an active device.
+
+## GitHub-Ready Checklist
+
+Before publishing or tagging a release:
+
+- `git lfs ls-files` shows the `.onnx` models.
+- `.env` is not tracked.
+- `.env.example` is up to date.
+- `pytest -q` passes.
+- `python -m compileall -q src/backend` passes.
+- `node --check src/frontend/static/js/main.js` passes.
+- `node --check src/frontend/static/js/modules/api.js` passes.
+- A clean clone can import `jarvis_backend` and answer `/api/status`.
+
+## Troubleshooting
+
+- Missing model files: run `git lfs pull`.
+- Spotify says auth expired or scopes missing: delete `src/backend/.cache-jarvis`, restart, and authenticate again.
+- No Spotify device: open Spotify on a device and play one song once.
+- TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.
+- Audio conversion fails: verify FFmpeg is on `PATH`.
+- Missing API keys: Jarvis should still start, but provider-specific tools will return setup/configuration messages instead of crashing.

@@ -1,4 +1,14 @@
 from __future__ import annotations
+import sys
+
+
+def _make_safe_mock_tool():
+    """Creates a mock that absolutely prevents any side effects."""
+    def safe_mock(tool_name, args, user_input, source="router"):
+        if tool_name in ("reproducir_en_spotify", "reproducir_mix_spotify", "abrir_navegador", "abrir_youtube"):
+            return f"{tool_name}:mocked"
+        return f"{tool_name}:ok"
+    return safe_mock
 
 
 def test_compound_router_executes_music_then_weather(monkeypatch):
@@ -67,6 +77,24 @@ def test_router_handles_spanish_reproduzcas_spotify_song(monkeypatch):
     assert reply == "reproducir_en_spotify:ok"
     assert [call[0] for call in calls] == ["reproducir_en_spotify"]
     assert calls[0][1]["cancion"] == "1000 miles de vanessa carlton"
+
+
+def test_router_routes_spotify_mix_request_to_mix_tool(monkeypatch):
+    from core.brain import processor, router
+
+    calls = []
+
+    def fake_tool(tool_name, args, user_input, source="router"):
+        calls.append((tool_name, args, source))
+        return f"{tool_name}:ok"
+
+    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
+
+    reply = router._router_hibrido("pon un mix similar a bad bunny en spotify")
+
+    assert reply == "reproducir_mix_spotify:ok"
+    assert [call[0] for call in calls] == ["reproducir_mix_spotify"]
+    assert calls[0][1]["semilla"] == "bad bunny"
 
 
 def test_compound_router_handles_spanish_music_then_search(monkeypatch):

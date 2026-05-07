@@ -15,7 +15,7 @@ def is_backend_running(url):
     try:
         response = requests.get(f"{url}/api/status", timeout=1)
         return response.status_code == 200
-    except:
+    except requests.RequestException:
         return False
 
 def start_app():
@@ -51,15 +51,15 @@ def start_app():
         )
         
         # Wait up to 90s because local ML models can be heavy.
-        intentos = 0
-        while intentos < 90:
+        attempts = 0
+        while attempts < 90:
             if is_backend_running(url):
                 print("[SYSTEM] Server ready.")
                 break
             time.sleep(1)
-            intentos += 1
-            if intentos % 10 == 0:
-                print(f"[SYSTEM] Waiting for core ({intentos}s)...")
+            attempts += 1
+            if attempts % 10 == 0:
+                print(f"[SYSTEM] Waiting for core ({attempts}s)...")
         else:
             print("[ERROR] Core did not respond after 90s. Check terminal.")
             if backend_proc: backend_proc.terminate()

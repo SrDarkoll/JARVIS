@@ -11,7 +11,7 @@ from tools.browser import (
     leer_pagina_navegador, cerrar_navegador_playwright,
     abrir_youtube,
 )
-from tools.spotify import reproducir_en_spotify, controlar_reproduccion
+from tools.spotify import reproducir_en_spotify, reproducir_mix_spotify, controlar_reproduccion
 from tools.system import (
     ajustar_volumen, modo_no_molestar, controlar_pc,
     abrir_aplicacion, ver_procesos_pesados, matar_proceso,
@@ -36,7 +36,7 @@ def _get_base_tools_impl():
         abrir_navegador, navegar_en_navegador, click_en_navegador,
         escribir_en_navegador, leer_pagina_navegador, cerrar_navegador_playwright,
         abrir_youtube, leer_archivo, poner_recordatorio,
-        reproducir_en_spotify, controlar_reproduccion, ajustar_volumen,
+        reproducir_en_spotify, reproducir_mix_spotify, controlar_reproduccion, ajustar_volumen,
         modo_no_molestar, controlar_pc, abrir_aplicacion,
         ver_procesos_pesados, matar_proceso, borrar_memoria,
         listar_ventanas, enfocar_ventana, controlar_ventana,

@@ -302,6 +302,28 @@ def _extract_music_request(text: str) -> str:
     return ""
 
 
+def _extract_spotify_mix_request(text: str) -> str:
+    raw = reparar_unicode(str(text or "")).strip().lower()
+    if not raw or not any(k in raw for k in ["mix", "playlist", "radio", "recomend"]):
+        return ""
+    patterns = [
+        r"\b(?:pon|ponme|reproduce|play|toca|crea|arma)\s+(?:un\s+|una\s+)?(?:mix|playlist|radio|recomendaciones?)\s+(?:similar(?:es)?\s+a|basad[oa]s?\s+en|de|para|like|of|for)?\s*(.+)$",
+        r"\b(?:mix|playlist|radio|recomendaciones?)\s+(?:similar(?:es)?\s+a|basad[oa]s?\s+en|de|para|like|of|for)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE)
+        if not match:
+            continue
+        seed = match.group(1)
+        seed = re.sub(r"\b(?:en|on)\s+spotify\b", "", seed, flags=re.IGNORECASE)
+        seed = re.sub(r"\bspotify\b", "", seed, flags=re.IGNORECASE)
+        seed = _TRAILING_REQUEST_RE.sub("", seed)
+        seed = re.sub(r"\s+", " ", seed).strip(" \t\r\n,.;:!?")
+        if seed:
+            return seed
+    return ""
+
+
 def _format_compound_results(results: list[tuple[str, str]]) -> str:
     lines = [f"Listo. Ejecute {len(results)} acciones:"]
     for index, (_segment, result) in enumerate(results, start=1):
@@ -501,6 +523,18 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
         return str(
             _invocar_tool_wrapper(
                 "controlar_pc", {"accion": "cancelar"}, user_input, source="router"
+            )
+        )
+
+    mix_seed = _extract_spotify_mix_request(t)
+    if mix_seed:
+        obs_inc("router_hits", 1)
+        return str(
+            _invocar_tool_wrapper(
+                "reproducir_mix_spotify",
+                {"semilla": mix_seed},
+                user_input,
+                source="router",
             )
         )
 
@@ -792,6 +826,18 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
                     "abrir_navegador", {"destino": dest_raw}, user_input, source="router"
                 )
             )
+
+    mix_seed = _extract_spotify_mix_request(t)
+    if mix_seed:
+        obs_inc("router_hits", 1)
+        return str(
+            _invocar_tool_wrapper(
+                "reproducir_mix_spotify",
+                {"semilla": mix_seed},
+                user_input,
+                source="router",
+            )
+        )
 
     # Spotify / YouTube Play
     cancion = _extract_music_request(t)

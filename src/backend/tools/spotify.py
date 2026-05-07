@@ -4,6 +4,10 @@ import os, re, time as _time
 import requests as http_requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+try:
+    from spotipy.cache_handler import CacheFileHandler
+except Exception:  # pragma: no cover - compatibility with older spotipy releases
+    CacheFileHandler = None
 from langchain_core.tools import tool
 
 from tools._common import BASE_DIR, _open_url_or_app
@@ -21,19 +25,27 @@ print(f"  [SPOTIFY] Cache: {SPOTIFY_CACHE}")
 SPOTIFY_CLIENT_ID = jarvis_config.SPOTIPY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET = jarvis_config.SPOTIPY_CLIENT_SECRET
 SPOTIFY_REDIRECT_URI = jarvis_config.SPOTIPY_REDIRECT_URI
-SPOTIFY_SCOPE = "user-modify-playback-state user-read-playback-state playlist-read-private playlist-modify-private"
+SPOTIFY_SCOPE = (
+    "user-modify-playback-state user-read-playback-state "
+    "playlist-read-private playlist-modify-private "
+    "user-top-read user-read-recently-played"
+)
 
 SPOTIFY_ENABLED = bool(SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET)
 
 if SPOTIFY_ENABLED:
+    auth_kwargs = {
+        "client_id": SPOTIFY_CLIENT_ID,
+        "client_secret": SPOTIFY_CLIENT_SECRET,
+        "redirect_uri": SPOTIFY_REDIRECT_URI,
+        "scope": SPOTIFY_SCOPE,
+    }
+    if CacheFileHandler is not None:
+        auth_kwargs["cache_handler"] = CacheFileHandler(cache_path=SPOTIFY_CACHE)
+    else:
+        auth_kwargs["cache_path"] = SPOTIFY_CACHE
     sp = spotipy.Spotify(
-        auth_manager=SpotifyOAuth(
-            client_id=SPOTIFY_CLIENT_ID,
-            client_secret=SPOTIFY_CLIENT_SECRET,
-            redirect_uri=SPOTIFY_REDIRECT_URI,
-            scope=SPOTIFY_SCOPE,
-            cache_path=SPOTIFY_CACHE,
-        )
+        auth_manager=SpotifyOAuth(**auth_kwargs)
     )
 else:
     sp = None
@@ -153,27 +165,62 @@ def _spotify_track_available_en_mercado(track: dict) -> bool:
     return True
 
 
-def _spotify_search_tracks(q: str, limit: int = 10) -> list:
+def _spotify_items_search(payload: dict, item_type: str = "track") -> list:
+    if not isinstance(payload, dict):
+        return []
+    root_items = payload.get("items")
+    if isinstance(root_items, list):
+        return root_items
+    node = payload.get(f"{item_type}s")
+    if isinstance(node, dict):
+        nested_items = node.get("items")
+        if isinstance(nested_items, list):
+            return nested_items
+    tracks_node = payload.get("tracks")
+    if isinstance(tracks_node, dict):
+        nested_items = tracks_node.get("items")
+        if isinstance(nested_items, list):
+            return nested_items
+    return []
+
+
+def _spotify_search_items(q: str, item_type: str = "track", limit: int = 10) -> list:
     ready, _ = _spotify_ready()
     if not ready:
         return []
     market = _spotify_market_objetivo()
+    total_limit = max(1, min(int(limit), 50))
+    found = []
+    offset = 0
     try:
-        if market:
-            payload = sp.search(q=q, limit=limit, type="track", market=market)
-        else:
-            payload = sp.search(q=q, limit=limit, type="track")
-        return _spotify_items_search(payload)
-    except TypeError:
-        try:
-            payload = sp.search(q=q, limit=limit, type="track")
-            return _spotify_items_search(payload)
-        except Exception as e:
-            print(f"  [SPOTIFY] search error: {e}")
-            return []
+        while len(found) < total_limit:
+            page_limit = min(10, total_limit - len(found))
+            kwargs = {"q": q, "limit": page_limit, "type": item_type}
+            if market and item_type == "track":
+                kwargs["market"] = market
+            if offset:
+                kwargs["offset"] = offset
+            try:
+                payload = sp.search(**kwargs)
+            except TypeError:
+                kwargs.pop("market", None)
+                kwargs.pop("offset", None)
+                payload = sp.search(**kwargs)
+            items = _spotify_items_search(payload, item_type=item_type)
+            if not items:
+                break
+            found.extend(items)
+            if len(items) < page_limit:
+                break
+            offset += len(items)
+        return found[:total_limit]
     except Exception as e:
         print(f"  [SPOTIFY] search error: {e}")
         return []
+
+
+def _spotify_search_tracks(q: str, limit: int = 10) -> list:
+    return _spotify_search_items(q=q, item_type="track", limit=limit)
 
 
 def _spotify_album_tracks(album_id: str, limit: int = 50) -> list:
@@ -229,20 +276,6 @@ def _spotify_access_token() -> str | None:
         print(f"  [SPOTIFY] get_cached_token error: {e}")
 
     return None
-
-
-def _spotify_items_search(payload: dict) -> list:
-    if not isinstance(payload, dict):
-        return []
-    root_items = payload.get("items")
-    if isinstance(root_items, list):
-        return root_items
-    tracks_node = payload.get("tracks")
-    if isinstance(tracks_node, dict):
-        nested_items = tracks_node.get("items")
-        if isinstance(nested_items, list):
-            return nested_items
-    return []
 
 
 def _spotify_dispositivo_objetivo():
@@ -529,6 +562,192 @@ def _spotify_start_playlist_context(
 # ─────────────────────────────────────────
 # Similares (radio)
 # ─────────────────────────────────────────
+def _spotify_current_user_top_tracks(limit: int = 10) -> list[dict]:
+    if sp is None or not hasattr(sp, "current_user_top_tracks"):
+        return []
+    tracks = []
+    for time_range in ("short_term", "medium_term"):
+        try:
+            page = sp.current_user_top_tracks(
+                limit=max(1, min(int(limit), 10)),
+                time_range=time_range,
+            ) or {}
+            for item in page.get("items", []) or []:
+                if isinstance(item, dict):
+                    tracks.append(item)
+        except Exception as e:
+            print(f"  [SPOTIFY] current_user_top_tracks error: {e}")
+            break
+        if tracks:
+            break
+    return tracks
+
+
+def _spotify_recently_played_tracks(limit: int = 10) -> list[dict]:
+    if sp is None or not hasattr(sp, "current_user_recently_played"):
+        return []
+    try:
+        page = sp.current_user_recently_played(limit=max(1, min(int(limit), 10))) or {}
+        tracks = []
+        for item in page.get("items", []) or []:
+            track = (item or {}).get("track")
+            if isinstance(track, dict):
+                tracks.append(track)
+        return tracks
+    except Exception as e:
+        print(f"  [SPOTIFY] current_user_recently_played error: {e}")
+        return []
+
+
+def _spotify_artist_genres(artist_ids: list[str]) -> list[str]:
+    genres = []
+    if sp is None or not hasattr(sp, "artist"):
+        return genres
+    for artist_id in artist_ids[:3]:
+        if not artist_id:
+            continue
+        try:
+            artist = sp.artist(artist_id) or {}
+            for genre in artist.get("genres", []) or []:
+                genre = str(genre or "").strip().lower()
+                if genre and genre not in genres:
+                    genres.append(genre)
+        except Exception as e:
+            print(f"  [SPOTIFY] artist genres error: {e}")
+    return genres
+
+
+def _spotify_user_top_genres(limit: int = 8) -> list[str]:
+    genres = []
+    if sp is None or not hasattr(sp, "current_user_top_artists"):
+        return genres
+    try:
+        page = sp.current_user_top_artists(
+            limit=max(1, min(int(limit), 10)),
+            time_range="medium_term",
+        ) or {}
+        for artist in page.get("items", []) or []:
+            for genre in (artist or {}).get("genres", []) or []:
+                genre = str(genre or "").strip().lower()
+                if genre and genre not in genres:
+                    genres.append(genre)
+    except Exception as e:
+        print(f"  [SPOTIFY] current_user_top_artists error: {e}")
+    return genres
+
+
+def _spotify_audio_feature_queries(track_id: str | None) -> list[str]:
+    if not track_id or sp is None or not hasattr(sp, "audio_features"):
+        return []
+    try:
+        features = (sp.audio_features([track_id]) or [None])[0] or {}
+    except Exception as e:
+        print(f"  [SPOTIFY] audio_features unavailable: {e}")
+        return []
+    queries = []
+    danceability = float(features.get("danceability") or 0)
+    energy = float(features.get("energy") or 0)
+    valence = float(features.get("valence") or 0)
+    acousticness = float(features.get("acousticness") or 0)
+    if danceability >= 0.65:
+        queries.append("dance mix")
+    if energy >= 0.70:
+        queries.append("high energy mix")
+    if valence <= 0.35:
+        queries.append("moody chill")
+    if acousticness >= 0.55:
+        queries.append("acoustic mix")
+    return queries[:3]
+
+
+def _spotify_related_playlist_tracks(
+    seed_name: str,
+    seed_artist_names: list[str],
+    genres: list[str],
+    limit: int,
+) -> list[dict]:
+    if sp is None or not hasattr(sp, "playlist_items"):
+        return []
+    queries = []
+    for genre in genres[:3]:
+        queries.append(f"{genre} mix")
+    for artist_name in seed_artist_names[:2]:
+        queries.append(f"{artist_name} radio")
+    if seed_name:
+        queries.append(f"{seed_name} mix")
+
+    tracks = []
+    for query in queries:
+        if len(tracks) >= limit:
+            break
+        playlists = _spotify_search_items(query, item_type="playlist", limit=5)
+        for playlist in playlists:
+            playlist_id = (playlist or {}).get("id")
+            if not playlist_id:
+                continue
+            try:
+                page = sp.playlist_items(
+                    playlist_id=playlist_id,
+                    limit=max(1, min(limit - len(tracks), 20)),
+                    additional_types=("track",),
+                ) or {}
+            except TypeError:
+                try:
+                    page = sp.playlist_items(
+                        playlist_id=playlist_id,
+                        limit=max(1, min(limit - len(tracks), 20)),
+                    ) or {}
+                except Exception as e:
+                    print(f"  [SPOTIFY] playlist recommendation error: {e}")
+                    page = {}
+            except Exception as e:
+                print(f"  [SPOTIFY] playlist recommendation error: {e}")
+                page = {}
+            for item in page.get("items", []) or []:
+                track = (item or {}).get("track")
+                if isinstance(track, dict):
+                    tracks.append(track)
+                    if len(tracks) >= limit:
+                        break
+            if len(tracks) >= limit:
+                break
+    return tracks
+
+
+def _spotify_dynamic_mix_candidates(track: dict, limit: int) -> list[dict]:
+    seed_artists = track.get("artists") or []
+    seed_artist_names = [a.get("name") for a in seed_artists if a.get("name")]
+    seed_artist_ids = [a.get("id") for a in seed_artists if a.get("id")]
+    seed_name = str(track.get("name") or "").strip()
+
+    candidates = []
+    candidates.extend(_spotify_current_user_top_tracks(limit=limit))
+    candidates.extend(_spotify_recently_played_tracks(limit=limit))
+
+    genres = []
+    for genre in _spotify_artist_genres(seed_artist_ids) + _spotify_user_top_genres():
+        if genre and genre not in genres:
+            genres.append(genre)
+
+    for genre in genres[:6]:
+        candidates.extend(_spotify_search_tracks(q=f'genre:"{genre}"', limit=min(limit, 10)))
+        if len(candidates) >= limit * 3:
+            break
+
+    for query in _spotify_audio_feature_queries(track.get("id")):
+        candidates.extend(_spotify_search_tracks(q=query, limit=min(limit, 10)))
+
+    candidates.extend(
+        _spotify_related_playlist_tracks(
+            seed_name=seed_name,
+            seed_artist_names=seed_artist_names,
+            genres=genres,
+            limit=max(limit, 10),
+        )
+    )
+    return candidates
+
+
 def _spotify_obtener_similares(track: dict, limite: int = SPOTIFY_RADIO_QUEUE_SIZE):
     limite = max(1, min(int(limite), 30))
     vistos_ids = {track.get("id")}
@@ -583,6 +802,10 @@ def _spotify_obtener_similares(track: dict, limite: int = SPOTIFY_RADIO_QUEUE_SI
         if seed_index >= 0:
             album_tracks = album_tracks[seed_index + 1 :] + album_tracks[:seed_index]
         _agregar_candidatos(album_tracks, max_items=max(1, min(4, limite)))
+
+    if len(similares) < limite:
+        dynamic_candidates = _spotify_dynamic_mix_candidates(track, limit=limite)
+        _agregar_candidatos(dynamic_candidates, max_items=limite - len(similares))
 
     def _artist_top_tracks(artist_id: str) -> list[dict]:
         market = _spotify_market_objetivo()
@@ -1094,6 +1317,22 @@ def reproducir_en_spotify(cancion: str) -> str:
         f"I could not play {label} right now. Check that Spotify is open and playing on a device.",
         f"No pude reproducir {label} en este momento. Revisá que Spotify esté abierto y con una canción sonando en algún dispositivo.",
     )
+
+
+def _play_spotify_seed(seed: str) -> str:
+    return reproducir_en_spotify.invoke({"cancion": seed})
+
+
+@tool
+def reproducir_mix_spotify(semilla: str) -> str:
+    """Reproduce una semilla de Spotify y construye un AutoMix dinamico alrededor de ella."""
+    seed = str(semilla or "").strip()
+    if not seed:
+        return _spotify_text(
+            "Tell me an artist, genre, playlist, or song to build the mix.",
+            "Dime un artista, genero, playlist o cancion para construir el mix.",
+        )
+    return _play_spotify_seed(seed)
 
 
 def _mensaje_error_spotify(tipo: str, track_name: str, artist: str) -> str:

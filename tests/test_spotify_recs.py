@@ -10,6 +10,123 @@ def test_spotify_ready_contract():
         assert isinstance(reason, str)
 
 
+def test_spotify_scope_supports_dynamic_mix_inputs():
+    assert "user-top-read" in spotify.SPOTIFY_SCOPE
+    assert "user-read-recently-played" in spotify.SPOTIFY_SCOPE
+
+
+def test_spotify_dynamic_mix_uses_user_taste_and_genre_candidates(monkeypatch):
+    class FakeSpotify:
+        def __init__(self):
+            self.search_queries = []
+
+        def current_user(self):
+            return {}
+
+        def album_tracks(self, album_id, limit=50):
+            return {"items": []}
+
+        def artist(self, artist_id):
+            assert artist_id == "seed_artist"
+            return {"id": artist_id, "name": "Seed Artist", "genres": ["latin pop"]}
+
+        def current_user_top_tracks(self, limit=10, time_range="medium_term"):
+            return {
+                "items": [
+                    {
+                        "id": "top-user",
+                        "uri": "spotify:track:top-user",
+                        "name": "User Top Track",
+                        "artists": [{"id": "other1", "name": "Other Artist"}],
+                    }
+                ]
+            }
+
+        def current_user_recently_played(self, limit=10):
+            return {
+                "items": [
+                    {
+                        "track": {
+                            "id": "recent-user",
+                            "uri": "spotify:track:recent-user",
+                            "name": "Recent Track",
+                            "artists": [{"id": "other2", "name": "Recent Artist"}],
+                        }
+                    }
+                ]
+            }
+
+        def current_user_top_artists(self, limit=8, time_range="medium_term"):
+            return {
+                "items": [
+                    {"id": "top-artist", "name": "Top Artist", "genres": ["reggaeton"]}
+                ]
+            }
+
+        def search(self, q, limit=10, type="track", **kwargs):
+            self.search_queries.append((q, type, limit, kwargs))
+            return {
+                "tracks": {
+                    "items": [
+                        {
+                            "id": "genre-latin",
+                            "uri": "spotify:track:genre-latin",
+                            "name": "Genre Match",
+                            "artists": [{"id": "other3", "name": "Genre Artist"}],
+                        }
+                    ]
+                }
+            }
+
+        def artist_top_tracks(self, *args, **kwargs):
+            raise AssertionError("dynamic mix should not depend on removed artist top tracks")
+
+        def artist_related_artists(self, *args, **kwargs):
+            return {"artists": []}
+
+    fake = FakeSpotify()
+    monkeypatch.setattr(spotify, "sp", fake)
+    monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
+
+    seed = {
+        "id": "seed",
+        "uri": "spotify:track:seed",
+        "name": "Seed",
+        "album": {"id": "album1"},
+        "artists": [{"id": "seed_artist", "name": "Seed Artist"}],
+    }
+
+    similares = spotify._spotify_obtener_similares(seed, limite=3)
+
+    assert [track["uri"] for track in similares] == [
+        "spotify:track:top-user",
+        "spotify:track:recent-user",
+        "spotify:track:genre-latin",
+    ]
+    assert any('genre:"latin pop"' in q for q, _type, _limit, _kwargs in fake.search_queries)
+
+
+def test_spotify_mix_tool_is_exported_in_base_tools():
+    from tools import _get_base_tools_impl
+
+    tool_names = {getattr(tool, "name", "") for tool in _get_base_tools_impl()}
+
+    assert "reproducir_mix_spotify" in tool_names
+
+
+def test_spotify_mix_tool_delegates_to_spotify_playback(monkeypatch):
+    calls = []
+
+    def fake_play(seed):
+        calls.append(seed)
+        return "mix-ok"
+
+    monkeypatch.setattr(spotify, "_play_spotify_seed", fake_play)
+
+    assert spotify.reproducir_mix_spotify.invoke({"semilla": "latin pop"}) == "mix-ok"
+    assert calls == ["latin pop"]
+
+
 def test_spotify_obtener_similares_handles_missing_seed_id():
     seed = {
         "name": "Track sin id",

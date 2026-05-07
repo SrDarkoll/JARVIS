@@ -184,14 +184,14 @@ def _preflight(
         return contextual, False
 
     # 3. Reminders
-    tx_rec, min_rec = brain_utils.parsear_recordatorio(user_input_norm)
-    if tx_rec and min_rec:
-        agregar_recordatorio(tx_rec, min_rec)
-        hora = (datetime.now() + timedelta(minutes=min_rec)).strftime("%H:%M")
+    reminder_text, reminder_minutes = brain_utils.parse_reminder(user_input_norm)
+    if reminder_text and reminder_minutes:
+        agregar_recordatorio(reminder_text, reminder_minutes)
+        reminder_time = (datetime.now() + timedelta(minutes=reminder_minutes)).strftime("%H:%M")
         return (
-            f"Understood, Administrator. I will remind you of '{tx_rec}' at {hora}."
+            f"Understood, Administrator. I will remind you of '{reminder_text}' at {reminder_time}."
             if pid == DEFAULT_PROFILE_ID
-            else f"Understood. I will remind you of '{tx_rec}' at {hora}."
+            else f"Understood. I will remind you of '{reminder_text}' at {reminder_time}."
         ), False
 
     # 4. Volume + Specific error log

@@ -13,6 +13,14 @@ const CHAT_STREAM_URL = '/api/chat/stream';
 const ENABLE_STREAMING = true;
 
 document.addEventListener('DOMContentLoaded', () => {
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+                .then((registration) => console.log('ServiceWorker registered:', registration.scope))
+                .catch((err) => console.log('ServiceWorker error:', err));
+        });
+    }
+
     // --- ELEMENTOS DEL DOM ---
     const dom = {
         loader: document.getElementById('loader'),
@@ -128,10 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!fullText) return '';
         const wakeMatch = fullText.match(WAKE_WORD_REGEX);
         if (!wakeMatch || typeof wakeMatch.index !== 'number') return '';
-        const comando = fullText
+        const command = fullText
             .slice(wakeMatch.index + wakeMatch[0].length)
             .replace(/^[.,¡!¿?\s]+|[.,¡!¿?\s]+$/g, '');
-        return /[a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/.test(comando) ? comando : '';
+        return /[a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/.test(command) ? command : '';
     }
 
     function isWakeWordOnly(rawText) {
@@ -151,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let mediaRecorder = null;
     let audioChunks = [];
     let lastIdentifiedProfileId = null;
-    let lastIdentifiedNombre = t('label_admin');
+    let lastIdentifiedName = t('label_admin');
     let lastVoiceObsSignature = '';
     let latestInterimTranscript = '';
     let latestTranscriptConfidence = null;
@@ -243,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function getRandomWakeResponse() {
-        const nombre = lastIdentifiedNombre || t('label_admin');
+        const name = lastIdentifiedName || t('label_admin');
         const esOwner = (lastIdentifiedProfileId === null || lastIdentifiedProfileId === 'admin');
         
         if (esOwner) {
@@ -252,7 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             const responses = t('wake_guest');
             const resp = responses[Math.floor(Math.random() * responses.length)];
-            return resp.replace('{name}', nombre);
+            return resp.replace('{name}', name);
         }
     }
 
@@ -263,9 +271,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateButtonUI(mode) { ui.updateButtonUI(mode, dom.activateBtn); }
     function getGlobalAudioContext() { return voice.getGlobalAudioContext(); }
 
-    function saveProfile(profileId, nombre) {
+    function saveProfile(profileId, name) {
         lastIdentifiedProfileId = profileId;
-        lastIdentifiedNombre = nombre || t('label_guest');
+        lastIdentifiedName = name || t('label_guest');
         lastVoiceObsSignature = '';
     }
 
@@ -304,7 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const greetings = t('boot_greetings');
                     speak(greetings[Math.floor(Math.random() * greetings.length)], () => {
                         startPassiveListening();
-                        cargarNoticiasBackground();
+                        loadNewsBackground();
                     });
                     ui.addLogEntry(t('boot_protocols'));
                     window.addEventListener('resize', () => reactor.resize());
@@ -378,17 +386,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const profile = ev.profile_id || ev.top_profile_id || '--';
             const reqId = ev.request_id ? String(ev.request_id).slice(-10) : '---------';
 
-            item.innerHTML = `
-                <span class="voice-obs-header">[${time}] ${eventName}</span>
-                <span class="voice-obs-details">src=${source} | perfil=${profile} | sim=${sim} | req=${reqId}</span>
-            `;
+            const header = document.createElement('span');
+            header.className = 'voice-obs-header';
+            header.textContent = `[${time}] ${eventName}`;
+
+            const details = document.createElement('span');
+            details.className = 'voice-obs-details';
+            details.textContent = `src=${source} | perfil=${profile} | sim=${sim} | req=${reqId}`;
+
+            item.append(header, details);
             dom.voiceObsContent.appendChild(item);
         });
     }
 
     async function pollVoiceObservability() {
         try {
-            const data = await API.fetchObservabilidad(36);
+            const data = await API.fetchObservability(36);
             const events = Array.isArray(data?.events) ? data.events : [];
             const signature = events.slice(-8).map((ev) => `${ev?.ts || ''}|${ev?.event || ''}|${ev?.request_id || ''}`).join('::');
             if (signature !== lastVoiceObsSignature) {
@@ -672,10 +685,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (currentMode === 'active') {
-            finalizarEscuchaActiva();
+            finishActiveListening();
         } else {
-            const modoInactivo = ['passive', 'idle', 'transition'].includes(currentMode);
-            if (modoInactivo) {
+            const inactiveMode = ['passive', 'idle', 'transition'].includes(currentMode);
+            if (inactiveMode) {
                 setCurrentMode('transition', 'activate_btn_handoff');
                 clearPassiveRestartTimer();
                 clearActiveStartTimer();
@@ -862,7 +875,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (isFinalResult) {
                         const inlineCommand = extractCommandAfterWakeWord(transcript);
                         if (inlineCommand) {
-                            procesarWakeWordComando(inlineCommand);
+                            processWakeWordCommand(inlineCommand);
                             return;
                         }
                     }
@@ -908,29 +921,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Función para procesar comando después de wake word
         // Procesa inmediatamente el texto para eliminar latencia en comandos continuos
-        function procesarWakeWordComando(comando) {
-            if (!comando || comando.trim().length === 0) {
+        function processWakeWordCommand(command) {
+            if (!command || command.trim().length === 0) {
                 activateFromWakeWord();
                 return;
             }
 
             ui.addLogEntry('> Comando continuo detectado. Ejecutando directo para menor latencia...');
-            setTranscript(`"${comando}"`);
+            setTranscript(`"${command}"`);
 
             clearPassiveRestartTimer();
             clearActiveStartTimer();
             passiveErrorRestartPending = false;
             safeStopRecognition('passive');
             
-            // Poner modo 'active' para que finalizarEscuchaActiva lo intercepte
+            // Poner modo 'active' para que finishActiveListening lo intercepte
             setCurrentMode('active', 'wakeword_inline_fast');
-            fullTranscript = comando;
+            fullTranscript = command;
             latestInterimTranscript = '';
             activeCommandProcessRequested = false;
             updateButtonUI('active');
             
             // Terminar inmediatamente y mandar al backend sin grabar audio extra (cero latencia)
-            finalizarEscuchaActiva();
+            finishActiveListening();
         }
 
         activeRecognition = new SpeechRecognition();
@@ -1002,7 +1015,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: active onend ignorado (proceso ya solicitado)');
                     return;
                 }
-                finalizarEscuchaActiva();
+                finishActiveListening();
             }
         };
     }
@@ -1068,7 +1081,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             voice.startSilenceDetector(stream, () => {
                 if (currentMode === 'active') {
-                    finalizarEscuchaActiva();
+                    finishActiveListening();
                 }
             }, { silenceMs: 1300, minSpeechMs: 220, checkIntervalMs: 60 });
 
@@ -1114,10 +1127,10 @@ document.addEventListener('DOMContentLoaded', () => {
      * Finaliza la escucha activa de forma segura, garantizando que el MediaRecorder
      * termine de procesar los chunks antes de disparar el procesamiento.
      */
-    function finalizarEscuchaActiva() {
+    function finishActiveListening() {
         if (currentMode !== 'active') return;
         if (activeCommandProcessRequested) {
-            if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: finalizarEscuchaActiva ignorado (proceso ya solicitado)');
+            if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: finishActiveListening ignored (process already requested)');
             return;
         }
         activeCommandProcessRequested = true;
@@ -1127,10 +1140,10 @@ document.addEventListener('DOMContentLoaded', () => {
         safeStopRecognition('active');
 
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.onstop = () => procesarComandoDeVoz();
+            mediaRecorder.onstop = () => processVoiceCommand();
             mediaRecorder.stop();
         } else {
-            procesarComandoDeVoz();
+            processVoiceCommand();
         }
     }
 
@@ -1158,7 +1171,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function armActiveTimeout(ms = 6500) {
         if (activeTimeout) clearTimeout(activeTimeout);
-        activeTimeout = setTimeout(() => { if (currentMode === 'active') finalizarEscuchaActiva(); }, ms);
+        activeTimeout = setTimeout(() => { if (currentMode === 'active') finishActiveListening(); }, ms);
     }
 
     async function getLlamaResponseClassic(text) {
@@ -1311,9 +1324,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function procesarComandoDeVoz() {
+    async function processVoiceCommand() {
         if (currentMode !== 'active') return;
-        setCurrentMode('processing', 'procesarComandoDeVoz');
+        setCurrentMode('processing', 'processVoiceCommand');
         updateButtonUI('processing');
         if (activeTimeout) {
             clearTimeout(activeTimeout);
@@ -1506,24 +1519,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- CARGAR NOTICIAS ---
-    let noticiasPollIntentos = 0;
+    let newsPollAttempts = 0;
 
     /**
      * Versión background: no bloquea el arranque, solo lee si está listo.
      * Máximo 3 intentos rápidos, si no está listo lo ignora.
      */
-    async function cargarNoticiasBackground() {
-        const hoy = new Date().toISOString().split('T')[0];
+    async function loadNewsBackground() {
+        const today = new Date().toISOString().split('T')[0];
         const briefingKey = `briefing_fecha_${currentLang}`;
-        const yaLeido = localStorage.getItem(briefingKey);
-        if (yaLeido === hoy) {
+        const alreadyRead = localStorage.getItem(briefingKey);
+        if (alreadyRead === today) {
             addLogEntry("> Briefing ya emitido hoy. Modo centinela.");
             return;
         }
         try {
-            const data = await API.fetchNoticias();
+            const data = await API.fetchNews();
             if (data.listo && data.resumen) {
-                localStorage.setItem(briefingKey, hoy);
+                localStorage.setItem(briefingKey, today);
                 const oraciones = splitForTts(data.resumen);
                 speakSentenceChain([t('briefing_intro')], 0, () => {
                     speakSentenceChain(oraciones, 0, () => { });
@@ -1537,33 +1550,33 @@ document.addEventListener('DOMContentLoaded', () => {
      * Versión síncrona de boot: bloquea hasta que las noticias estén listas
      * o se agoten los intentos. Solo se usa en el arranque original.
      */
-    async function cargarNoticias() {
-        const hoy = new Date().toISOString().split('T')[0];
+    async function loadNews() {
+        const today = new Date().toISOString().split('T')[0];
         const briefingKey = `briefing_fecha_${currentLang}`;
-        const yaLeido = localStorage.getItem(briefingKey);
-        const ayer = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-        if (yaLeido && yaLeido < ayer) {
+        const alreadyRead = localStorage.getItem(briefingKey);
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        if (alreadyRead && alreadyRead < yesterday) {
             localStorage.removeItem(briefingKey);
         }
-        if (yaLeido === hoy) {
+        if (alreadyRead === today) {
             addLogEntry("> Briefing ya emitido hoy. Modo centinela.");
             startPassiveListening();
             return;
         }
         try {
-            const data = await API.fetchNoticias();
+            const data = await API.fetchNews();
             if (data.listo && data.resumen) {
-                localStorage.setItem(briefingKey, hoy);
+                localStorage.setItem(briefingKey, today);
                 const oraciones = splitForTts(data.resumen);
                 speakSentenceChain([t('briefing_intro')], 0, () => {
                     speakSentenceChain(oraciones, 0, () => startPassiveListening());
                 });
             } else {
-                if (++noticiasPollIntentos < 48) setTimeout(cargarNoticias, 5000);
+                if (++newsPollAttempts < 48) setTimeout(loadNews, 5000);
                 else startPassiveListening();
             }
         } catch (e) {
-            console.warn('[cargarNoticias]', e);
+            console.warn('[loadNews]', e);
             startPassiveListening();
         }
     }

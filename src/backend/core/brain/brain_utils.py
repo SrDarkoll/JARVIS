@@ -66,17 +66,32 @@ def _limpiar_contexto_memoria(texto: str) -> str:
         if len(kept) >= 8: break
     return "\n".join(f"- {x}" for x in kept)
 
-def parsear_recordatorio(user_input: str) -> tuple[str | None, int | None]:
-    match = re.search(r"remind me\s+(.+?)\s+in\s+(\d+)\s*(minutes?|hours?|min|h)", user_input, re.IGNORECASE)
-    if not match:
-        match = re.search(r"remind me\s+(.+?)\s+in\s+(\d+)(minutes?|hours?|min|h)", user_input, re.IGNORECASE)
-    if match:
-        texto = match.group(1).strip()
-        cantidad = int(match.group(2))
-        unidad = match.group(3).lower()
-        minutos = cantidad * 60 if "hour" in unidad or unidad == "h" else cantidad
-        return texto, minutos
+def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
+    text = reparar_unicode(str(user_input or "")).strip()
+    patterns = [
+        r"\bremind me\s+(.+?)\s+in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?|min|h)\b",
+        r"\bremind me\s+(.+?)\s+in\s+(\d+)(minutes?|mins?|hours?|hrs?|min|h)\b",
+        r"\b(?:recuerdame|recu.rdam[e]?|recordame|acu.rdam[e]?)\s+(?:de\s+)?(.+?)\s+en\s+(\d+)\s*(minutos?|mins?|min|horas?|hrs?|h)\b",
+        r"\b(?:pon(?:me)?\s+un\s+recordatorio(?:\s+para)?|recordatorio(?:\s+para)?)\s+(.+?)\s+en\s+(\d+)\s*(minutos?|mins?|min|horas?|hrs?|h)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        reminder_text = re.sub(
+            r"\b(?:por favor|please|gracias|thanks)\b.*$",
+            "",
+            match.group(1),
+            flags=re.IGNORECASE,
+        ).strip(" \t\r\n,.;:!?")
+        amount = int(match.group(2))
+        unit = match.group(3).lower()
+        minutes = amount * 60 if "hour" in unit or "hora" in unit or unit in {"h", "hr", "hrs"} else amount
+        return reminder_text, minutes
     return None, None
+
+def parsear_recordatorio(user_input: str) -> tuple[str | None, int | None]:
+    return parse_reminder(user_input)
 
 def parsear_comando_volumen(user_input: str) -> tuple[str | None, float | None]:
     t = (user_input or "").strip().lower()

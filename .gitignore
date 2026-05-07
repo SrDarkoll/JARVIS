@@ -36,6 +36,8 @@ ENV/
 scratch/
 tmp/
 temp/
+.pytest_cache/
+.ruff_cache/
 
 # J.A.R.V.I.S. Logs & Cache
 src/backend/logs/

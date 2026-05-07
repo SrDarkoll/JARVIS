@@ -21,7 +21,8 @@ from tools.browser import (  # noqa: F401
 )
 
 from tools.spotify import (  # noqa: F401
-    sp, _ULTIMA_CANCION_SOLICITADA, reproducir_en_spotify, controlar_reproduccion
+    sp, _ULTIMA_CANCION_SOLICITADA, reproducir_en_spotify, reproducir_mix_spotify,
+    controlar_reproduccion
 )
 
 from tools.system import (  # noqa: F401

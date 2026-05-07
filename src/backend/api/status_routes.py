@@ -18,14 +18,14 @@ status_bp = Blueprint("status", __name__)
 
 # Injected dependencies
 _services = None
-recordatorios_lock = None
+reminders_lock = None
 SECURITY_POLICY = None
 PROACTIVE_STATE = None
 PROACTIVE_LOCK = None
 PLUGINS_DIR = None
 DEFAULT_PROFILE_ID = None
-memoria_lock = None
-_perfiles_memoria = None
+memory_lock = None
+_profile_memory = None
 _proactive_snapshot = None
 
 
@@ -33,41 +33,41 @@ class StatusRoutesConfig:
     def __init__(
         self,
         services,
-        recordatorios_lock,
+        reminders_lock,
         security_policy,
         proactive_state,
         proactive_lock,
         plugins_dir,
         default_profile_id,
-        memoria_lock,
-        perfiles_memoria,
+        memory_lock,
+        profile_memory,
         proactive_snapshot_fn,
     ):
         self.services = services
-        self.recordatorios_lock = recordatorios_lock
+        self.reminders_lock = reminders_lock
         self.security_policy = security_policy
         self.proactive_state = proactive_state
         self.proactive_lock = proactive_lock
         self.plugins_dir = plugins_dir
         self.default_profile_id = default_profile_id
-        self.memoria_lock = memoria_lock
-        self.perfiles_memoria = perfiles_memoria
+        self.memory_lock = memory_lock
+        self.profile_memory = profile_memory
         self.proactive_snapshot_fn = proactive_snapshot_fn
 
 
 def init_status_routes(config: StatusRoutesConfig):
-    global _services, recordatorios_lock, SECURITY_POLICY
-    global PROACTIVE_STATE, PROACTIVE_LOCK, PLUGINS_DIR, DEFAULT_PROFILE_ID, memoria_lock
-    global _perfiles_memoria, _proactive_snapshot
+    global _services, reminders_lock, SECURITY_POLICY
+    global PROACTIVE_STATE, PROACTIVE_LOCK, PLUGINS_DIR, DEFAULT_PROFILE_ID, memory_lock
+    global _profile_memory, _proactive_snapshot
     _services = config.services
-    recordatorios_lock = config.recordatorios_lock
+    reminders_lock = config.reminders_lock
     SECURITY_POLICY = config.security_policy
     PROACTIVE_STATE = config.proactive_state
     PROACTIVE_LOCK = config.proactive_lock
     PLUGINS_DIR = config.plugins_dir
     DEFAULT_PROFILE_ID = config.default_profile_id
-    memoria_lock = config.memoria_lock
-    _perfiles_memoria = config.perfiles_memoria
+    memory_lock = config.memory_lock
+    _profile_memory = config.profile_memory
     _proactive_snapshot = config.proactive_snapshot_fn
 
 
@@ -87,13 +87,13 @@ def operator_status():
     from utils.jarvis_auth import verificar_autorizacion as _verificar_autorizacion
 
     profile_id = jarvis_state.get_active_profile_id(DEFAULT_PROFILE_ID or "admin")
-    with memoria_lock:
+    with memory_lock:
         profiles = {
             pid: {
                 "facts": str((pdata or {}).get("facts") or ""),
                 "history": list((pdata or {}).get("history") or []),
             }
-            for pid, pdata in (_perfiles_memoria or {}).items()
+            for pid, pdata in (_profile_memory or {}).items()
         }
 
     try:
@@ -124,6 +124,7 @@ def operator_status():
 
 
 @status_bp.route("/api/observability", methods=["GET"])
+@status_bp.route("/api/observabilidad", methods=["GET"])
 def api_observability():
     try:
         limit = max(1, min(int(request.args.get("limit", "80")), 300))
@@ -141,17 +142,31 @@ def api_observability():
 
 
 @status_bp.route("/api/news", methods=["GET"])
+@status_bp.route("/api/noticias", methods=["GET"])
 def get_news():
     from utils.jarvis_i18n import get_current_language
 
-    nc = _services.news_cache
-    if not nc["ready"]:
-        return jsonify({"ready": False, "summary": "", "language": get_current_language()}), 202
+    nc = getattr(_services, "news_cache", None) or getattr(_services, "noticias_cache", {})
+    ready = bool(nc.get("ready", nc.get("listo", False)))
+    summary = str(nc.get("summary", nc.get("resumen", "")) or "")
+    language = nc.get("language") or get_current_language()
+    if not ready:
+        return jsonify(
+            {
+                "ready": False,
+                "summary": "",
+                "listo": False,
+                "resumen": "",
+                "language": language,
+            }
+        ), 202
     return jsonify(
         {
             "ready": True,
-            "summary": nc["summary"],
-            "language": nc.get("language") or get_current_language(),
+            "summary": summary,
+            "listo": True,
+            "resumen": summary,
+            "language": language,
         }
     )
 
@@ -160,7 +175,8 @@ def get_news():
 def auth_status():
     from utils.jarvis_auth import verificar_autorizacion as _verificar_autorizacion
     pid = jarvis_state.get_active_profile_id(DEFAULT_PROFILE_ID or "admin")
-    return jsonify({"authorized": _verificar_autorizacion(pid)})
+    authorized = _verificar_autorizacion(pid)
+    return jsonify({"authorized": authorized, "autorizado": authorized})
 
 
 @status_bp.route("/api/setup/status", methods=["GET"])
@@ -188,9 +204,18 @@ def setup_status():
 @status_bp.route("/api/reminders", methods=["GET"])
 def get_reminders():
     reminders = _services.get_reminders()
-    with recordatorios_lock:
+    with reminders_lock:
         return jsonify(
-            [{"text": r["text"], "when": r["when"].strftime("%H:%M")} for r in reminders]
+            [
+                {
+                    "text": r.get("text", r.get("texto", "")),
+                    "when": r.get("when", r.get("cuando")).strftime("%H:%M"),
+                    "texto": r.get("text", r.get("texto", "")),
+                    "cuando": r.get("when", r.get("cuando")).strftime("%H:%M"),
+                }
+                for r in reminders
+                if r.get("when", r.get("cuando")) is not None
+            ]
         )
 
 
@@ -279,8 +304,9 @@ def reload_plugins_http():
 
 
 @status_bp.route("/api/profiles", methods=["GET"])
+@status_bp.route("/api/perfiles", methods=["GET"])
 def get_profiles():
-    with memoria_lock:
+    with memory_lock:
         return jsonify(
             {
                 "default_profile": DEFAULT_PROFILE_ID,
@@ -289,7 +315,7 @@ def get_profiles():
                         "history_len": len((pdata or {}).get("history", [])),
                         "facts_len": len(((pdata or {}).get("facts", "") or "")),
                     }
-                    for pid, pdata in _perfiles_memoria.items()
+                    for pid, pdata in _profile_memory.items()
                 },
             }
         )
@@ -315,8 +341,8 @@ def _serialize_profile_message(message) -> dict:
 
 def _profile_detail_payload(pid: str) -> tuple[dict, int]:
     pid = jarvis_state.normalize_profile_id(pid)
-    with memoria_lock:
-        pdata = dict((_perfiles_memoria or {}).get(pid) or {})
+    with memory_lock:
+        pdata = dict((_profile_memory or {}).get(pid) or {})
         if not pdata:
             return {"error": "profile_not_found", "profile_id": pid}, 404
         history = pdata.get("history") or []
@@ -332,6 +358,7 @@ def _profile_detail_payload(pid: str) -> tuple[dict, int]:
 
 
 @status_bp.route("/api/profiles/<profile_id>", methods=["GET"])
+@status_bp.route("/api/perfiles/<profile_id>", methods=["GET"])
 def get_profile_detail(profile_id):
     pid = jarvis_state.normalize_profile_id(profile_id)
     payload, status = _profile_detail_payload(pid)
@@ -339,6 +366,7 @@ def get_profile_detail(profile_id):
 
 
 @status_bp.route("/api/profiles/<profile_id>", methods=["PATCH"])
+@status_bp.route("/api/perfiles/<profile_id>", methods=["PATCH"])
 async def update_profile_detail(profile_id):
     data = (await request.get_json(silent=True)) or {}
     pid = jarvis_state.normalize_profile_id(profile_id)
@@ -359,6 +387,7 @@ async def update_profile_detail(profile_id):
 
 
 @status_bp.route("/api/profiles/<profile_id>", methods=["DELETE"])
+@status_bp.route("/api/perfiles/<profile_id>", methods=["DELETE"])
 def clear_profile_detail(profile_id):
     pid = jarvis_state.normalize_profile_id(profile_id)
     try:

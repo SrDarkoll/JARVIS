@@ -140,7 +140,7 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
         return any(k in t for k in ["volume", "up", "down", "mute", "silence", "do not disturb"])
     if tool_name == "borrar_memoria":
         return any(
-            k in t for k in ["clear memory", "clear memory", "reset memory", "forget everything"]
+            k in t for k in ["clear memory", "reset memory", "forget everything"]
         )
     if tool_name == "matar_proceso":
         return any(k in t for k in ["kill process", "end process", "close process", "kill"])
@@ -149,12 +149,8 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
             k in t
             for k in [
                 "turn off",
-                "turn off",
-                "restart",
                 "restart",
                 "hibernate",
-                "hibernate",
-                "lock",
                 "lock",
             ]
         )
@@ -163,12 +159,8 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
             k in t
             for k in [
                 "open",
-                "open",
-                "start",
                 "start",
                 "launch",
-                "launch",
-                "application",
                 "application",
                 "app",
             ]
@@ -182,7 +174,6 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
         return any(
             k in t
             for k in [
-                "search",
                 "search",
                 "find",
                 "investigate",
@@ -205,10 +196,7 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
                 "operation",
                 "how it works",
                 "what is",
-                "what is",
                 "who is",
-                "who is",
-                "which is",
                 "which is",
                 "tell me",
                 "I need to know",
