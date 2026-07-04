@@ -27,8 +27,8 @@
 
 ### Task 3: Verify from a clean local clone
 
-- [ ] Commit the reviewed checkpoint.
-- [ ] Clone the rescue branch into a temporary directory.
-- [ ] Create a fresh Python 3.11 virtual environment.
-- [ ] Install core requirements without optional packages.
-- [ ] Run focused tests and start the backend in core mode.
+- [x] Commit the reviewed checkpoint.
+- [x] Clone the rescue branch into a temporary directory.
+- [x] Create a fresh Python 3.11 virtual environment.
+- [x] Install core requirements without optional packages.
+- [x] Run the complete test suite and start the backend in core mode.
