@@ -20,10 +20,10 @@ def test_load_chat_openai_uses_openai_compatible_fallback_on_import_runtime_erro
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     ChatOpenAI = llm_engine._load_chat_openai()
-    model = ChatOpenAI(model="llama-3.3-70b-versatile", temperature=0, api_key="test-key", base_url="https://example.invalid")
+    model = ChatOpenAI(model="qwen/qwen3.6-27b", temperature=0, api_key="test-key", base_url="https://example.invalid")
 
     assert model is not None
-    assert model.model == "llama-3.3-70b-versatile"
+    assert model.model == "qwen/qwen3.6-27b"
     assert hasattr(model, "invoke")
     assert model.bind_tools([], tool_choice="auto") is not None
 
@@ -47,7 +47,7 @@ def test_openai_compatible_fallback_invokes_chat_completion(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="llama-3.3-70b-versatile",
+        model="qwen/qwen3.6-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -55,7 +55,7 @@ def test_openai_compatible_fallback_invokes_chat_completion(monkeypatch):
     response = model.invoke([HumanMessage(content="hello")])
 
     assert response.content == "fallback ok"
-    assert calls[0]["model"] == "llama-3.3-70b-versatile"
+    assert calls[0]["model"] == "qwen/qwen3.6-27b"
     assert calls[0]["messages"] == [{"role": "user", "content": "hello"}]
 
 
@@ -75,7 +75,7 @@ def test_openai_compatible_fallback_accepts_string_prompt(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="llama-3.3-70b-versatile",
+        model="qwen/qwen3.6-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -100,7 +100,7 @@ def test_openai_compatible_fallback_accepts_dict_response(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="llama-3.3-70b-versatile",
+        model="qwen/qwen3.6-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -162,8 +162,8 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
 
     monkeypatch.setattr(llm_engine, "_load_chat_openai", lambda: FakeChatOpenAI)
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "llama-3.3-70b-versatile")
-    monkeypatch.setattr(llm_engine, "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", True)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", True)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", True)
@@ -179,10 +179,10 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
 
     llm_engine.init_brain(app_ref=None)
 
-    assert calls[0]["model"] == "llama-3.3-70b-versatile"
+    assert calls[0]["model"] == "qwen/qwen3.6-27b"
     assert calls[0]["api_key"] == "groq-key"
     assert calls[0]["base_url"] == "https://api.groq.com/openai/v1"
-    assert calls[1]["model"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+    assert calls[1]["model"] == "qwen/qwen3.6-27b"
     assert calls[1]["api_key"] == "groq-key"
     assert brain_state.llm_fallback is None
 
@@ -205,7 +205,7 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
 
     monkeypatch.setattr(llm_engine, "_load_chat_openai", lambda: FakeChatOpenAI)
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "llama-3.3-70b-versatile")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", False, raising=False)
@@ -220,7 +220,7 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
 
     llm_engine.init_brain(app_ref=None)
 
-    assert [call["model"] for call in calls] == ["llama-3.3-70b-versatile"]
+    assert [call["model"] for call in calls] == ["qwen/qwen3.6-27b"]
     assert brain_state.llm is not None
     assert brain_state.llm_vision is None
     assert brain_state.llm_fallback is None
