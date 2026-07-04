@@ -684,11 +684,13 @@ body::before {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: clamp(8px, 1.2vh, 16px);
     position: relative;
-    /* CLAVE: nada se sale del centro */
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     min-height: 0;
+    padding: clamp(6px, 1vh, 12px) 0;
 }
 
 /* Miras de apuntado estilo Iron Man */
@@ -735,8 +737,8 @@ body::before {
    ==================================================== */
 .core-container {
     position: relative;
-    width: clamp(180px, 22vw, 300px);
-    height: clamp(180px, 22vw, 300px);
+    width: clamp(160px, min(22vw, 28vh), 300px);
+    height: clamp(160px, min(22vw, 28vh), 300px);
     /* Grid centra canvas y cualquier capa superpuesta */
     display: grid;
     place-items: center;
@@ -793,10 +795,11 @@ body::before {
 }
 
 .voice-meter {
-    height: 60px;
-    margin: 20px 0;
+    height: clamp(32px, 6vh, 60px);
+    margin: 0;
     display: flex;
     align-items: flex-end;
+    flex-shrink: 0;
 }
 
 .voice-waves {
@@ -884,193 +887,102 @@ body::before {
     transform: scale(0.98);
 }
 
-/* --- CENTRO DE MISIONES --- */
-.operator-console {
+/* --- CONVERSACION SEGMENTADA --- */
+.conversation-panel {
     margin-top: 10px;
     width: min(88%, 760px);
     max-width: min(88%, 760px);
-    max-height: clamp(140px, 22vh, 205px);
-    min-height: 136px;
+    height: clamp(210px, 34vh, 340px);
+    max-height: none;
+    min-height: 210px;
+    flex: 0 0 clamp(210px, 34vh, 340px);
     padding: 10px 14px;
     text-align: left;
-    border-color: rgba(255, 204, 0, 0.24);
     background:
-        linear-gradient(90deg, transparent, rgba(255, 204, 0, 0.055), transparent),
-        linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.07), transparent);
+        linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.07), transparent),
+        linear-gradient(180deg, rgba(0, 229, 255, 0.035), transparent);
 }
 
-.operator-console-header {
+.conversation-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    justify-content: space-between;
     padding-bottom: 6px;
-    border-bottom: 1px dashed rgba(255, 204, 0, 0.22);
+    border-bottom: 1px dashed rgba(0, 229, 255, 0.28);
     flex-shrink: 0;
 }
 
-.operator-title,
-.operator-mode {
+.conversation-title {
+    color: var(--text-main);
     font-family: var(--font-header);
     font-size: 0.68rem;
     letter-spacing: 2px;
     text-transform: uppercase;
 }
 
-.operator-title {
-    color: var(--text-main);
-}
-
-.operator-mode {
-    color: var(--processing);
-    text-shadow: 0 0 8px rgba(255, 204, 0, 0.45);
-    white-space: nowrap;
-}
-
-.operator-mode.is-admin {
-    color: var(--success);
-    text-shadow: 0 0 8px rgba(0, 255, 170, 0.45);
-}
-
-.operator-mode.is-guest {
-    color: var(--warning);
-    text-shadow: 0 0 8px var(--warning-glow);
-}
-
-.operator-console-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.65fr) minmax(150px, 0.85fr);
-    gap: 12px;
-    padding-top: 8px;
+.conversation-segments {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     min-height: 0;
+    overflow-y: auto;
+    padding: 8px 4px 2px 0;
     flex: 1;
 }
 
-.operator-mission-node,
-.operator-state-node {
-    min-width: 0;
-    min-height: 0;
-    border-left: 2px solid rgba(0, 229, 255, 0.22);
-    padding-left: 10px;
+.conversation-empty {
+    color: rgba(153, 214, 255, 0.74);
+    font-size: 0.78rem;
+    line-height: 1.35;
 }
 
-.operator-kicker {
+.conversation-segment {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    border-left: 2px solid rgba(0, 229, 255, 0.26);
+    padding: 6px 0 6px 10px;
+}
+
+.conversation-speaker {
+    color: var(--primary);
     font-family: var(--font-header);
-    color: var(--processing);
     font-size: 0.58rem;
-    letter-spacing: 2px;
-    margin-bottom: 3px;
-}
-
-.operator-mission-title {
-    color: var(--text-main);
-    font-size: clamp(0.78rem, 1vw, 0.95rem);
-    font-weight: 700;
-    line-height: 1.1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.operator-progress-track {
-    height: 5px;
-    margin: 7px 0 5px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 204, 0, 0.25);
-    overflow: hidden;
-}
-
-.operator-progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--processing), var(--success));
-    box-shadow: 0 0 10px rgba(255, 204, 0, 0.45);
-    transition: width 0.35s ease;
-}
-
-.operator-meta-line {
-    color: var(--text-dim);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 1px;
+    letter-spacing: 1.4px;
+    line-height: 1.25;
     text-transform: uppercase;
 }
 
-.operator-steps {
-    margin-top: 6px;
-    max-height: 58px;
-    overflow-y: auto;
-    padding-right: 4px;
-}
-
-.operator-step {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) 64px;
-    align-items: center;
-    gap: 6px;
-    min-height: 20px;
-    color: var(--text-dim);
-    font-size: 0.72rem;
-    line-height: 1.15;
-}
-
-.operator-step-index {
-    color: var(--processing);
-    font-family: var(--font-header);
-    font-size: 0.62rem;
-}
-
-.operator-step-body {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.operator-step-tag {
-    justify-self: end;
+.conversation-body {
     color: var(--text-main);
-    font-family: var(--font-header);
-    font-size: 0.52rem;
-    letter-spacing: 1px;
+    font-size: clamp(0.75rem, 0.95vw, 0.92rem);
+    line-height: 1.32;
+    overflow-wrap: anywhere;
 }
 
-.operator-step.completed .operator-step-tag {
+.conversation-line + .conversation-line {
+    margin-top: 4px;
+}
+
+.conversation-segment.user {
+    border-left-color: rgba(255, 204, 0, 0.45);
+}
+
+.conversation-segment.user .conversation-speaker {
+    color: var(--processing);
+}
+
+.conversation-segment.assistant {
+    border-left-color: rgba(0, 255, 170, 0.42);
+}
+
+.conversation-segment.assistant .conversation-speaker {
     color: var(--success);
 }
 
-.operator-step.failed .operator-step-tag {
-    color: var(--warning);
-}
-
-.operator-empty {
-    color: rgba(153, 214, 255, 0.75);
-    font-size: 0.74rem;
-}
-
-.operator-state-node {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.operator-state-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 10px;
-    color: var(--text-dim);
-    font-size: 0.72rem;
-    letter-spacing: 1px;
-}
-
-.operator-state-row strong {
-    color: var(--primary);
-    font-family: var(--font-header);
-    font-size: 0.66rem;
-    text-align: right;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.conversation-segment.system {
+    border-left-color: rgba(153, 214, 255, 0.34);
 }
 
 /* --- BOTÓN INFERIOR (MICRÓFONO) --- */
@@ -1241,7 +1153,7 @@ body::before {
         height: 300px;
     }
 
-    .operator-console {
+    .conversation-panel {
         width: min(94%, 760px);
         max-width: min(94%, 760px);
         max-height: none;
@@ -1272,25 +1184,16 @@ body::before {
         font-size: 0.8rem;
     }
 
-    .operator-console {
-        min-height: 0;
+    .conversation-panel {
+        min-height: 190px;
+        height: clamp(190px, 40vh, 320px);
+        flex-basis: clamp(190px, 40vh, 320px);
         padding: 10px;
     }
 
-    .operator-console-header,
-    .operator-console-grid {
+    .conversation-segment {
         grid-template-columns: 1fr;
-    }
-
-    .operator-console-header {
-        align-items: flex-start;
-        flex-direction: column;
         gap: 4px;
-    }
-
-    .operator-state-row,
-    .operator-step {
-        font-size: 0.68rem;
     }
 }
 

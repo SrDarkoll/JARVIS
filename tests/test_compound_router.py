@@ -52,7 +52,7 @@ def test_compound_router_handles_verbose_nba_then_spotify(monkeypatch):
     )
 
     assert reply is not None
-    assert [call[0] for call in calls] == ["obtener_partidos_nba", "reproducir_en_spotify"]
+    assert [call[0] for call in calls] == ["obtener_deportes_espn", "reproducir_en_spotify"]
     assert calls[0][1]["consulta"] == "hoy"
     assert "reggaeton lento" in calls[1][1]["cancion"]
     assert "cnco" in calls[1][1]["cancion"]

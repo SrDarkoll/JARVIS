@@ -5,14 +5,23 @@ Refactored to use APScheduler (Non-Blocking).
 
 import threading
 import time as _time
+from datetime import datetime
+
 import psutil
-from datetime import datetime, time as _datetime_time
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from core.jarvis_config import HEARTBEAT_INTERVALO, BRIEFING_HORA
-from core.jarvis_state import heartbeat_state
+from core.jarvis_config import BRIEFING_HORA, HEARTBEAT_INTERVALO
 from core.jarvis_observability import obs_event
+from core.jarvis_state import heartbeat_state
 from core.service_container import services
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    SCHEDULER_AVAILABLE = True
+except ImportError:
+    BackgroundScheduler = None
+    CronTrigger = None
+    SCHEDULER_AVAILABLE = False
 
 
 class MonitoringService:
@@ -23,7 +32,7 @@ class MonitoringService:
         self._ejecutar_briefing_func = None
         self._check_briefing_sent_func = None
 
-        self._scheduler = BackgroundScheduler(daemon=True)
+        self._scheduler = BackgroundScheduler(daemon=True) if SCHEDULER_AVAILABLE else None
 
     def inject_dependencies(
         self,
@@ -156,6 +165,9 @@ class MonitoringService:
 
     def start_heartbeat(self, ip_cleanup_func=None):
         """Starts all scheduled tasks with APScheduler."""
+        if not SCHEDULER_AVAILABLE or self._scheduler is None:
+            print("[SCHEDULER] APScheduler is not installed; background monitoring is disabled.")
+            return False
 
         # 1. Healthcheck (Heartbeats)
         self._scheduler.add_job(
@@ -191,6 +203,7 @@ class MonitoringService:
         from utils.jarvis_i18n import get_bt
         bt = get_bt()
         print(bt["log_scheduler_active"].format(count=len(self._scheduler.get_jobs())))
+        return True
 
 
 monitoring_service = MonitoringService()

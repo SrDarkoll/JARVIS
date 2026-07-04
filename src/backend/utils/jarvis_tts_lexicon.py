@@ -127,7 +127,6 @@ TTS_PRONUN_DEFAULT = {
     "podcast": "pódcast",
     "backup": "báckup",
     "briefing": "brífin",
-    "rg": "erre ge",
 }
 
 

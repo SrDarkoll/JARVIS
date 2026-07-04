@@ -10,7 +10,6 @@ import re
 
 from voice.pipeline import normalizar_transcript_hint
 
-
 _LETTER = r"A-Za-z0-9áéíóúñüÁÉÍÓÚÑÜ"
 _NAME_INTRO_RE = re.compile(
     rf"\b(?:"

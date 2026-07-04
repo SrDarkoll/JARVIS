@@ -7,49 +7,66 @@ TODO el código real vive ahora en el paquete `tools/`.
 """
 
 from tools._common import (  # noqa: F401
-    jarvis_state, BASE_DIR, ROOT_DIR, DEFAULT_PROFILE_ID, SHARED_PROFILE_ID,
-    memoria_lock, _normalizar_ascii, _normalizar_profile_id, _normalizar_destino_web,
-    _limpiar_respuesta
+    BASE_DIR,
+    DEFAULT_PROFILE_ID,
+    ROOT_DIR,
+    SHARED_PROFILE_ID,
+    _limpiar_respuesta,
+    _normalizar_ascii,
+    _normalizar_destino_web,
+    _normalizar_profile_id,
+    jarvis_state,
+    memoria_lock,
 )
-
-from tools.search import (  # noqa: F401
-    _buscar_multi_fuente, buscar_en_internet
-)
-
+from tools.action_plan import crear_plan_acciones, ejecutar_plan_acciones, ver_plan_acciones  # noqa: F401
 from tools.browser import (  # noqa: F401
-    BrowserWorker, cerrar_navegador_playwright, abrir_youtube, _abrir_en_navegador_sistema
+    BrowserWorker,
+    _abrir_en_navegador_sistema,
+    abrir_youtube,
+    cerrar_navegador_playwright,
 )
-
-from tools.spotify import (  # noqa: F401
-    sp, _ULTIMA_CANCION_SOLICITADA, reproducir_en_spotify, reproducir_mix_spotify,
-    controlar_reproduccion
-)
-
-from tools.system import (  # noqa: F401
-    _ajustar_volumen_absoluto, _ajustar_volumen_relativo, ajustar_volumen,
-    controlar_pc, abrir_aplicacion, matar_proceso, borrar_memoria
-)
-
-from tools.desktop_control import (  # noqa: F401
-    listar_ventanas, enfocar_ventana, controlar_ventana
-)
-
-from tools.action_plan import (  # noqa: F401
-    crear_plan_acciones, ver_plan_acciones, ejecutar_plan_acciones
-)
-
+from tools.desktop_control import controlar_ventana, enfocar_ventana, listar_ventanas  # noqa: F401
 from tools.memory import (  # noqa: F401
-    init_sqlite_db, cargar_memoria_perfiles, guardar_memoria_perfiles,
-    cargar_memoria, guardar_memoria, guardar_memoria_async,
-    _obtener_contexto_perfil, _obtener_contexto_memoria_entrelazada,
-    _sincronizar_memoria_entrelazada, extraer_datos_criticos
+    _obtener_contexto_memoria_entrelazada,
+    _obtener_contexto_perfil,
+    _sincronizar_memoria_entrelazada,
+    cargar_memoria,
+    cargar_memoria_perfiles,
+    extraer_datos_criticos,
+    guardar_memoria,
+    guardar_memoria_async,
+    guardar_memoria_perfiles,
+    init_sqlite_db,
+)
+from tools.search import _buscar_multi_fuente, buscar_en_internet  # noqa: F401
+from tools.spotify import (  # noqa: F401
+    _ULTIMA_CANCION_SOLICITADA,
+    controlar_reproduccion,
+    reproducir_en_spotify,
+    reproducir_mix_spotify,
+    sp,
+)
+from tools.system import (  # noqa: F401
+    _ajustar_volumen_absoluto,
+    _ajustar_volumen_relativo,
+    abrir_aplicacion,
+    ajustar_volumen,
+    borrar_memoria,
+    controlar_pc,
+    matar_proceso,
+)
+from tools.utilities import (  # noqa: F401
+    _obtener_clima_logic,
+    agregar_recordatorio,
+    analizar_pantalla,
+    ejecutar_rutina,
+    frase_motivacional,
+    generar_resumen_noticias,
+    leer_archivo,
+    obtener_clima,
+    obtener_deportes_espn,
 )
 
-from tools.utilities import (  # noqa: F401
-    obtener_clima, obtener_partidos_nba, agregar_recordatorio,
-    leer_archivo, frase_motivacional, analizar_pantalla,
-    ejecutar_rutina, generar_resumen_noticias, _obtener_clima_logic
-)
 
 def get_base_tools():
     from tools import _get_base_tools_impl

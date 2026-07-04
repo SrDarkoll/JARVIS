@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 os.environ.setdefault("WANDB_MODE", "disabled")
 os.environ.setdefault("WANDB_DISABLED", "true")
@@ -25,111 +25,108 @@ if os.getenv("JARVIS_TEST_MODE") == "1" and os.name == "nt":
     _safe_tempfile.TemporaryDirectory = _WindowsTestTemporaryDirectory
 
 sys.stdout.reconfigure(encoding="utf-8")
-import io
-import wave
-
-from utils.jarvis_text import reparar_unicode, normalizar_tratamiento_admin
 
 import asyncio
 import hmac
-import importlib.util
-import json
-import re
-import threading
 import tempfile
+import threading
 import time as _time
 import traceback
-from datetime import datetime
 from urllib.parse import urlparse
 
-import psutil  # pyright: ignore[reportMissingModuleSource]
-import requests as http_requests  # pyright: ignore[reportMissingModuleSource]
-from quart import (
-    Quart,
-    Response,
-    jsonify,
-    make_response,
-    render_template,
-    request,
-    send_file,
-    send_from_directory,
-)  # pyright: ignore[reportMissingImports]
-from langchain_core.messages import HumanMessage  # pyright: ignore[reportMissingImports]
-from telegram import Bot, Update  # pyright: ignore[reportMissingImports]
-from telegram.ext import Application, ContextTypes, MessageHandler, filters  # pyright: ignore[reportMissingImports]
-
-from core import core_tools
-from core import jarvis_brain
-from core.brain import brain_state
-from services import security_manager
-from utils.jarvis_auth import (
-    verificar_autorizacion as _verify_authorization,
-    autorizar_por_biometria as _authorize_by_biometrics,
-    revocar_autorizacion as _revoke_authorization,
-    get_auth_snapshot as _get_auth_snapshot,
-    activar_perfil_invitado as _activate_guest_profile,
-)
-from core import jarvis_config
+from api.api_routes import api_bp, init_api_routes
+from api.chat_routes import ChatRoutesConfig, chat_bp, init_chat_routes
+from api.language_routes import init_language_routes, language_bp
+from api.security_routes import SecurityRoutesConfig, init_security_routes, security_bp
+from api.status_routes import StatusRoutesConfig, init_status_routes, status_bp
+from api.tts_routes import TTSRoutesConfig, init_tts_routes, tts_bp
+from api.voice_routes import VoiceRoutesConfig, init_voice_routes, voice_bp
+from core import core_tools, jarvis_brain, jarvis_config
+from core.app_config import get_app_config, init_app_config
 from core.jarvis_config import (
-    BASE_DIR,
-    BRIEFING_HORA,
-    BRIEFING_TELEGRAM_SENT_FILE,
-    HEARTBEAT_INTERVALO,
     MODEL_PATH,
-    NEWSAPI_KEY,
     OBS_DIR,
     PLUGINS_DIR,
-    PROACTIVE_ACTIVO,
-    PROACTIVE_COOLDOWN,
     ROOT_DIR,
     SECURITY_AUDIT_FILE,
     SECURITY_POLICY_FILE,
     SRC_DIR,
-    TELEGRAM_CHAT_ID,
-    TELEGRAM_TOKEN,
     TTS_PRONUN_FILE,
-    get_cors_origins,
 )
-from core.app_config import init_app_config, get_app_config
-from core.runtime_logger import log_info, log_warning, log_error
-from core.jarvis_observability import obs_event, obs_inc, obs_snapshot, obs_tail
+from core.jarvis_observability import obs_event, obs_inc, obs_snapshot
+from core.jarvis_state import recordatorios_lock as reminders_lock
+from core.runtime_logger import log_error, log_warning
 from core.service_container import services
-from core.jarvis_state import heartbeat_state, recordatorios_lock as reminders_lock
-from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
 from engines.tts_engine import TTSEngine
-from services.telegram_manager import telegram_manager
-from services.monitoring_service import monitoring_service
-from api.tts_routes import tts_bp, init_tts_routes, TTSRoutesConfig
-from api.api_routes import api_bp, init_api_routes
-from api.chat_routes import chat_bp, init_chat_routes, ChatRoutesConfig
-from api.security_routes import security_bp, init_security_routes, SecurityRoutesConfig
-from api.voice_routes import voice_bp, init_voice_routes, VoiceRoutesConfig
-from api.status_routes import status_bp, init_status_routes, StatusRoutesConfig
-from api.language_routes import language_bp, init_language_routes
-from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
+from quart import (
+    Quart,
+    jsonify,
+    request,
+)  # pyright: ignore[reportMissingImports]
+from services import security_manager
+from utils.jarvis_auth import (
+    activar_perfil_invitado as _activate_guest_profile,
+)
+from utils.jarvis_auth import (
+    autorizar_por_biometria as _authorize_by_biometrics,
+)
+from utils.jarvis_auth import (
+    revocar_autorizacion as _revoke_authorization,
+)
+from utils.jarvis_auth import (
+    verificar_autorizacion as _verify_authorization,
+)
+from utils.jarvis_i18n import get_current_language
+from utils.jarvis_text import normalizar_tratamiento_admin, reparar_unicode
+from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
 
 # SAFE IMPORT OF BIOMETRICS
 try:
-    from voice import voice_id_motor, VOICE_ID_DISPONIBLE as VOICE_ID_AVAILABLE
+    from voice import VOICE_ID_DISPONIBLE as VOICE_ID_AVAILABLE
+    from voice import voice_id_motor
+    from voice.pipeline import (
+        _PENDING_VOICE_REGISTRATION,
+        OWNER_SIMILARITY_OVERRIDE,
+        RESERVED_OWNER_ALIASES,
+    )
+    from voice.pipeline import (
+        bytes_es_wav_valido as _bytes_are_valid_wav,
+    )
+    from voice.pipeline import (
+        cancel_pending_voice_registration as _cancel_pending_voice_registration,
+    )
+    from voice.pipeline import (
+        cleanup_pending_voice_registration as _cleanup_pending_voice_registration,
+    )
+    from voice.pipeline import (
+        es_alias_owner as _is_owner_alias,
+    )
+    from voice.pipeline import (
+        get_pending as _get_pending,
+    )
+    from voice.pipeline import (
+        hint_necesita_reintento_whisper as _hint_needs_whisper,
+    )
     from voice.pipeline import (
         normalizar_a_wav as _normalize_to_wav,
-        bytes_es_wav_valido as _bytes_are_valid_wav,
-        transcribir_audio as transcribe_audio,
-        slugify_guest_name as _slugify_guest_name,
-        normalizar_nombre_invitado as _normalize_guest_name,
-        es_alias_owner as _is_owner_alias,
-        cleanup_pending_voice_registration as _cleanup_pending_voice_registration,
-        cancel_pending_voice_registration as _cancel_pending_voice_registration,
-        get_pending as _get_pending,
-        set_pending as _set_pending,
-        pop_pending as _pop_pending,
-        RESERVED_OWNER_ALIASES,
-        OWNER_SIMILARITY_OVERRIDE,
-        _PENDING_VOICE_REGISTRATION,
-        normalizar_transcript_hint as _normalize_transcript_hint,
-        reconstruir_transcripcion_por_pausas as _reconstruct_transcription_by_pauses,
-        hint_necesita_reintento_whisper as _hint_needs_whisper,
+    )
+    from voice.pipeline import (
         normalizar_confianza_transcript as _normalize_transcript_confidence,
+    )
+    from voice.pipeline import (
+        normalizar_nombre_invitado as _normalize_guest_name,
+    )
+    from voice.pipeline import (
+        normalizar_transcript_hint as _normalize_transcript_hint,
+    )
+    from voice.pipeline import (
+        pop_pending as _pop_pending,
+    )
+    from voice.pipeline import (
+        slugify_guest_name as _slugify_guest_name,
+    )
+    from voice.pipeline import (
+        transcribir_audio as transcribe_audio,
     )
 
     BIOMETRICS_ENABLED = bool(VOICE_ID_AVAILABLE)
@@ -145,6 +142,7 @@ SHARED_PROFILE_ID = "shared"
 
 # Import jarvis_settings for language hot-swap
 import sys as _sys
+
 if jarvis_config.ROOT_DIR not in _sys.path:
     _sys.path.insert(0, jarvis_config.ROOT_DIR)
 try:
@@ -494,6 +492,34 @@ def _is_loopback(addr: str | None) -> bool:
     return str(addr or "").strip().lower() in _LOOPBACK_ADDRS
 
 
+def _normalize_origin(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.hostname:
+        return ""
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname.lower()
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{scheme}://{host}{port}"
+
+
+def _is_trusted_browser_origin() -> bool:
+    allowed = {
+        origin
+        for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins())
+        if origin
+    }
+    origin = _normalize_origin(request.headers.get("Origin"))
+    if origin:
+        return origin in allowed
+    referer = _normalize_origin(request.headers.get("Referer"))
+    if referer:
+        return referer in allowed
+    return True
+
+
 def _is_critical_api_path(path: str) -> bool:
     normalized = (path or "").rstrip("/") or "/"
     if normalized in _CRITICAL_API_PATHS:
@@ -515,6 +541,10 @@ async def _require_token_for_critical_routes():
             return None
         obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
         return jsonify({"error": "Invalid or missing token."}), 401
+
+    if not _is_trusted_browser_origin():
+        obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
+        return jsonify({"error": "Untrusted origin for critical route."}), 403
 
     if _is_loopback(request.remote_addr):
         return None
@@ -538,7 +568,7 @@ async def _set_security_headers(response):
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: blob:; "
+        "img-src 'self' https: data: blob:; "
         "media-src 'self' blob:; "
         "connect-src 'self' ws: wss:; "
         "frame-ancestors 'self'; "

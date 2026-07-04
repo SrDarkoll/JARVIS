@@ -19,16 +19,10 @@ TEST_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEST_TMP_DIR = TEST_RUNTIME_DIR / "tmp"
 TEST_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-os.environ["TMP"] = str(TEST_TMP_DIR)
-os.environ["TEMP"] = str(TEST_TMP_DIR)
-os.environ["TMPDIR"] = str(TEST_TMP_DIR)
-tempfile.tempdir = str(TEST_TMP_DIR)
-
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 os.environ.setdefault("GROQ_API_KEY", "test-key-smoke")
-os.environ.setdefault("MINIMAX_API_KEY", "test-key-smoke")
 os.environ["JARVIS_TEST_MODE"] = "1"
 os.environ["JARVIS_AUTOCURACION"] = "false"
 os.environ["JARVIS_RUNTIME_DIR"] = str(TEST_RUNTIME_DIR)

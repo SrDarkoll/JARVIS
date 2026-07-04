@@ -1,11 +1,13 @@
-import json
-import traceback
 import asyncio
-from quart import Blueprint, request, jsonify, Response
+import json
+import time
+import traceback
+
 from core import jarvis_brain
-from core.jarvis_observability import obs_event, obs_inc
-from utils.jarvis_text import normalizar_tratamiento_admin
+from core.jarvis_observability import obs_event
 from langchain_core.messages import HumanMessage
+from quart import Blueprint, Response, jsonify, request
+from utils.jarvis_text import normalizar_tratamiento_admin
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -29,6 +31,34 @@ def init_chat_routes(config: ChatRoutesConfig):
     chat_limit_seconds = config.chat_limit_seconds
 
 
+def _rate_limit_response(ip: str, bucket: str):
+    if _ip_last_call is None or _ip_last_call_lock is None or chat_limit_seconds is None:
+        return None
+    key = (ip.lower().strip(), bucket)
+    now = time.time()
+    with _ip_last_call_lock:
+        last = _ip_last_call.get(key, 0.0)
+        elapsed = now - last
+        if elapsed < chat_limit_seconds:
+            return jsonify(
+                {"error": "Too many requests", "retry_after": round(max(0.0, chat_limit_seconds - elapsed), 3)}
+            ), 429
+        _ip_last_call[key] = now
+    return None
+
+
+async def _read_json_payload():
+    data = await request.get_json(silent=True)
+    if data is None:
+        raw_body = await request.get_data(cache=True)
+        if raw_body and raw_body.strip():
+            return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+        return {}, None
+    if not isinstance(data, dict):
+        return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+    return data, None
+
+
 @chat_bp.route("/api/chat", methods=["GET", "POST"])
 async def api_chat():
     if request.method == "GET":
@@ -40,21 +70,18 @@ async def api_chat():
         ), 405
 
     try:
-        data = await request.get_json(force=True)
-        user_input = data.get("message", "")
+        data, payload_error = await _read_json_payload()
+        if payload_error:
+            return payload_error
+        user_input = (data.get("message") or "").strip()
         if not user_input:
             return jsonify({"error": "No message"}), 400
+        if len(user_input) > 4000:
+            return jsonify({"error": "Message too large"}), 413
         ip = request.remote_addr or "unknown"
-        key = (ip.lower().strip(), "chat")
-        now = __import__("time").time()
-        with _ip_last_call_lock:
-            last = _ip_last_call.get(key, 0.0)
-            elapsed = now - last
-            if elapsed < chat_limit_seconds:
-                return jsonify(
-                    {"error": "Too many requests", "retry_after": round(max(0.0, chat_limit_seconds - elapsed), 3)}
-                ), 429
-            _ip_last_call[key] = now
+        limited = _rate_limit_response(ip, "chat")
+        if limited:
+            return limited
         print(f"\n[LORD] {user_input}")
         profile_id = (data.get("profile_id") or "web_default").strip()
         obs_event(
@@ -101,18 +128,25 @@ async def api_chat():
             ), 200
 
 
-@chat_bp.route("/api/chat/stream", methods=["GET", "POST"])
+@chat_bp.route("/api/chat/stream", methods=["POST"])
 async def api_chat_stream():
-    data = (await request.get_json(force=True)) if request.method == "POST" else request.args
-    data = data or {}
+    data, payload_error = await _read_json_payload()
+    if payload_error:
+        return payload_error
     user_input = (data.get("message") or "").strip()
     if not user_input:
         return jsonify({"error": "No message"}), 400
+    if len(user_input) > 4000:
+        return jsonify({"error": "Message too large"}), 413
+    ip = request.remote_addr or "unknown"
+    limited = _rate_limit_response(ip, "chat_stream")
+    if limited:
+        return limited
     profile_id = (data.get("profile_id") or "web_default").strip()
     obs_event(
         "api_chat_stream_in",
         user_input=user_input[:220],
-        ip=request.remote_addr,
+        ip=ip,
         profile_id=profile_id,
     )
 

@@ -5,16 +5,16 @@ Handles hot-swapping of: TTS voice model, Whisper language, backend translations
 
 import threading
 
+from core.api_contracts import validate_language_request, validate_language_response
+from core.app_config import get_app_config, get_default_location, set_active_language
+from core.jarvis_observability import obs_event
+from core.runtime_logger import log_info, log_warning
 from quart import Blueprint, jsonify, request
 from utils.jarvis_i18n import (
     LANGUAGE_CONFIG,
     get_model_path,
     set_current_language,
 )
-from core.app_config import get_default_location, set_active_language, get_app_config
-from core.api_contracts import validate_language_request, validate_language_response
-from core.runtime_logger import log_info, log_warning
-from core.jarvis_observability import obs_event
 
 language_bp = Blueprint("language", __name__)
 

@@ -2,9 +2,8 @@
 Security Routes: security policy, proactive alerts, quick control.
 """
 
-from quart import Blueprint, request, jsonify
-from services import security_manager
-from core.jarvis_observability import obs_event, obs_snapshot
+from core.jarvis_observability import obs_snapshot
+from quart import Blueprint, jsonify, request
 
 security_bp = Blueprint("security", __name__)
 

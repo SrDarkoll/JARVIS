@@ -1,52 +1,40 @@
 /**
- * Módulo de Gestión de Widgets para JARVIS.
- * Extrae y renderiza componentes visuales embebidos en el texto de la IA.
+ * Widget renderer for assistant responses.
  *
- * ═══════════════════════════════════════════════════════════════════════════════
- * PROTOCOLO WIDGET — Contrato Backend → Frontend
- * ═══════════════════════════════════════════════════════════════════════════════
+ * The backend may embed visual payloads as:
+ *   <WIDGET>{"type":"spotify","track":"...","artist":"..."}</WIDGET>
  *
- * Los bloques <WIDGET> son JSON embebido en la respuesta del LLM. El frontend
- * los detecta, renderiza visualmente, y los REMUEVE del texto antes de enviarlo
- * al TTS (para que Piper no intente leer JSON).
- *
- * FORMATO:
- *   <WIDGET>{"type": "tipo", "data": {...}}</WIDGET>
- *
- *   El bloque puede tener campos adicionales además de "type" y "data".
- *   Todos los campos se pasan al renderer del tipo correspondiente.
- *
- * TIPOS SOPORTADOS:
- *
- *   spotify   → Renderiza tarjeta de reproducción
- *               Campos: type="spotify", track, artist, image
- *
- *   weather   → Renderiza widget de clima
- *               Campos: type="weather", temp, desc, city (opcional)
- *
- *   nba       → Renderiza resultados deportivos
- *               Campos: type="nba", data.games o data.partidos (array)
- *
- *   generic   → Fallback: renderiza JSON completo formateado
- *
- * FLUJO:
- *   1. LLM devuelve respuesta con <WIDGET>...</WIDGET>
- *   2. main.js detecta el bloque, lo extrae → limpia texto para TTS
- *   3. WidgetManager.processResponse() parsea y renderiza
- *   4. TTS recibe texto SIN el bloque JSON (limpieza en brain_utils.py)
- *
- * IMPORTANTE: Mantén el regex /<WIDGET>[\s\S]*?<\/WIDGET>/ sincronizado con
- *            _limpiar_metadatos_voz() en core/brain/brain_utils.py
+ * Keep this regex in sync with _limpiar_metadatos_voz() in
+ * core/brain/brain_utils.py so widget JSON is not spoken by TTS.
  */
 
-function escapeHtml(str) {
-    if (str == null) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+function clearElement(element) {
+    while (element.firstChild) {
+        element.removeChild(element.firstChild);
+    }
+}
+
+function createTextElement(tagName, className, text) {
+    const element = document.createElement(tagName);
+    if (className) element.className = className;
+    element.textContent = text == null ? '' : String(text);
+    return element;
+}
+
+function safeImageSrc(rawSrc) {
+    const src = String(rawSrc || '').trim();
+    if (!src) return '';
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src)) return src;
+
+    try {
+        const url = new URL(src, window.location.origin);
+        if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'blob:') {
+            return url.href;
+        }
+    } catch (_) {
+        return '';
+    }
+    return '';
 }
 
 export class WidgetManager {
@@ -66,7 +54,7 @@ export class WidgetManager {
                 this.renderWidget(widgetData);
                 cleanText = cleanText.replace(match[0], '');
             } catch (e) {
-                console.warn('[WIDGETS] Error parseando widget:', e);
+                console.warn('[WIDGETS] Error parsing widget:', e);
             }
         }
 
@@ -78,53 +66,93 @@ export class WidgetManager {
 
         const card = document.createElement('div');
         card.className = `widget-card tech-glass fade-in-up type-${data.type || 'generic'}`;
-        
-        let html = `<div class="widget-header">${escapeHtml((data.title || 'MÓDULO').toUpperCase())}</div>`;
-        html += '<div class="widget-content">';
+
+        const header = createTextElement('div', 'widget-header', (data.title || 'MODULO').toUpperCase());
+        const content = document.createElement('div');
+        content.className = 'widget-content';
 
         switch (data.type) {
             case 'spotify':
-                html += `
-                    <div class="spotify-widget">
-                        <img src="${escapeHtml(data.image || '')}" class="track-art" alt="Album art">
-                        <div class="track-info">
-                            <span class="track-name">${escapeHtml(data.track || 'Desbloqueado')}</span>
-                            <span class="artist-name">${escapeHtml(data.artist || 'Artista Desconocido')}</span>
-                        </div>
-                    </div>`;
+                this.renderSpotifyWidget(content, data);
                 break;
             case 'weather':
-                html += `
-                    <div class="weather-widget">
-                        <span class="weather-temp">${escapeHtml(data.temp || '--')}°C</span>
-                        <span class="weather-desc">${escapeHtml(data.desc || 'Escaneando...')}</span>
-                    </div>`;
+                this.renderWeatherWidget(content, data);
                 break;
             case 'nba':
-                html += '<div class="nba-widget">';
-                (data.data.games || data.data.partidos || []).forEach(g => {
-                    html += `<div class="nba-game">
-                        <span class="nba-team">${escapeHtml(g.home || g.local || 'Local')}</span>
-                        <span class="nba-score">${escapeHtml(g.score || g.marcador || g.time || g.horario || '—')}</span>
-                        <span class="nba-team">${escapeHtml(g.away || g.visitante || 'Visitante')}</span>
-                    </div>`;
-                });
-                html += '</div>';
+                this.renderNbaWidget(content, data);
                 break;
             default:
-                html += `<pre class="generic-data">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+                content.appendChild(createTextElement('pre', 'generic-data', JSON.stringify(data, null, 2)));
         }
 
-        html += '</div>';
-        card.innerHTML = html;
+        card.append(header, content);
 
         if (this.activeTimeout) clearTimeout(this.activeTimeout);
-        this.container.innerHTML = '';
+        clearElement(this.container);
         this.container.appendChild(card);
 
         this.activeTimeout = setTimeout(() => {
             card.classList.add('fade-out');
             setTimeout(() => card.remove(), 1000);
         }, 15000);
+    }
+
+    renderSpotifyWidget(content, data) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'spotify-widget';
+
+        const image = document.createElement('img');
+        image.className = 'track-art';
+        image.alt = 'Album art';
+        image.loading = 'lazy';
+        image.referrerPolicy = 'no-referrer';
+        image.src = safeImageSrc(data.image);
+
+        const info = document.createElement('div');
+        info.className = 'track-info';
+        info.append(
+            createTextElement('span', 'track-name', data.track || 'Desbloqueado'),
+            createTextElement('span', 'artist-name', data.artist || 'Artista Desconocido'),
+        );
+
+        wrapper.append(image, info);
+        content.appendChild(wrapper);
+    }
+
+    renderWeatherWidget(content, data) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'weather-widget';
+        wrapper.append(
+            createTextElement('span', 'weather-temp', `${data.temp || '--'} C`),
+            createTextElement('span', 'weather-desc', data.desc || 'Escaneando...'),
+        );
+        content.appendChild(wrapper);
+    }
+
+    renderNbaWidget(content, data) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'nba-widget';
+        const payload = data.data || {};
+        const games = Array.isArray(payload.games)
+            ? payload.games
+            : (Array.isArray(payload.partidos) ? payload.partidos : []);
+
+        if (games.length === 0) {
+            wrapper.appendChild(createTextElement('div', 'nba-game', 'No hay partidos disponibles.'));
+            content.appendChild(wrapper);
+            return;
+        }
+
+        games.forEach((game) => {
+            const row = document.createElement('div');
+            row.className = 'nba-game';
+            row.append(
+                createTextElement('span', 'nba-team', game.home || game.local || 'Local'),
+                createTextElement('span', 'nba-score', game.score || game.marcador || game.time || game.horario || '-'),
+                createTextElement('span', 'nba-team', game.away || game.visitante || 'Visitante'),
+            );
+            wrapper.appendChild(row);
+        });
+        content.appendChild(wrapper);
     }
 }

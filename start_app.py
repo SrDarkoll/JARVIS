@@ -32,7 +32,7 @@ def start_app():
         print(f"[SYSTEM] Desktop session fallback: {e}")
         url = "http://localhost:5002"
         webview_storage_dir = os.path.join(
-            os.environ.get("LOCALAPPDATA") or root_dir,
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.config")),
             "JARVIS",
             "WebView2",
         )
@@ -49,7 +49,7 @@ def start_app():
             [sys.executable, backend_script],
             cwd=root_dir
         )
-        
+
         # Wait up to 90s because local ML models can be heavy.
         attempts = 0
         while attempts < 90:
@@ -89,8 +89,10 @@ def start_app():
 
     # 4. Start desktop app with persistent Edge Chromium storage.
     print("[SYSTEM] Opening user interface...")
+    gui_engine = 'edgechromium' if sys.platform == 'win32' else None
+
     webview.start(
-        gui='edgechromium', 
+        gui=gui_engine,
         debug=False,
         private_mode=False,
         storage_path=webview_storage_dir,

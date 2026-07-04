@@ -1,19 +1,28 @@
 import os
-import time as _time
-import threading
 import re
+import threading
+import time as _time
+from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Iterator, Any
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from core import jarvis_state, core_tools
-from core.service_container import services
-from core.brain import brain_state, brain_utils, history_manager, llm_engine
-from core.brain import tool_manager, social_engine, security_engine, router
-from core.brain import prompts, keywords, music_engine
-from core.jarvis_observability import obs_event, obs_inc, obs_tool
-from core.jarvis_config import AUTOCURACION_ACTIVA
+
+from core import core_tools, jarvis_state
+from core.brain import (
+    brain_state,
+    brain_utils,
+    history_manager,
+    keywords,
+    music_engine,
+    prompts,
+    router,
+    security_engine,
+    social_engine,
+    tool_manager,
+)
+from core.jarvis_observability import obs_event, obs_inc
 from core.jarvis_state import DEFAULT_PROFILE_ID
+from core.service_container import services
 from engines.memory_rag import rag_motor
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from utils.jarvis_text import reparar_unicode
 
 
@@ -148,8 +157,8 @@ def _preflight(
     allow_compound: bool = True,
 ) -> tuple[str | None, bool]:
     from core.core_tools import (
-        _ajustar_volumen_relativo,
         _ajustar_volumen_absoluto,
+        _ajustar_volumen_relativo,
         agregar_recordatorio,
     )
 
@@ -360,8 +369,9 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
     except Exception as e:
         obs_event("llm_brain_error", error=str(e)[:300])
         try:
-            # Fallback to Groq if MiniMax fails
             fallback = brain_state.llm_fallback or brain_state.llm
+            if fallback is None:
+                raise RuntimeError("no llm configured")
             reply = brain_utils._limpiar_thinking(fallback.invoke(messages).content or "")
         except Exception:
             reply = "I apologize, Administrator. A temporary internal error occurred in my reasoning core."

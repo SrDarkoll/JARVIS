@@ -1,16 +1,15 @@
+import sys
 from datetime import datetime
 
-from langchain_core.messages import SystemMessage
-from core import jarvis_state
+from core import jarvis_config, jarvis_state
 from core.brain import brain_utils
-from engines.memory_rag import rag_motor
-from utils.jarvis_auth import get_auth_snapshot, verificar_autorizacion, es_guest
-from services import security_manager
-from core import jarvis_config
-import sys
-import os
-from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
+from core.jarvis_config import RAG_ENABLED
 from core.runtime_logger import log_warning
+from engines.memory_rag import rag_motor
+from langchain_core.messages import SystemMessage
+from services import security_manager
+from utils.jarvis_auth import es_guest, get_auth_snapshot, verificar_autorizacion
+from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
 
 if jarvis_config.ROOT_DIR not in sys.path:
     sys.path.insert(0, jarvis_config.ROOT_DIR)
@@ -48,14 +47,15 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
         memoria_texto += "\n\n--- Shared memory between profiles ---\n" + shared_facts
 
     # Enriquecimiento RAG
-    try:
-        rag_context = rag_motor.buscar_contexto(user_input, top_k=5, profile_id=pid)
-        if rag_context:
-            rag_limpio = brain_utils._limpiar_contexto_memoria(rag_context)
-            if rag_limpio:
-                memoria_texto += "\n\n" + rag_limpio
-    except Exception as e:
-        log_warning("rag_context_retrieval_failed", error=str(e))
+    if RAG_ENABLED:
+        try:
+            rag_context = rag_motor.buscar_contexto(user_input, top_k=5, profile_id=pid)
+            if rag_context:
+                rag_limpio = brain_utils._limpiar_contexto_memoria(rag_context)
+                if rag_limpio:
+                    memoria_texto += "\n\n" + rag_limpio
+        except Exception as e:
+            log_warning("rag_context_retrieval_failed", error=str(e))
 
     lang = get_current_language()
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
@@ -82,7 +82,7 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
         log_warning("auth_snapshot_read_failed", error=str(e))
 
     ahora = datetime.now()
-    locale = getattr(jarvis_settings, "LOCALE", "en-US")
+    getattr(jarvis_settings, "LOCALE", "en-US")
     # For fallback or simple cases where LOCALE might not affect strftime directly without locale.setlocale
     # but we can use simple ISO or standard formats.
     # For now, let's just use a standard format that fits English/Global.

@@ -1,4 +1,5 @@
 import re
+
 from core import jarvis_state
 
 _COMANDOS_REPETIR_MUSICA = {

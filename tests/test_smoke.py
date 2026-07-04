@@ -201,6 +201,60 @@ def test_admin_voice_registration_requires_token_off_loopback(monkeypatch):
     assert data.get("error") == "Token required for critical routes."
 
 
+def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/voice/registro/admin/iniciar",
+        headers={"Origin": "https://evil.example"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert r.status_code == 403
+    data = r.get_json() or {}
+    assert data.get("error") == "Untrusted origin for critical route."
+
+
+def test_critical_route_allows_trusted_loopback_origin_without_token(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/voice/registro/admin/iniciar",
+        headers={"Origin": "http://localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert r.status_code in (200, 503)
+
+
+def test_chat_stream_rejects_get():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.get("/api/chat/stream?message=hello")
+    assert r.status_code == 405
+
+
+def test_chat_stream_rate_limits_like_chat(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from core import jarvis_brain  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(
+        jarvis_brain,
+        "stream_procesar_mensaje_events",
+        lambda *args, **kwargs: iter([{"type": "final", "text": "ok"}]),
+    )
+
+    c = _test_client(jarvis_backend.app)
+    remote = {"REMOTE_ADDR": "127.0.0.44"}
+    first = c.post("/api/chat/stream", json={"message": "hello"}, environ_base=remote)
+    second = c.post("/api/chat/stream", json={"message": "hello"}, environ_base=remote)
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
 def test_status_endpoint_returns_telemetry():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
     from api import voice_routes
@@ -211,6 +265,19 @@ def test_status_endpoint_returns_telemetry():
     data = r.get_json()
     # Must have at least one telemetry field
     assert any(k in data for k in ["cpu", "ram", "weather", "uptime"])
+
+
+def test_status_endpoint_reports_runtime_mode():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.get("/api/status")
+    assert r.status_code == 200
+    data = r.get_json() or {}
+    assert data["mode"] == "core"
+    assert data["features"]["voice_id"] is False
+    assert data["features"]["rag"] is False
+    assert data["features"]["vision"] is False
 
 
 def test_noticias_endpoint_returns_202_when_not_ready():
@@ -657,6 +724,37 @@ def test_chat_rejects_empty_message():
     assert r.status_code == 400
 
 
+def test_chat_rejects_invalid_json_payload():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post("/api/chat", data="{bad json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    assert (r.get_json() or {}).get("error") == "Invalid JSON payload"
+
+
+def test_chat_rejects_oversized_message():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/chat",
+        json={"message": "x" * 4001},
+        environ_base={"REMOTE_ADDR": "127.0.0.145"},
+    )
+    assert r.status_code == 413
+    assert (r.get_json() or {}).get("error") == "Message too large"
+
+
+def test_chat_stream_rejects_invalid_json_payload():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post("/api/chat/stream", data="{bad json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    assert (r.get_json() or {}).get("error") == "Invalid JSON payload"
+
+
 def test_chat_stream_endpoint_exists():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
     from api import voice_routes
@@ -718,7 +816,7 @@ def test_dynamic_queries_force_web_tools():
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
 
     assert jarvis_brain._debe_buscar_en_web("precio actual del bitcoin") is True
-    assert jarvis_brain._debe_buscar_en_web("que sabes de minimax 2.7") is True
+    assert jarvis_brain._debe_buscar_en_web("que es groq") is True
     r, _ = jarvis_brain.procesar_mensaje(
         "precio actual del bitcoin",
         profile_id="guest_demo",
@@ -897,7 +995,11 @@ def test_memory_rag_store():
 def test_voice_id_preprocess_helper_from_bytes():
     import wave
     import struct
+    from core.jarvis_config import VOICE_ID_ENABLED
     from engines import voice_id  # pyright: ignore[reportMissingImports]
+
+    if not VOICE_ID_ENABLED:
+        pytest.skip("Voice biometrics are disabled in core mode.")
 
     sr = 16000
     samples = [int(32767 * 0.1)] * int(sr * 0.5)
@@ -947,10 +1049,11 @@ def test_monitoring_service_imports():
 
 
 def test_monitoring_service_scheduler():
+    from core.jarvis_config import CORE_MODE
     from services import monitoring_service  # pyright: ignore[reportMissingImports]
 
     ms = monitoring_service.monitoring_service
-    assert ms._scheduler is not None
+    assert (ms._scheduler is None) is CORE_MODE
 
 
 # =============================================================================

@@ -3,10 +3,12 @@ MemoryManager: Encapsulamiento del estado mutable de perfiles y chat.
 Resuelve el riesgo de 'Shared Mutable State' centralizando el acceso y los locks.
 """
 from __future__ import annotations
-import threading
+
 from typing import Any
-from langchain_core.messages import HumanMessage, AIMessage
+
 from core import jarvis_state
+from langchain_core.messages import AIMessage, HumanMessage
+
 
 class MemoryManager:
     def __init__(self):

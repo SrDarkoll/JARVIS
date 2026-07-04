@@ -2,17 +2,35 @@
 TelegramManager: Isolation of the Telegram messaging service.
 Resolves concurrency risks and mixing of Asyncio with blocking threads.
 """
-import os
+from __future__ import annotations
+
 import asyncio
-import threading
-import tempfile
 import io
+import os
+import tempfile
+import threading
+
 import requests as http_requests
-from telegram import Bot, Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
-from core.jarvis_config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+from core.jarvis_config import TELEGRAM_CHAT_ID, TELEGRAM_ENABLED, TELEGRAM_TOKEN
 from core.runtime_logger import log_error, log_warning
 from utils.jarvis_i18n import get_current_language, get_whisper_lang
+
+Application = None
+ContextTypes = None
+MessageHandler = None
+Update = None
+filters = None
+TELEGRAM_AVAILABLE = False
+
+if TELEGRAM_ENABLED:
+    try:
+        from telegram import Update
+        from telegram.ext import Application, ContextTypes, MessageHandler, filters
+
+        TELEGRAM_AVAILABLE = True
+    except ImportError as exc:
+        log_warning("telegram_dependency_missing", error=str(exc))
+
 
 class TelegramManager:
     def __init__(self):
@@ -129,6 +147,12 @@ class TelegramManager:
         log_error("telegram_runtime_error", error=str(context.error))
 
     def start(self):
+        if not TELEGRAM_ENABLED:
+            log_warning("telegram_disabled_by_runtime_configuration")
+            return
+        if not TELEGRAM_AVAILABLE:
+            log_warning("telegram_dependency_missing")
+            return
         if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
             log_warning("telegram_not_configured")
             return

@@ -107,7 +107,7 @@ def create_action_plan(
     with _PLAN_LOCK:
         while plan["id"] in _ACTION_PLANS:
             plan["id"] = hashlib.sha256(
-                f"{plan['id']}:{len(_ACTION_PLANS)}".encode("utf-8")
+                f"{plan['id']}:{len(_ACTION_PLANS)}".encode()
             ).hexdigest()[:12]
         _ACTION_PLANS[plan["id"]] = _copy_plan(plan)
     return _copy_plan(plan)

@@ -1,12 +1,12 @@
 """Herramientas de búsqueda en internet: Brave, NewsAPI, YouTube, multi-source."""
 
-import os, re
+import re
+
 import requests as http_requests
 from langchain_core.tools import tool
-
-from tools._common import _warn_once, _similitud_texto, _limpiar_respuesta
-from core.service_container import services
 from utils.jarvis_i18n import get_current_language
+
+from tools._common import _limpiar_respuesta, _similitud_texto
 
 
 # ─────────────────────────────────────────
@@ -14,8 +14,9 @@ from utils.jarvis_i18n import get_current_language
 # ─────────────────────────────────────────
 def _buscar_en_tavily(query: str) -> str:
     """Búsqueda usando Tavily AI (prioridad alta)."""
-    from core.jarvis_config import TAVILY_API_KEY
     from datetime import datetime
+
+    from core.jarvis_config import TAVILY_API_KEY
 
     if not TAVILY_API_KEY:
         return None  # Indica que debe probar siguiente fuente
@@ -31,7 +32,7 @@ def _buscar_en_tavily(query: str) -> str:
             include_answer=True,
             include_raw_content=False,
         )
-        now = datetime.now().strftime("%d/%m/%Y")
+        datetime.now().strftime("%d/%m/%Y")
         answer = response.get("answer", "")
         results = response.get("results", [])
         if not results:
@@ -54,8 +55,9 @@ def _buscar_en_tavily(query: str) -> str:
 
 def _buscar_en_brave(query: str) -> str:
     """Búsqueda usando Brave Search API (fallback)."""
-    from core.jarvis_config import BRAVE_API_KEY
     from datetime import datetime
+
+    from core.jarvis_config import BRAVE_API_KEY
 
     if not BRAVE_API_KEY:
         return (
@@ -64,7 +66,7 @@ def _buscar_en_brave(query: str) -> str:
         )
 
     ahora = datetime.now()
-    fecha_ref = ahora.strftime("%d/%m/%Y")
+    ahora.strftime("%d/%m/%Y")
     query_mod = query
     query_lower = query.lower()
     palabras_tiempo = [
@@ -101,23 +103,44 @@ def _buscar_en_brave(query: str) -> str:
         params["freshness"] = "pw"
 
     try:
+        import time
+        from requests.exceptions import RequestException
+
         print(f"  [TOOL] Internet Search (Brave): {query_mod}")
-        r = http_requests.get(url, headers=headers, params=params, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            results = data.get("web", {}).get("results", [])
-            if not results:
-                return f"Sin resultados para '{query_mod}' en la red."
-            res = []
-            for it in results:
-                res.append(
-                    f"- {it.get('title')}: {it.get('description')} ({it.get('url')})"
-                )
-            resultado = "\n".join(res)
-            return resultado
-        return f"Consulta web no available (codigo {r.status_code}): {r.text[:200]}"
-    except Exception:
-        return "I could not query the network en este momento."
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = http_requests.get(url, headers=headers, params=params, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    results = data.get("web", {}).get("results", [])
+                    if not results:
+                        return f"Sin resultados para '{query_mod}' en la red."
+                    res = []
+                    for it in results:
+                        res.append(
+                            f"- {it.get('title')}: {it.get('description')} ({it.get('url')})"
+                        )
+                    resultado = "\n".join(res)
+                    return resultado
+                elif r.status_code == 429: # Rate limit
+                    if attempt < max_retries:
+                        time.sleep(2)
+                        continue
+                    return f"Consulta web no available (codigo {r.status_code}): {r.text[:200]}"
+                else:
+                    return f"Consulta web no available (codigo {r.status_code}): {r.text[:200]}"
+            except RequestException as exc:
+                print(f"  [SEARCH] Brave request failed: {type(exc).__name__}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                return "I could not query the network at this time."
+        return "I could not query the network at this time."
+    except Exception as e:
+        print(f"  [SEARCH] Brave unexpected error: {type(e).__name__}")
+        return "I could not query the network at this time."
 
 
 # Alias para compatibilidad
@@ -146,29 +169,46 @@ def _buscar_en_newsapi(query: str) -> list:
         return []
     try:
         news_lang = "es" if get_current_language().startswith("es") else "en"
-        r = http_requests.get(
-            "https://newsapi.org/v2/everything",
-            params={
-                "q": query,
-                "language": news_lang,
-                "sortBy": "publishedAt",
-                "pageSize": 5,
-                "apiKey": NEWSAPI_KEY,
-            },
-            timeout=8,
-        )
-        if r.status_code == 200:
-            articles = r.json().get("articles", [])
-            return [
-                {
-                    "title": a.get("title", ""),
-                    "desc": a.get("description", ""),
-                    "url": a.get("url", ""),
-                    "fecha": a.get("publishedAt", ""),
-                }
-                for a in articles
-                if a.get("title") and "[Removed]" not in a.get("title", "")
-            ]
+        import time
+        from requests.exceptions import RequestException
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = http_requests.get(
+                    "https://newsapi.org/v2/everything",
+                    params={
+                        "q": query,
+                        "language": news_lang,
+                        "sortBy": "publishedAt",
+                        "pageSize": 5,
+                        "apiKey": NEWSAPI_KEY,
+                    },
+                    timeout=8,
+                )
+                if r.status_code == 200:
+                    articles = r.json().get("articles", [])
+                    return [
+                        {
+                            "title": a.get("title", ""),
+                            "desc": a.get("description", ""),
+                            "url": a.get("url", ""),
+                            "fecha": a.get("publishedAt", ""),
+                        }
+                        for a in articles
+                        if a.get("title") and "[Removed]" not in a.get("title", "")
+                    ]
+                elif r.status_code == 429:
+                    if attempt < max_retries:
+                        time.sleep(1.5)
+                        continue
+                    break
+                else:
+                    break
+            except RequestException:
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                break
     except Exception as e:
         print(f"  [NEWSAPI] Error: {e}")
     return []
@@ -254,7 +294,7 @@ def _buscar_multi_fuente(query: str, es_youtube: bool = False) -> str:
     """Búsqueda en múltiples fuentes con fusión intelligente."""
     from datetime import datetime
 
-    now = datetime.now().strftime("%d/%m/%Y")
+    datetime.now().strftime("%d/%m/%Y")
     query_lower = query.lower()
     resultados = []
     fuentes_a_consultar = []

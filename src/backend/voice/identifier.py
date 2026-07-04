@@ -8,7 +8,6 @@ from __future__ import annotations
 
 # Re-exporta todo desde voice_id para compatibilidad con imports existentes.
 # La lógica real vive aquí — voice_id.py es solo un wrapper de 2 líneas.
-
 import io
 import os
 import sqlite3
@@ -18,11 +17,14 @@ import time as _time
 
 import numpy as np
 import soundfile as sf
+from core.jarvis_config import BASE_DIR, VOICE_ID_ENABLED
 
 VOICE_ID_DISPONIBLE = False
 
 if os.getenv("JARVIS_TEST_MODE") == "1":
     print("[VOICE_ID] Disabled in test mode.")
+elif not VOICE_ID_ENABLED:
+    print("[VOICE_ID] Disabled by runtime configuration.")
 else:
     try:
         from speechbrain.inference import SpeakerRecognition
@@ -37,7 +39,6 @@ try:
 except NameError:
     SpeakerRecognition = None
 
-from core.jarvis_config import BASE_DIR
 from core.jarvis_observability import obs_event
 from core.jarvis_state import DEFAULT_PROFILE_ID
 

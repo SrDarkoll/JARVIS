@@ -1,14 +1,10 @@
 import re
 import unicodedata
-import os
-import subprocess
 import webbrowser
 from typing import Any
-from datetime import datetime, timedelta
-from core import jarvis_state
-from core.jarvis_observability import obs_event
-from utils.jarvis_text import reparar_unicode, normalizar_tratamiento_admin
-from core import jarvis_config
+
+from core import jarvis_config, jarvis_state
+from utils.jarvis_text import normalizar_tratamiento_admin, reparar_unicode
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 
@@ -125,7 +121,7 @@ def _extraer_fragmento_json_desde_texto(txt: str) -> str | None:
     """Extracts the first valid JSON block from a text."""
     m = re.search(r"(\{.*?\})", txt, flags=re.DOTALL)
     if m:
-        candidate = m.group(1)
+        m.group(1)
         # Expand until valid JSON
         depth = 0
         start = m.start(1)
@@ -141,6 +137,7 @@ def _extraer_fragmento_json_desde_texto(txt: str) -> str | None:
 
 def _compactar_resumen_busqueda(res: Any) -> str:
     import json
+
     from core import core_tools
 
     txt = reparar_unicode(str(res or "")).strip()

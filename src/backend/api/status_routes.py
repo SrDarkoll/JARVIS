@@ -1,17 +1,16 @@
 import os
 
-from quart import Blueprint, jsonify, request
 import psutil
-import time as _time
-
 from core import jarvis_brain, jarvis_state
-from core.app_config import get_default_location
 from core.action_plans import list_action_plans
-from core.operator_status import build_operator_status
-from core.jarvis_observability import obs_event, obs_inc, obs_snapshot, obs_tail
-from core.setup_wizard import build_setup_status
 from core.api_contracts import validate_status_full_response
+from core.app_config import get_default_location
+from core.jarvis_config import RUNTIME_FEATURES
+from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
+from core.operator_status import build_operator_status
 from core.runtime_logger import log_warning
+from core.setup_wizard import build_setup_status
+from quart import Blueprint, jsonify, request
 from services import security_manager
 
 status_bp = Blueprint("status", __name__)
@@ -76,6 +75,15 @@ def api_status():
     return jsonify(
         {
             "status": "online",
+            "mode": "core" if RUNTIME_FEATURES.core_mode else "full",
+            "features": {
+                "voice_id": RUNTIME_FEATURES.voice_id_enabled,
+                "rag": RUNTIME_FEATURES.rag_enabled,
+                "vision": RUNTIME_FEATURES.vision_enabled,
+                "plugins": RUNTIME_FEATURES.plugins_enabled,
+                "briefing": RUNTIME_FEATURES.briefing_enabled,
+                "telegram": RUNTIME_FEATURES.telegram_enabled,
+            },
             "profile": jarvis_state.get_active_profile_id(),
             "heartbeat": jarvis_state.heartbeat_state.get("last_pulse", 0),
         }
@@ -224,8 +232,8 @@ def get_status_full():
     cpu_usage, ram = psutil.cpu_percent(interval=None), psutil.virtual_memory().percent
     temp = 45.0 + (cpu_usage * 0.35)
     try:
-        from pythoncom import CoInitialize, CoUninitialize
         import wmi
+        from pythoncom import CoInitialize, CoUninitialize
 
         CoInitialize()
         try:
@@ -313,7 +321,7 @@ def get_profiles():
                 "profiles": {
                     pid: {
                         "history_len": len((pdata or {}).get("history", [])),
-                        "facts_len": len(((pdata or {}).get("facts", "") or "")),
+                        "facts_len": len((pdata or {}).get("facts", "") or ""),
                     }
                     for pid, pdata in _profile_memory.items()
                 },

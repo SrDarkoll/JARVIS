@@ -5,9 +5,11 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from core.runtime_logger import log_error
+
 from voice.pipeline import (
     get_active_whisper_language,
     hint_necesita_reintento_whisper,

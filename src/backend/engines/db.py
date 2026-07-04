@@ -1,11 +1,11 @@
-import sqlite3
 import json
 import os
 import re
+import sqlite3
 import threading
-from langchain_core.messages import HumanMessage, AIMessage
 
 from core import jarvis_state
+from langchain_core.messages import AIMessage, HumanMessage
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
@@ -111,7 +111,7 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
         legacy_file = os.path.join(_ROOT, 'memoria_jarvis.json')
         if os.path.exists(mem_file):
             try:
-                with open(mem_file, "r", encoding="utf-8") as f:
+                with open(mem_file, encoding="utf-8") as f:
                     data = json.load(f) or {}
                 raw_profiles = data.get("profiles", {})
                 for pid_raw, pdata in raw_profiles.items():
@@ -125,7 +125,7 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                 obs_event("json_load_error", error=str(e)[:300])
         elif os.path.exists(legacy_file):
             try:
-                with open(legacy_file, "r", encoding="utf-8") as f:
+                with open(legacy_file, encoding="utf-8") as f:
                     old = json.load(f) or {}
                 perfiles[DEFAULT_PROFILE_ID] = {
                     "history": _deserializar_history(old.get("history", [])),

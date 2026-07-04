@@ -3,13 +3,12 @@ TTS Routes: audio synthesis and pronunciation management.
 The engine instance is injected via init_tts_routes().
 """
 
-from quart import Blueprint, request, jsonify, make_response
 import re
-import threading
 import time as _time
 import traceback
 
 from core.jarvis_observability import obs_event
+from quart import Blueprint, jsonify, make_response, request
 
 tts_bp = Blueprint("tts", __name__)
 
@@ -88,7 +87,7 @@ async def generate_tts():
     if not allowed:
         return jsonify({"error": "rate_limit", "retry_after": round(retry_after, 3)}), 429
 
-    t_enter = _time.time()
+    _time.time()
 
     if not _tts_api_lock.acquire(timeout=10):
         return jsonify({"error": "tts_busy", "retry_after": 1.2}), 429

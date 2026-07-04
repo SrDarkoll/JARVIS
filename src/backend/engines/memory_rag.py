@@ -2,25 +2,58 @@ import hashlib
 import json
 import os
 import threading
-from typing import Optional
 
+from core.jarvis_config import RAG_ENABLED
 from core.jarvis_state import DEFAULT_PROFILE_ID as _OWNER_PID
 
 # It will be attempted to import FAISS in a secure way
-try:
-    from langchain_community.vectorstores import FAISS
-    from langchain_core.documents import Document
+if RAG_ENABLED:
+    try:
+        from langchain_community.vectorstores import FAISS
+        from langchain_core.documents import Document
 
-    FAISS_DISPONIBLE = True
-except ImportError:
+        FAISS_DISPONIBLE = True
+    except Exception:
+        FAISS_DISPONIBLE = False
+else:
+    FAISS = None
+    Document = None
     FAISS_DISPONIBLE = False
 
-try:
-    # New package recommended by LangChain (avoids deprecation)
-    from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
-except ImportError:
-    # Fallback for compatibility
-    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+_HUGGINGFACE_EMBEDDINGS_CLASS = None
+_EMBEDDINGS_IMPORT_ERROR = None
+
+
+def _load_huggingface_embeddings_class():
+    global _HUGGINGFACE_EMBEDDINGS_CLASS, _EMBEDDINGS_IMPORT_ERROR
+
+    if _HUGGINGFACE_EMBEDDINGS_CLASS is not None:
+        return _HUGGINGFACE_EMBEDDINGS_CLASS
+    if _EMBEDDINGS_IMPORT_ERROR is not None:
+        return None
+
+    try:
+        # New package recommended by LangChain (avoids deprecation)
+        from langchain_huggingface import HuggingFaceEmbeddings as embeddings_class  # type: ignore
+    except ImportError:
+        try:
+            # Fallback for compatibility
+            from langchain_community.embeddings import HuggingFaceEmbeddings as embeddings_class  # type: ignore
+        except Exception as exc:
+            _EMBEDDINGS_IMPORT_ERROR = exc
+            return None
+    except Exception as exc:
+        _EMBEDDINGS_IMPORT_ERROR = exc
+        return None
+
+    _HUGGINGFACE_EMBEDDINGS_CLASS = embeddings_class
+    return _HUGGINGFACE_EMBEDDINGS_CLASS
+
+
+def _format_embeddings_import_error() -> str:
+    if _EMBEDDINGS_IMPORT_ERROR is None:
+        return "unknown import error"
+    return f"{type(_EMBEDDINGS_IMPORT_ERROR).__name__}: {str(_EMBEDDINGS_IMPORT_ERROR)[:180]}"
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
@@ -118,6 +151,10 @@ class MemoryRAG:
         self._lock = threading.Lock()
         self.lista = FAISS_DISPONIBLE
 
+        if not RAG_ENABLED:
+            self.lista = False
+            return
+
         if os.getenv("JARVIS_TEST_MODE") == "1":
             self.lista = False
             return
@@ -133,11 +170,22 @@ class MemoryRAG:
         from utils.jarvis_i18n import get_bt
         bt = get_bt()
         print(bt["log_rag_loading"].format(model=EMBEDDING_MODEL))
+
+        embeddings_class = _load_huggingface_embeddings_class()
+        if embeddings_class is None:
+            from core.jarvis_observability import obs_event
+
+            reason = _format_embeddings_import_error()
+            obs_event("rag_embedding_provider_unavailable", error=reason)
+            print(f"[RAG] Embedding provider unavailable ({reason}). RAG disabled.")
+            self.lista = False
+            return
+
         try:
             os.makedirs(_HF_CACHE, exist_ok=True)
             if not (os.environ.get("HF_HOME") or "").strip():
                 os.environ["HF_HOME"] = os.path.abspath(_HF_CACHE)
-            self.embeddings = HuggingFaceEmbeddings(
+            self.embeddings = embeddings_class(
                 model_name=EMBEDDING_MODEL,
                 cache_folder=os.path.join(_HF_CACHE, "embeddings"),
             )

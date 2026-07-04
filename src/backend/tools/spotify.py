@@ -1,19 +1,22 @@
 """Integración completa de Spotify: autenticación, búsqueda, reproducción, cola, AutoMix, similares."""
 
-import os, re, time as _time
+import os
+import re
+import time as _time
+
 import requests as http_requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+
 try:
     from spotipy.cache_handler import CacheFileHandler
 except Exception:  # pragma: no cover - compatibility with older spotipy releases
     CacheFileHandler = None
-from langchain_core.tools import tool
-
-from tools._common import BASE_DIR, _open_url_or_app
-from core.service_container import services
 from core import jarvis_config
+from langchain_core.tools import tool
 from utils.jarvis_i18n import get_current_language
+
+from tools._common import _open_url_or_app
 
 # ─────────────────────────────────────────
 # Configuración y autenticación

@@ -1,10 +1,10 @@
 import re
-from typing import Any
-from langchain_core.messages import AIMessage
-from utils.jarvis_text import reparar_unicode
-from utils.jarvis_auth import get_auth_snapshot
+
 from core import jarvis_state
-from utils.jarvis_i18n import get_current_language, get_bt, BACKEND_TRANSLATIONS
+from langchain_core.messages import AIMessage
+from utils.jarvis_auth import get_auth_snapshot
+from utils.jarvis_i18n import BACKEND_TRANSLATIONS, get_current_language
+from utils.jarvis_text import reparar_unicode
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 
@@ -31,10 +31,14 @@ KEYWORDS_WEB_DINAMICAS = [
     "what is",
     "which is",
     "where",
+    "que es",
+    "como funciona",
+    "cual es",
+    "quien es",
 ]
 
 _MODEL_VERSION_RE = re.compile(
-    r"\b(?:minimax|gpt|claude|gemini|llama|mistral|qwen|deepseek|openai)\s*[- ]?(?:v)?\d+(?:\.\d+){0,3}\b",
+    r"\b(?:gpt|claude|gemini|llama|mistral|qwen|deepseek|openai)\s*[- ]?(?:v)?\d+(?:\.\d+){0,3}\b",
     re.IGNORECASE,
 )
 
@@ -59,11 +63,15 @@ _TECH_QUERY_HINTS = {
     "libraries",
     "docs",
     "documentation",
+    "que es",
+    "como funciona",
+    "cual es",
+    "quien es",
 }
 
 _TECH_TOPIC_HINTS = {
-    "minimax",
     "openai",
+    "groq",
     "gpt",
     "claude",
     "gemini",
@@ -193,7 +201,7 @@ def _respuesta_rapida_social(user_input: str, profile_id: str = DEFAULT_PROFILE_
     lang = get_current_language()
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
 
-    t = reparar_unicode((user_input or "")).strip().lower()
+    t = reparar_unicode(user_input or "").strip().lower()
     t_plain = _normalizar_social_texto(t)
     if _has_information_intent(t_plain):
         return None
@@ -239,7 +247,7 @@ def _respuesta_rapida_social(user_input: str, profile_id: str = DEFAULT_PROFILE_
 
 def _respuesta_seguimiento_contextual(user_input: str, history: list) -> str | None:
     """Evita respuestas fuera de contexto en seguimientos cortos."""
-    t = reparar_unicode((user_input or "")).strip().lower()
+    t = reparar_unicode(user_input or "").strip().lower()
     t = re.sub(r"[^\wáéíóúñü\s]", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     t_plain = t

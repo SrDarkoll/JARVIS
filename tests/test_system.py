@@ -57,6 +57,7 @@ class TestModoNoMolestar:
         from tools import system
 
         mock_vol = MagicMock()
+        monkeypatch.setattr(system, "_VOL_AVAILABLE", True)
         monkeypatch.setattr(system, "_obtener_control_volumen", lambda: mock_vol)
         out = system.modo_no_molestar.invoke({"activar": True})
         mock_vol.SetMute.assert_called_once()
@@ -66,6 +67,7 @@ class TestModoNoMolestar:
         from tools import system
 
         mock_vol = MagicMock()
+        monkeypatch.setattr(system, "_VOL_AVAILABLE", True)
         monkeypatch.setattr(system, "_obtener_control_volumen", lambda: mock_vol)
         out = system.modo_no_molestar.invoke({"activar": False})
         mock_vol.SetMute.assert_called_once()

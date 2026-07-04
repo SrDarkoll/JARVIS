@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from typing import Mapping
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
@@ -12,6 +14,44 @@ os.environ.setdefault("WANDB_MODE", "disabled")
 os.environ.setdefault("WANDB_DISABLED", "true")
 os.environ.setdefault("WANDB_DISABLE_SERVICE", "true")
 os.environ.setdefault("WANDB_SILENT", "true")
+
+
+@dataclass(frozen=True)
+class RuntimeFeatures:
+    core_mode: bool
+    voice_id_enabled: bool
+    rag_enabled: bool
+    vision_enabled: bool
+    plugins_enabled: bool
+    briefing_enabled: bool
+    telegram_enabled: bool
+
+
+def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = env.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    normalized = str(raw).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFeatures:
+    source = os.environ if env is None else env
+    core_mode = _read_bool(source, "JARVIS_CORE_MODE", True)
+    optional_default = not core_mode
+    return RuntimeFeatures(
+        core_mode=core_mode,
+        voice_id_enabled=_read_bool(source, "JARVIS_VOICE_ID_ENABLED", optional_default),
+        rag_enabled=_read_bool(source, "JARVIS_RAG_ENABLED", optional_default),
+        vision_enabled=_read_bool(source, "JARVIS_VISION_ENABLED", optional_default),
+        plugins_enabled=_read_bool(source, "JARVIS_PLUGINS_ENABLED", optional_default),
+        briefing_enabled=_read_bool(source, "JARVIS_BRIEFING_ENABLED", optional_default),
+        telegram_enabled=_read_bool(source, "JARVIS_TELEGRAM_ENABLED", optional_default),
+    )
 
 
 def _normalize_fs_path(path: str) -> str:
@@ -42,21 +82,25 @@ SECURITY_AUDIT_FILE = os.path.join(OBS_DIR, "security_audit.jsonl")
 SECURITY_POLICY_FILE = os.path.join(OBS_DIR, "security_policy.json")
 TTS_PRONUN_FILE = os.path.join(BASE_DIR, "tts_pronunciacion.json")
 PLUGINS_DIR = os.path.join(SRC_DIR, "backend", "plugins")
-MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
-MINIMAX_MODEL = os.getenv("JARVIS_MINIMAX_MODEL", "MiniMax-Text-01")
-MINIMAX_VISION_MODEL = os.getenv("JARVIS_MINIMAX_VISION_MODEL", "MiniMax-VL-01")
-MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+RUNTIME_FEATURES = resolve_runtime_features()
+CORE_MODE = RUNTIME_FEATURES.core_mode
+VOICE_ID_ENABLED = RUNTIME_FEATURES.voice_id_enabled
+RAG_ENABLED = RUNTIME_FEATURES.rag_enabled
+VISION_ENABLED = RUNTIME_FEATURES.vision_enabled
+PLUGINS_ENABLED = RUNTIME_FEATURES.plugins_enabled
+BRIEFING_ENABLED = RUNTIME_FEATURES.briefing_enabled
+TELEGRAM_ENABLED = RUNTIME_FEATURES.telegram_enabled
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_VISION_MODEL = os.getenv("JARVIS_GROQ_VISION_MODEL", "llama-3.2-90b-vision-preview")
+GROQ_VISION_MODEL = os.getenv("JARVIS_GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 _chat_id_env = os.getenv("TELEGRAM_CHAT_ID", "0")
 TELEGRAM_CHAT_ID = int(_chat_id_env) if _chat_id_env.strip().lstrip("-").isdigit() else 0
 BRIEFING_HORA = 7
 HEARTBEAT_INTERVALO = 300
-AUTOCURACION_ACTIVA = os.getenv("JARVIS_AUTOCURACION", "true").strip().lower() == "true"
-PROACTIVE_ACTIVO = os.getenv("JARVIS_PROACTIVE", "true").strip().lower() == "true"
+AUTOCURACION_ACTIVA = _read_bool(os.environ, "JARVIS_AUTOCURACION", not CORE_MODE)
+PROACTIVE_ACTIVO = _read_bool(os.environ, "JARVIS_PROACTIVE", not CORE_MODE)
 PROACTIVE_COOLDOWN = int((os.getenv("JARVIS_PROACTIVE_COOLDOWN") or "600").strip() or "600")
 STRICT_WEB_SEARCH = os.getenv("JARVIS_STRICT_WEB_SEARCH", "false").strip().lower() == "true"
 

@@ -10,8 +10,9 @@ from dataclasses import dataclass, replace
 from threading import RLock
 from typing import Any
 
-from core import jarvis_config
 from utils.jarvis_i18n import LANGUAGE_CONFIG
+
+from core import jarvis_config
 
 
 class AppConfigValidationError(ValueError):
@@ -35,7 +36,6 @@ class FeatureTogglesConfig:
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    minimax_api_key: str
     groq_api_key: str
     newsapi_key: str
     telegram_token: str
@@ -133,7 +133,6 @@ def build_app_config(jarvis_settings_module: Any | None = None) -> AppConfig:
         strict_web_search=bool(jarvis_config.STRICT_WEB_SEARCH),
     )
     providers = ProviderConfig(
-        minimax_api_key=str(jarvis_config.MINIMAX_API_KEY or ""),
         groq_api_key=str(jarvis_config.GROQ_API_KEY or ""),
         newsapi_key=str(jarvis_config.NEWSAPI_KEY or ""),
         telegram_token=str(jarvis_config.TELEGRAM_TOKEN or ""),
@@ -169,9 +168,9 @@ def init_app_config(jarvis_settings_module: Any | None = None) -> AppConfig:
         _APP_CONFIG = cfg
 
     if jarvis_settings_module:
-        setattr(jarvis_settings_module, "LANGUAGE", cfg.localization.language)
-        setattr(jarvis_settings_module, "LOCALE", cfg.localization.locale)
-        setattr(jarvis_settings_module, "LOCATION", cfg.localization.location)
+        jarvis_settings_module.LANGUAGE = cfg.localization.language
+        jarvis_settings_module.LOCALE = cfg.localization.locale
+        jarvis_settings_module.LOCATION = cfg.localization.location
 
     return cfg
 

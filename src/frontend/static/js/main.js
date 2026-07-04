@@ -48,15 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         proactiveAlerts: document.getElementById('proactive-alerts'),
         voiceObsCount: document.getElementById('voice-observability-count'),
         voiceObsContent: document.getElementById('voice-observability-content'),
-        operatorModeLabel: document.getElementById('operator-mode-label'),
-        operatorProfileLabel: document.getElementById('operator-profile-label'),
-        operatorMemoryCount: document.getElementById('operator-memory-count'),
-        operatorGuardSummary: document.getElementById('operator-guard-summary'),
-        operatorAuditCount: document.getElementById('operator-audit-count'),
-        operatorMissionTitle: document.getElementById('operator-mission-title'),
-        operatorMissionMeta: document.getElementById('operator-mission-meta'),
-        operatorMissionProgressBar: document.getElementById('operator-mission-progress-bar'),
-        operatorSteps: document.getElementById('operator-steps'),
+        conversationSegments: document.getElementById('conversation-segments'),
         quickActionButtons: document.querySelectorAll('.quick-action'),
         widgetContainer: 'widget-container',
         langSelector: document.getElementById('lang-selector')
@@ -103,7 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
             setLanguage(backendLang);
             if (dom.langSelector) dom.langSelector.value = backendLang;
             applyRecognitionLanguage(backendLang);
-            pollOperatorStatus();
             if (hud && hud.setLocale && data.locale) hud.setLocale(data.locale);
         } catch (err) {
             console.warn('[LANG] Backend language sync failed:', err);
@@ -179,7 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let wakeWordCooldownUntil = 0;
     let hudPollTimer = null;
     let voiceObsPollTimer = null;
-    let operatorPollTimer = null;
     const VOICE_DEBUG = true;
 
     // --- REFERENCIA AL TRANSCRIPT TEXT ---
@@ -415,128 +405,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function setOperatorText(el, value) {
-        if (el) el.textContent = String(value ?? '--');
-    }
-
-    function formatOperatorMode(mode) {
-        if (mode === 'ADMIN_OPERATOR') return t('operator_mode_admin');
-        if (mode === 'GUEST_VIEW_ONLY') return t('operator_mode_guest');
-        return String(mode || t('operator_syncing')).replace(/_/g, ' ');
-    }
-
-    function formatOperatorStatus(status) {
-        const key = `operator_status_${String(status || 'pending').toLowerCase()}`;
-        return t(key);
-    }
-
-    function renderOperatorSteps(steps) {
-        if (!dom.operatorSteps) return;
-        dom.operatorSteps.textContent = '';
-        const safeSteps = Array.isArray(steps) ? steps.slice(0, 5) : [];
-        if (safeSteps.length === 0) {
-            const empty = document.createElement('span');
-            empty.className = 'operator-empty';
-            empty.textContent = t('operator_empty_steps');
-            dom.operatorSteps.appendChild(empty);
-            return;
-        }
-        safeSteps.forEach((step) => {
-            const row = document.createElement('div');
-            const status = String(step?.status || 'pending').toLowerCase();
-            row.className = `operator-step ${status}`;
-
-            const index = document.createElement('span');
-            index.className = 'operator-step-index';
-            index.textContent = String(step?.index || '-').padStart(2, '0');
-
-            const body = document.createElement('span');
-            body.className = 'operator-step-body';
-            body.textContent = step?.description || step?.tool || 'Paso pendiente';
-
-            const tag = document.createElement('span');
-            tag.className = 'operator-step-tag';
-            tag.textContent = formatOperatorStatus(status);
-
-            row.appendChild(index);
-            row.appendChild(body);
-            row.appendChild(tag);
-            dom.operatorSteps.appendChild(row);
-        });
-    }
-
-    function renderOperatorStatus(data) {
-        const operator = data?.operator || {};
-        const mission = data?.missions?.active || null;
-        const memory = data?.memory || {};
-        const guard = data?.tool_guard || {};
-        const security = data?.security || {};
-
-        setOperatorText(dom.operatorModeLabel, formatOperatorMode(operator.mode));
-        if (dom.operatorModeLabel) {
-            dom.operatorModeLabel.classList.toggle('is-guest', operator.mode === 'GUEST_VIEW_ONLY');
-            dom.operatorModeLabel.classList.toggle('is-admin', operator.mode === 'ADMIN_OPERATOR');
-        }
-        setOperatorText(dom.operatorProfileLabel, `${operator.profile_id || '--'} / ${operator.role || '--'}`);
-        setOperatorText(
-            dom.operatorMemoryCount,
-            t('operator_profiles_count')
-                .replace('{profiles}', memory.profiles_total || 0)
-                .replace('{facts}', memory.active_profile?.facts_len || 0)
-        );
-        setOperatorText(
-            dom.operatorGuardSummary,
-            t('operator_guard_summary')
-                .replace('{critical}', guard.critical_count || 0)
-                .replace('{confirmation}', guard.confirmation_required_count || 0)
-        );
-        setOperatorText(
-            dom.operatorAuditCount,
-            t('operator_audit_count').replace('{count}', security.audit_events || 0)
-        );
-
-        if (!mission) {
-            setOperatorText(dom.operatorMissionTitle, t('operator_no_active_mission'));
-            setOperatorText(dom.operatorMissionMeta, t('operator_zero_steps'));
-            if (dom.operatorMissionProgressBar) dom.operatorMissionProgressBar.style.width = '0%';
-            renderOperatorSteps([]);
-            return;
-        }
-
-        const progress = Math.max(0, Math.min(100, Number(mission.progress_percent) || 0));
-        setOperatorText(dom.operatorMissionTitle, mission.goal || mission.id || t('operator_active_mission'));
-        setOperatorText(
-            dom.operatorMissionMeta,
-            t('operator_mission_meta')
-                .replace('{completed}', mission.completed_steps || 0)
-                .replace('{total}', mission.total_steps || 0)
-                .replace(
-                    '{state}',
-                    mission.requires_confirmation
-                        ? t('operator_confirmation_required')
-                        : t('operator_ready')
-                )
-        );
-        if (dom.operatorMissionProgressBar) dom.operatorMissionProgressBar.style.width = `${progress}%`;
-        renderOperatorSteps(mission.steps || []);
-    }
-
-    async function pollOperatorStatus() {
-        try {
-            const data = await API.fetchOperatorStatus();
-            renderOperatorStatus(data);
-        } catch (e) {
-            setOperatorText(dom.operatorModeLabel, t('operator_no_link'));
-            if (dom.operatorMissionProgressBar) dom.operatorMissionProgressBar.style.width = '0%';
-        }
-    }
-
     pollStatus();
     hudPollTimer = setInterval(pollStatus, 5000);
     pollVoiceObservability();
     voiceObsPollTimer = setInterval(pollVoiceObservability, 4500);
-    pollOperatorStatus();
-    operatorPollTimer = setInterval(pollOperatorStatus, 6000);
 
     // --- ACCIONES Y REGISTRO ---
     async function runQuickAction(action) {
@@ -647,8 +519,6 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (currentMode === 'processing') {
                 txt.textContent = t('mode_processing');
             }
-            pollOperatorStatus();
-            
             // 3. Hot-swap backend (TTS voice model, Whisper lang, prompts)
             try {
                 const res = await fetch('/api/language', {
@@ -1193,6 +1063,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         addLogEntry(t('cog_connecting'));
+        ui.updateAssistantSegment(t('cog_connecting').replace(/^>\s*/, ''));
         const controller = new AbortController();
         const STREAM_TOTAL_TIMEOUT_MS = 60000;
         const STREAM_IDLE_TIMEOUT_MS = 20000;
@@ -1226,9 +1097,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (ev.type === 'token' && ev.text) {
                         acc += ev.text;
                         setTranscript(acc);
+                        ui.updateAssistantSegment(acc);
                     } else if (ev.type === 'status') {
                         addLogEntry(t('cog_status').replace('{text}', ev.text));
-                        if (!acc) setTranscript(`[ ${ev.text}... ]`);
+                        if (!acc) {
+                            const statusText = `[ ${ev.text}... ]`;
+                            setTranscript(statusText);
+                            ui.updateAssistantSegment(statusText);
+                        }
                     } else if (ev.type === 'done') {
                         finalReply = ev.response || acc || '';
                         shouldListen = !!ev.should_listen;
@@ -1348,6 +1224,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!transcript) { startPassiveListening(); return; }
         const _tl = transcript.toLowerCase();
         ui.addLogEntry(t('log_user').replace('{text}', transcript));
+        ui.addConversationSegment('user', transcript);
 
         // Detectar comando de registro de voz directamente
         if (
@@ -1399,6 +1276,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const rawResponse = data.response || "No tengo respuesta.";
             const sanitized = sanitizeJarvisReply(rawResponse);
             const cleanText = widgets.processResponse(sanitized);
+            ui.updateAssistantSegment(cleanText);
             const sentences = splitForTts(cleanText);
             ui.addLogEntry(`> JARVIS: ${cleanText}`);
             ui.addLogEntry(`> TTS: ${sentences.length} oracion(es) para hablar.`);
@@ -1592,10 +1470,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (voiceObsPollTimer) {
             clearInterval(voiceObsPollTimer);
             voiceObsPollTimer = null;
-        }
-        if (operatorPollTimer) {
-            clearInterval(operatorPollTimer);
-            operatorPollTimer = null;
         }
         if (hudPollTimer) {
             clearInterval(hudPollTimer);

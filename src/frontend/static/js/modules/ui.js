@@ -9,6 +9,8 @@ export class UIManager {
     constructor(elements) {
         this.elements = elements;
         this.waveInterval = null;
+        this.currentAssistantSegment = null;
+        this.maxConversationSegments = 14;
     }
 
     forwardLogToTerminal(msg) {
@@ -53,6 +55,88 @@ export class UIManager {
             this.elements.transcriptText.classList.remove('updating');
             this.elements.transcriptText.scrollTop = 0;
         }, 200);
+    }
+
+    _conversationLabel(role) {
+        if (role === 'user') return t('conversation_user');
+        if (role === 'assistant') return t('conversation_jarvis');
+        return t('conversation_system');
+    }
+
+    _splitConversationLines(text) {
+        const cleaned = String(text ?? '').replace(/\s+/g, ' ').trim();
+        if (!cleaned) return [];
+        const parts = cleaned
+            .split(/(?<=[.!?])\s+|\n+/)
+            .map(part => part.trim())
+            .filter(Boolean);
+        return parts.length ? parts : [cleaned];
+    }
+
+    _renderConversationBody(body, text) {
+        body.textContent = '';
+        const lines = this._splitConversationLines(text);
+        if (lines.length === 0) {
+            body.textContent = '...';
+            return;
+        }
+        for (const line of lines) {
+            const item = document.createElement('div');
+            item.className = 'conversation-line';
+            item.textContent = line;
+            body.appendChild(item);
+        }
+    }
+
+    _trimConversationSegments(container) {
+        while (container.children.length > this.maxConversationSegments) {
+            container.removeChild(container.firstElementChild);
+        }
+    }
+
+    addConversationSegment(role, text) {
+        const container = this.elements.conversationSegments;
+        if (!container) return null;
+
+        const empty = container.querySelector('.conversation-empty');
+        if (empty) empty.remove();
+
+        const safeRole = role === 'user' || role === 'assistant' ? role : 'system';
+        const item = document.createElement('article');
+        item.className = `conversation-segment ${safeRole}`;
+
+        const label = document.createElement('div');
+        label.className = 'conversation-speaker';
+        label.textContent = this._conversationLabel(safeRole);
+
+        const body = document.createElement('div');
+        body.className = 'conversation-body';
+        this._renderConversationBody(body, text);
+
+        item.append(label, body);
+        container.appendChild(item);
+        this._trimConversationSegments(container);
+        container.scrollTop = container.scrollHeight;
+
+        if (safeRole === 'assistant') this.currentAssistantSegment = item;
+        if (safeRole === 'user') this.currentAssistantSegment = null;
+        return item;
+    }
+
+    updateConversationSegment(segment, text) {
+        const body = segment?.querySelector?.('.conversation-body');
+        if (!body) return;
+        this._renderConversationBody(body, text);
+        const container = this.elements.conversationSegments;
+        if (container) container.scrollTop = container.scrollHeight;
+    }
+
+    updateAssistantSegment(text) {
+        if (!this.currentAssistantSegment || !this.currentAssistantSegment.isConnected) {
+            this.currentAssistantSegment = this.addConversationSegment('assistant', text);
+            return;
+        }
+        this.updateConversationSegment(this.currentAssistantSegment, text);
     }
 
     animateWaves(active) {

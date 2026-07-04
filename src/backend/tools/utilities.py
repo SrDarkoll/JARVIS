@@ -1,26 +1,49 @@
 """Utilidades variadas: clima, NBA, recordatorios, archivos, motivacional, rutinas, briefing, pantalla."""
 
-import os, re, json, time as _uti_time
-import requests as http_requests
+import json
+import os
+import re
+import time as _uti_time
 from datetime import datetime, timedelta
-from langchain_core.tools import tool
 
-from tools._common import (
-    _log_event, _warn_once, _normalizar_profile_id,
-    BASE_DIR, ROOT_DIR,
-)
+import requests as http_requests
 from core import jarvis_state
-from core import jarvis_config
 from core.app_config import get_default_location
 from core.service_container import services
-from tools.memory import (
-    _limpiar_facts_memoria,
-)
+from langchain_core.tools import tool
 from utils.jarvis_auth import verificar_autorizacion
+
+from tools._common import (
+    BASE_DIR,
+    ROOT_DIR,
+    _normalizar_profile_id,
+    _warn_once,
+)
 
 # Ya no usamos variables locales, usamos services.recordatorios, services.noticias_cache, etc.
 
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
+
+
+def _extract_llm_text(response) -> str:
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    content = getattr(response, "content", None)
+    if content is not None:
+        return str(content)
+    if isinstance(response, dict):
+        content = response.get("content")
+        if content is not None:
+            return str(content)
+        choices = response.get("choices") or []
+        if choices:
+            first_choice = choices[0] or {}
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            if isinstance(message, dict) and message.get("content") is not None:
+                return str(message.get("content"))
+    return str(response)
 
 
 def _bloqueo_si_no_autorizado() -> str | None:
@@ -178,25 +201,43 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
 
     # Proveedor 2: Open-Meteo
     try:
+        import time
+        from requests.exceptions import RequestException
         lat, lon = _resolve_openmeteo_coords(ciudad_actual or default_location)
-        r = http_requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current_weather": "true",
-                "timezone": "auto",
-            },
-            timeout=5,
-        )
-        if r.status_code == 200:
-            data = r.json() or {}
-            cur = data.get("current_weather")
-            if cur and isinstance(cur, dict):
-                temp = cur.get("temperature", "--")
-                code = cur.get("weathercode")
-                desc = _mapear_weather_code_openmeteo(code, lang=lang)
-                return _sync_cache(desc, str(temp))
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = http_requests.get(
+                    "https://api.open-meteo.com/v1/forecast",
+                    params={
+                        "latitude": lat,
+                        "longitude": lon,
+                        "current_weather": "true",
+                        "timezone": "auto",
+                    },
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    data = r.json() or {}
+                    cur = data.get("current_weather")
+                    if cur and isinstance(cur, dict):
+                        temp = cur.get("temperature", "--")
+                        code = cur.get("weathercode")
+                        desc = _mapear_weather_code_openmeteo(code, lang=lang)
+                        return _sync_cache(desc, str(temp))
+                    break # Si status 200 pero la info no esta, no seguir iterando
+                elif r.status_code == 429:
+                    if attempt < max_retries:
+                        time.sleep(1)
+                        continue
+                    break
+                else:
+                    break
+            except RequestException:
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                break
     except Exception as e:
         _warn_once("clima_openmeteo", f"Open-Meteo fallo: {e}")
 
@@ -242,58 +283,118 @@ def obtener_clima(ciudad: str = "Madrid") -> str:
 # NBA
 # ─────────────────────────────────────────
 @tool
-def obtener_partidos_nba(consulta: str = "hoy") -> str:
-    """Obtiene partidos de NBA en tiempo real: resultados, horarios, marcadores en vivo.
-    Úsala cuando pregunten por partidos, scores, resultados o calendario de NBA."""
+def obtener_deportes_espn(deporte: str = "basketball", liga: str = "nba", consulta: str = "hoy", event_id: str = "") -> str:
+    """Obtiene marcadores o detalles de cualquier deporte vía ESPN (nba, nfl, mlb, soccer/eng.1, etc).
+    Si event_id no está vacío, trae stats detallados de ese partido."""
     try:
-        fecha = datetime.now().strftime("%Y%m%d")
-        url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={fecha}"
-        r = http_requests.get(url, timeout=10)
-        if r.status_code != 200:
-            return f"Error ESPN: {r.status_code}"
-        data = r.json()
-        eventos = data.get("events", [])
-        if not eventos:
-            return "No hay partidos de NBA programados para hoy."
-        res = []
-        for e in eventos:
-            nombre = e.get("name", "")
-            status = e.get("status", {}).get("type", {})
-            estado = status.get("description", "")
-            competicion = e.get("competitions", [{}])[0]
-            competidores = competicion.get("competitors", [])
-            marcador = ""
-            if competidores:
-                equipos = []
-                for c in competidores:
-                    team = c.get("team", {}).get("abbreviation", "")
-                    score = c.get("score", "")
-                    equipos.append(f"{team} {score}".strip())
-                marcador = " vs ".join(equipos)
-            linea = f"- {nombre} | {estado}"
-            if marcador and any(c.get("score") for c in competidores):
-                linea += f" | {marcador}"
-            res.append(linea)
+        import time
+        from requests.exceptions import RequestException
 
-        games_json = []
-        for e in eventos:
-            comp = e.get("competitions", [{}])[0]
-            teams = comp.get("competitors", [])
-            h = teams[0].get("team", {}).get("abbreviation", "T1")
-            hs = teams[0].get("score", "0")
-            a = teams[1].get("team", {}).get("abbreviation", "T2")
-            as_ = teams[1].get("score", "0")
-            games_json.append(
-                {
-                    "home": h,
-                    "score": f"{hs}-{as_}",
-                    "away": a,
-                    "status": e.get("status", {}).get("type", {}).get("description", ""),
-                }
-            )
+        # Validar y normalizar parámetros
+        deporte = str(deporte).lower().strip()
+        liga = str(liga).lower().strip()
+        if not deporte: deporte = "basketball"
+        if not liga: liga = "nba"
 
-        widget_msg = f"\n\n<WIDGET>{json.dumps({'type': 'nba', 'data': {'games': games_json}})}</WIDGET>"
-        return "Resumen NBA:\n" + "\n".join(res) + widget_msg
+        # Mapas comunes si el usuario sólo dice la liga
+        if liga == "nfl" and deporte != "football": deporte = "football"
+        if liga == "mlb" and deporte != "baseball": deporte = "baseball"
+        if liga in ["premier", "eng.1", "liga", "esp.1", "champions", "uefa.champions"]:
+            deporte = "soccer"
+            if liga == "premier": liga = "eng.1"
+            if liga == "liga": liga = "esp.1"
+            if liga == "champions": liga = "uefa.champions"
+
+        base_url = f"https://site.api.espn.com/apis/site/v2/sports/{deporte}/{liga}"
+
+        if event_id:
+            url = f"{base_url}/summary?event={event_id}"
+        else:
+            fecha = datetime.now().strftime("%Y%m%d")
+            url = f"{base_url}/scoreboard?dates={fecha}"
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = http_requests.get(url, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+
+                    # Modo Detalle (Summary)
+                    if event_id:
+                        boxscore = data.get("boxscore", {})
+                        equipos_stats = boxscore.get("teams", [])
+                        res = [f"📊 Stats detallados evento {event_id}:"]
+                        for ts in equipos_stats:
+                            team = ts.get("team", {}).get("displayName", "")
+                            res.append(f"\n[{team}]")
+                            for stat in ts.get("statistics", []):
+                                label = stat.get("label", stat.get("name", ""))
+                                val = stat.get("displayValue", stat.get("value", ""))
+                                res.append(f"  - {label}: {val}")
+                        return "\n".join(res)
+
+                    # Modo Scoreboard
+                    eventos = data.get("events", [])
+                    if not eventos:
+                        return f"No hay partidos de {liga.upper()} ({deporte}) programados para hoy."
+                    res = []
+                    games_json = []
+
+                    for e in eventos:
+                        id_evento = e.get("id", "")
+                        nombre = e.get("name", "")
+                        status = e.get("status", {}).get("type", {})
+                        estado = status.get("description", "")
+                        competicion = e.get("competitions", [{}])[0]
+                        competidores = competicion.get("competitors", [])
+                        marcador = ""
+
+                        if competidores:
+                            equipos = []
+                            for c in competidores:
+                                team = c.get("team", {}).get("abbreviation", "")
+                                score = c.get("score", "")
+                                equipos.append(f"{team} {score}".strip())
+                            marcador = " vs ".join(equipos)
+
+                        linea = f"- {nombre} | {estado}"
+                        if marcador and any(c.get("score") for c in competidores):
+                            linea += f" | {marcador}"
+                        linea += f" (ID: {id_evento})"
+                        res.append(linea)
+
+                        teams = competicion.get("competitors", [])
+                        if len(teams) >= 2:
+                            h = teams[0].get("team", {}).get("abbreviation", "T1")
+                            hs = teams[0].get("score", "0")
+                            a = teams[1].get("team", {}).get("abbreviation", "T2")
+                            as_ = teams[1].get("score", "0")
+                            games_json.append(
+                                {
+                                    "home": h,
+                                    "score": f"{hs}-{as_}",
+                                    "away": a,
+                                    "status": status.get("description", ""),
+                                }
+                            )
+
+                    import json
+                    widget_msg = f"\n\n<WIDGET>{json.dumps({'type': 'nba', 'data': {'games': games_json}})}</WIDGET>"
+                    return f"Resumen {liga.upper()}:\n" + "\n".join(res) + widget_msg
+
+                elif r.status_code == 429:
+                    if attempt < max_retries:
+                        time.sleep(1)
+                        continue
+                    return f"Error ESPN Rate Limit (codigo {r.status_code})"
+                else:
+                    return f"Error ESPN: {r.status_code}"
+            except RequestException:
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                return f"Error network fetching {liga.upper()} games."
     except Exception as e:
         return f"Error obteniendo partidos: {e}"
 
@@ -333,7 +434,7 @@ def leer_archivo(nombre_archivo: str) -> str:
         ]
         for ruta in rutas_candidatas:
             if os.path.exists(ruta):
-                with open(ruta, "r", encoding="utf-8", errors="ignore") as f:
+                with open(ruta, encoding="utf-8", errors="ignore") as f:
                     contenido = f.read(3000)
                 print(f"  [FILE] Read: {ruta}")
                 return f"Contenido de '{nombre_archivo}':\n{contenido}"
@@ -423,7 +524,6 @@ def analizar_pantalla() -> str:
 
         if llm_v:
             from langchain_core.messages import HumanMessage
-            from langchain_openai import ChatOpenAI
 
             content = [
                 {"type": "text", "text": prompt},
@@ -433,48 +533,11 @@ def analizar_pantalla() -> str:
                 },
             ]
             multimodal_res = "Análisis visual no available."
-            imagen_error = None
-
-            # Intentar MiniMax primero
             try:
                 res_v = llm_v.invoke([HumanMessage(content=content)])
                 multimodal_res = res_v.content.strip()
             except Exception as ev:
-                err_txt = str(ev).lower()
-                if "does not support image input" in err_txt or ("image" in err_txt and "not support" in err_txt):
-                    imagen_error = ev
-                else:
-                    multimodal_res = f"Error en visor óptico: {ev}"
-
-            # Fallback a Groq si MiniMax does not support image
-            if imagen_error:
-                g_key = jarvis_config.GROQ_API_KEY
-                g_model = getattr(jarvis_config, "GROQ_VISION_MODEL", None) or "llama-3.2-90b-vision-preview"
-                if g_key:
-                    try:
-                        print(f"  [VISION] MiniMax does not support image ({imagen_error}). Trying Groq vision ({g_model})...")
-                        groq_vision = ChatOpenAI(
-                            model=g_model,
-                            temperature=0,
-                            api_key=g_key,
-                            base_url="https://api.groq.com/openai/v1",
-                        )
-                        res_g = groq_vision.invoke([HumanMessage(content=content)])
-                        multimodal_res = res_g.content.strip()
-                        print("  [VISION] Groq vision OK")
-                    except Exception as eg:
-                        print(f"  [VISION] Groq vision also failed: {eg}")
-                        multimodal_res = (
-                            "Análisis visual no available: ni MiniMax ni Groq soportaron la imagen. "
-                            f"MiniMax error: {imagen_error}. Groq error: {eg}. "
-                            "Verificá que los modelos configurados soporten VL en .env."
-                        )
-                else:
-                    multimodal_res = (
-                        "Análisis visual no available: el modelo de visión de MiniMax no soporta imágenes. "
-                        "Configurá GROQ_API_KEY y GROQ_VISION_MODEL en .env para usar Groq vision como fallback."
-                    )
-                    print(f"  [VISION] MiniMax does not support image: {imagen_error}")
+                multimodal_res = f"Error en visor óptico Groq: {ev}"
 
         resumen = (
             f"Análisis HUD completado: [{w}x{h} px]. Luminosidad {nivel_luz}. "
@@ -637,7 +700,7 @@ def _cargar_briefing_persistido():
     bf = os.path.join(BASE_DIR, "ultimo_briefing.json")
     if os.path.exists(bf):
         try:
-            with open(bf, "r", encoding="utf-8") as f:
+            with open(bf, encoding="utf-8") as f:
                 data = json.load(f)
                 if (
                     data.get("fecha") == datetime.now().strftime("%Y-%m-%d")
@@ -728,7 +791,7 @@ def generar_resumen_noticias(forzar: bool = False):
                 f"{titulares}"
             )
 
-        raw_resumen = llm_dep.invoke(prompt).content or ""
+        raw_resumen = _extract_llm_text(llm_dep.invoke(prompt))
         raw_resumen = re.sub(r"<think>.*?</think>", "", raw_resumen, flags=re.DOTALL).strip()
         nc["resumen"] = re.sub(r"\s+", " ", raw_resumen).strip()
         nc["listo"] = True

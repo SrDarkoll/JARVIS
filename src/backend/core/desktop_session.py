@@ -29,7 +29,7 @@ def _read_session(path: str) -> dict:
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f) or {}
             return data if isinstance(data, dict) else {}
     except Exception:
