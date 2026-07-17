@@ -45,6 +45,9 @@ class _SyncResponse:
     def get_json(self, *args, **kwargs):
         return _run_async(self._response.get_json(*args, **kwargs))
 
+    def get_data(self, *args, **kwargs):
+        return _run_async(self._response.get_data(*args, **kwargs))
+
 
 class _SyncClient:
     def __init__(self, client):
@@ -717,6 +720,258 @@ def test_chat_accepts_profile_id_payload():
     data = r.get_json() or {}
     assert "response" in data
 
+
+def test_chat_returns_503_when_llm_is_unconfigured(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+    from core.errors import LLMUnavailableError
+
+    def unavailable(*_args, **_kwargs):
+        raise LLMUnavailableError
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", unavailable)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "explain quantum computing"},
+        environ_base={"REMOTE_ADDR": "127.0.0.177"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": "llm_unconfigured",
+        "message": "Configure GROQ_API_KEY to enable AI responses.",
+    }
+
+
+def test_chat_internal_failure_is_sanitized(monkeypatch, capsys):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("proxy-token-private-detail")
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", broken)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.178"},
+    )
+
+    captured = capsys.readouterr()
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": "chat_unavailable",
+        "message": "The AI service is temporarily unavailable.",
+    }
+    assert "proxy-token-private-detail" not in response.get_data(as_text=True)
+    assert "proxy-token-private-detail" not in captured.out + captured.err
+
+
+def test_chat_failure_does_not_retry_llm_directly(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    class FailIfInvoked:
+        calls = 0
+
+        def invoke(self, _messages):
+            self.calls += 1
+            raise AssertionError("duplicate llm invocation")
+
+    direct_llm = FailIfInvoked()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("provider failed")
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", broken)
+    monkeypatch.setattr(chat_routes.jarvis_brain, "llm", direct_llm)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "hello again"},
+        environ_base={"REMOTE_ADDR": "127.0.0.179"},
+    )
+
+    assert response.status_code == 503
+    assert direct_llm.calls == 0
+
+
+def test_chat_stream_reports_unconfigured_llm(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+    from core.errors import LLMUnavailableError
+
+    def unavailable(*_args, **_kwargs):
+        raise LLMUnavailableError
+
+    monkeypatch.setattr(
+        chat_routes.jarvis_brain,
+        "stream_procesar_mensaje_events",
+        unavailable,
+    )
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat/stream",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.180"},
+    )
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert '"code": "llm_unconfigured"' in body
+    assert "Configure GROQ_API_KEY to enable AI responses." in body
+
+
+def test_chat_stream_hides_internal_exception_text(monkeypatch, capsys):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    def broken_stream(*_args, **_kwargs):
+        raise RuntimeError("proxy-token-private-detail")
+
+    monkeypatch.setattr(
+        chat_routes.jarvis_brain,
+        "stream_procesar_mensaje_events",
+        broken_stream,
+    )
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat/stream",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.181"},
+    )
+    body = response.get_data(as_text=True)
+    captured = capsys.readouterr()
+
+    assert response.status_code == 200
+    assert '"code": "chat_unavailable"' in body
+    assert "proxy-token-private-detail" not in body
+    assert "proxy-token-private-detail" not in captured.out + captured.err
+
+
+def test_tool_mode_falls_back_to_plain_llm(monkeypatch):
+    from core.brain import brain_state, processor
+
+    class PlainLLM:
+        calls = 0
+
+        def invoke(self, _messages):
+            self.calls += 1
+            return type("Reply", (), {"content": "plain fallback response"})()
+
+    plain_llm = PlainLLM()
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: True)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor,
+        "_finalize_reply",
+        lambda reply, *_a, **_k: (reply, False),
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", plain_llm)
+    monkeypatch.setattr(brain_state, "llm_with_tools", None)
+    monkeypatch.setattr(brain_state, "llm_fallback", None)
+
+    reply, should_listen = processor._ejecutar_cerebro_llm("use a tool", "admin")
+
+    assert reply == "plain fallback response"
+    assert should_listen is False
+    assert plain_llm.calls == 1
+
+
+def test_processor_raises_when_llm_is_unconfigured(monkeypatch):
+    from core.brain import brain_state, processor
+    from core.errors import LLMUnavailableError
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", None)
+
+    with pytest.raises(LLMUnavailableError):
+        processor._ejecutar_cerebro_llm("needs reasoning", "admin")
+
+
+def test_processor_direct_failure_raises_sanitized_service_error(monkeypatch, capsys):
+    from core.brain import brain_state, processor
+    from core.errors import LLMServiceError
+
+    class BrokenLLM:
+        def invoke(self, _messages):
+            raise RuntimeError("provider-secret-response")
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: False)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", BrokenLLM())
+
+    with pytest.raises(LLMServiceError) as exc_info:
+        processor._ejecutar_cerebro_llm("needs reasoning", "admin")
+
+    captured = capsys.readouterr()
+    assert "provider-secret-response" not in str(exc_info.value)
+    assert "provider-secret-response" not in captured.out + captured.err
+
+def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
+    from core.brain import brain_state, processor
+
+    class BrokenStreamingLLM:
+        def stream(self, _messages):
+            raise RuntimeError("upstream-secret-response")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "_preflight", lambda *_a, **_k: (None, False))
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: False)
+    monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda pid: pid)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(brain_state, "llm", BrokenStreamingLLM())
+
+    events = list(processor.stream_procesar_mensaje_events("hello", "admin"))
+    captured = capsys.readouterr()
+
+    assert events[-1] == {
+        "type": "error",
+        "code": "chat_unavailable",
+        "message": "The AI service is temporarily unavailable.",
+    }
+    assert "upstream-secret-response" not in captured.out + captured.err
 
 def test_chat_rejects_empty_message():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
