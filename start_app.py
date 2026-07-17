@@ -1,14 +1,89 @@
-import webview
-import subprocess
-import time
-import sys
+from __future__ import annotations
+
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
-import requests
-import threading
+import time
+from pathlib import Path
 
-BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "backend")
+
+ROOT_DIR = Path(__file__).resolve().parent
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _skip_venv_reexec() -> bool:
+    return os.getenv("JARVIS_SKIP_VENV_REEXEC", "").strip().lower() in _TRUE_VALUES
+
+
+def _project_venv_python(
+    root: Path = ROOT_DIR, *, platform: str | None = None
+) -> Path | None:
+    active_platform = platform or sys.platform
+    relative_path = (
+        Path("venv/Scripts/python.exe")
+        if active_platform == "win32"
+        else Path("venv/bin/python")
+    )
+    candidate = Path(root) / relative_path
+    return candidate if candidate.is_file() else None
+
+
+def _relaunch_in_project_venv(root: Path = ROOT_DIR) -> bool:
+    if _skip_venv_reexec():
+        return False
+
+    candidate = _project_venv_python(root)
+    if candidate is None:
+        return False
+
+    current_python = os.path.normcase(os.path.realpath(sys.executable))
+    project_python = os.path.normcase(os.path.realpath(candidate))
+    if current_python == project_python:
+        return False
+
+    script_path = Path(root) / "start_app.py"
+    os.execv(
+        str(candidate),
+        [str(candidate), str(script_path), *sys.argv[1:]],
+    )
+    return True
+
+
+def _project_environment_error(root: Path = ROOT_DIR) -> str | None:
+    if _skip_venv_reexec():
+        return None
+    if _project_venv_python(root) is not None:
+        return None
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        return None
+    return (
+        "Project virtual environment not found. Run .\\setup.ps1 on Windows "
+        "or ./setup.sh on macOS/Linux before starting JARVIS."
+    )
+
+
+if __name__ == "__main__":
+    environment_error = _project_environment_error()
+    if environment_error:
+        print(environment_error, file=sys.stderr)
+        raise SystemExit(1)
+    _relaunch_in_project_venv()
+
+
+try:
+    import requests
+    import webview
+except ModuleNotFoundError as exc:
+    dependency = exc.name or "unknown"
+    raise SystemExit(
+        f"Missing runtime dependency '{dependency}'. Run .\\setup.ps1 on Windows "
+        "or ./setup.sh on macOS/Linux."
+    ) from exc
+
+
+BACKEND_DIR = str(ROOT_DIR / "src" / "backend")
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
@@ -19,6 +94,7 @@ def is_backend_running(url):
         return response.status_code == 200
     except requests.RequestException:
         return False
+
 
 def start_app():
     # 1. Route configuration
@@ -119,6 +195,7 @@ def start_app():
         )
     finally:
         cleanup_temporary_storage()
+
 
 if __name__ == "__main__":
     try:

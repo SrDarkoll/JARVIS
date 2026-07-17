@@ -24,7 +24,9 @@ for candidate in python3.11 python3.12 python3 python; do
   if ! command -v "$candidate" >/dev/null 2>&1; then
     continue
   fi
-  candidate_version="$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  if ! candidate_version="$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"; then
+    continue
+  fi
   if [ "$candidate_version" = "3.11" ] || [ "$candidate_version" = "3.12" ]; then
     PYTHON_CMD="$candidate"
     PYTHON_VERSION="$candidate_version"
@@ -42,16 +44,19 @@ if [ ! -d "venv" ]; then
   "$PYTHON_CMD" -m venv venv
 fi
 
-# shellcheck disable=SC1091
-source venv/bin/activate
+VENV_PYTHON="venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+  echo "ERROR: The project virtual environment is incomplete. Remove 'venv' and rerun setup."
+  exit 1
+fi
 
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+"$VENV_PYTHON" -m pip install --upgrade pip
+"$VENV_PYTHON" -m pip install -r requirements.txt
 if [ "$FULL_MODE" -eq 1 ]; then
-  pip install -r requirements-optional.txt
+  "$VENV_PYTHON" -m pip install -r requirements-optional.txt
 fi
 if [ "$DEV_MODE" -eq 1 ]; then
-  pip install -r requirements-dev.txt
+  "$VENV_PYTHON" -m pip install -r requirements-dev.txt
 fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -90,7 +95,7 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-if [ "$FULL_MODE" -eq 1 ] && ! python -m playwright install chromium; then
+if [ "$FULL_MODE" -eq 1 ] && ! "$VENV_PYTHON" -m playwright install chromium; then
   echo "WARNING: Playwright Chromium could not be installed. Browser automation tools may be unavailable."
 fi
 
@@ -100,7 +105,7 @@ if [ ! -f ".env" ]; then
 fi
 
 echo "Setup complete."
-echo "Run: python start_app.py"
+echo "Run: venv/bin/python start_app.py"
 if [ "$DEV_MODE" -ne 1 ]; then
   echo "For test tools run: ./setup.sh --dev"
 fi

@@ -27,11 +27,18 @@ foreach ($candidate in $pythonCandidates) {
     if (Get-Command $candidate.Cmd -ErrorAction SilentlyContinue) {
         try {
             & $candidate.Cmd @($candidate.Args) --version | Out-Null
-            $candidatePath = (& $candidate.Cmd @($candidate.Args) -c "import sys; print(sys.executable)").Trim()
+            if ($LASTEXITCODE -ne 0) {
+                continue
+            }
+            $candidateOutput = & $candidate.Cmd @($candidate.Args) -c "import sys; print(sys.executable)"
+            if ($LASTEXITCODE -ne 0) {
+                continue
+            }
+            $candidatePath = ($candidateOutput | Out-String).Trim()
         } catch {
             continue
         }
-        if ($candidatePath -like "*\WindowsApps\*") {
+        if (-not $candidatePath -or $candidatePath -like "*\WindowsApps\*") {
             continue
         }
         $pythonCmd = $candidate.Cmd
@@ -45,7 +52,12 @@ if (-not $pythonCmd) {
     exit 1
 }
 
-$pythonVersion = (& $pythonCmd @pythonArgs -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
+$pythonVersionOutput = & $pythonCmd @pythonArgs -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to inspect the selected Python interpreter." -ForegroundColor Red
+    exit 1
+}
+$pythonVersion = ($pythonVersionOutput | Out-String).Trim()
 if ($pythonVersion -notin @("3.11", "3.12")) {
     Write-Host "ERROR: Python $pythonVersion is not supported. Use Python 3.11 or 3.12." -ForegroundColor Red
     exit 1
@@ -54,17 +66,44 @@ Write-Host "Using Python $pythonVersion via: $pythonCmd $($pythonArgs -join ' ')
 
 if (-not (Test-Path "venv")) {
     & $pythonCmd @pythonArgs -m venv venv
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to create the project virtual environment." -ForegroundColor Red
+        exit 1
+    }
 }
 
-& ".\venv\Scripts\Activate.ps1"
+$venvPython = Join-Path (Get-Location) "venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython -PathType Leaf)) {
+    Write-Host "ERROR: The project virtual environment is incomplete. Remove 'venv' and rerun setup." -ForegroundColor Red
+    exit 1
+}
 
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+& $venvPython -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to upgrade pip in the project virtual environment." -ForegroundColor Red
+    exit 1
+}
+
+& $venvPython -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to install core dependencies." -ForegroundColor Red
+    exit 1
+}
+
 if ($Full) {
-    pip install -r requirements-optional.txt
+    & $venvPython -m pip install -r requirements-optional.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to install optional dependencies." -ForegroundColor Red
+        exit 1
+    }
 }
+
 if ($Dev) {
-    pip install -r requirements-dev.txt
+    & $venvPython -m pip install -r requirements-dev.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to install development dependencies." -ForegroundColor Red
+        exit 1
+    }
 }
 
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -103,7 +142,7 @@ if ($missingModels.Count -gt 0) {
 }
 
 if ($Full) {
-    python -m playwright install chromium
+    & $venvPython -m playwright install chromium
     if ($LASTEXITCODE -ne 0) {
         Write-Host "WARNING: Playwright Chromium could not be installed. Browser automation tools may be unavailable." -ForegroundColor Yellow
     }
@@ -115,7 +154,7 @@ if (-not (Test-Path ".env")) {
 }
 
 Write-Host "Setup complete."
-Write-Host "Run: python start_app.py"
+Write-Host "Run: .\venv\Scripts\python.exe start_app.py"
 if (-not $Dev) {
     Write-Host "For test tools run: .\setup.ps1 -Dev"
 }
