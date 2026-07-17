@@ -11,13 +11,13 @@ from __future__ import annotations
 import io
 import os
 import re
-import subprocess
 import tempfile
 import time as _time
 import unicodedata
 import wave
 
 from core.jarvis_config import BASE_DIR
+from utils.audio_conversion import AudioConversionError, convert_to_wav
 from utils.jarvis_i18n import get_current_language, get_whisper_lang
 from utils.jarvis_text import reparar_unicode
 
@@ -100,71 +100,11 @@ def normalizar_a_wav(audio_bytes: bytes) -> tuple[bytes, bool]:
     """
     if wav_ya_optimizado(audio_bytes):
         return audio_bytes, True
-    wav_purificado = audio_bytes
-    tmp_in = tmp_out = None
     try:
-        from pydub import AudioSegment
-        magic = audio_bytes[:4] if len(audio_bytes) >= 4 else b""
-        if magic[:4] == b"\x1a\x45\xdf\xa3":
-            suffix_in = ".webm"
-        elif magic[:3] == b"ID3" or magic[:2] == b"\xff\xfb":
-            suffix_in = ".mp3"
-        elif magic[:4] == b"OggS":
-            suffix_in = ".ogg"
-        elif magic[:4] == b"RIFF":
-            suffix_in = ".wav"
-        else:
-            suffix_in = ".webm"
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix_in, dir=BASE_DIR) as f:
-            f.write(audio_bytes)
-            tmp_in = f.name
-        tmp_out = tmp_in.rsplit(".", 1)[0] + "_out.wav"
-
-        try:
-            AudioSegment.from_file(tmp_in).set_frame_rate(16000).set_sample_width(2).set_channels(1).export(tmp_out, format="wav")
-            with open(tmp_out, "rb") as f:
-                wav_purificado = f.read()
-            if bytes_es_wav_valido(wav_purificado):
-                return wav_purificado, True
-        except Exception as pydub_err:
-            print(f"[VOICE PIPELINE] pydub failed: {pydub_err}")
-
-        # Fallback ffmpeg
-        for cmd in [
-            ["ffmpeg", "-y", "-i", tmp_in, "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tmp_out],
-            ["ffmpeg", "-y", "-f", "matroska", "-i", tmp_in, "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tmp_out],
-            ["ffmpeg", "-y", "-err_detect", "ignore_err", "-fflags", "+genpts+discardcorrupt", "-i", tmp_in, "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", tmp_out],
-        ]:
-            try:
-                r = subprocess.run(cmd, capture_output=True, timeout=30)
-                if r.returncode == 0 and os.path.exists(tmp_out):
-                    with open(tmp_out, "rb") as f:
-                        wav_purificado = f.read()
-                    if bytes_es_wav_valido(wav_purificado):
-                        return wav_purificado, True
-                    if os.path.exists(tmp_out):
-                        try:
-                            os.remove(tmp_out)
-                        except OSError:
-                            pass
-            except FileNotFoundError:
-                break
-            except Exception as fe:
-                print(f"[VOICE PIPELINE] ffmpeg attempt failed: {fe}")
-
+        runtime_dir = os.getenv("JARVIS_RUNTIME_DIR") or BASE_DIR
+        return convert_to_wav(audio_bytes, runtime_dir=runtime_dir), True
+    except AudioConversionError:
         return audio_bytes, False
-    except Exception as e:
-        print(f"[VOICE PIPELINE] normalize_to_wav error: {e}")
-        return audio_bytes, False
-    finally:
-        for p in [tmp_in, tmp_out]:
-            if p and os.path.exists(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
-
 
 # =========================================================
 # TRANSCRIPCIÓN

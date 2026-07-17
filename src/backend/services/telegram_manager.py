@@ -13,6 +13,7 @@ import threading
 import requests as http_requests
 from core.jarvis_config import TELEGRAM_CHAT_ID, TELEGRAM_ENABLED, TELEGRAM_TOKEN
 from core.runtime_logger import log_error, log_warning
+from utils.audio_conversion import convert_to_ogg_opus
 from utils.jarvis_i18n import get_current_language, get_whisper_lang
 
 Application = None
@@ -29,7 +30,7 @@ if TELEGRAM_ENABLED:
 
         TELEGRAM_AVAILABLE = True
     except ImportError as exc:
-        log_warning("telegram_dependency_missing", error=str(exc))
+        log_warning("telegram_dependency_missing", error=type(exc).__name__)
 
 
 class TelegramManager:
@@ -89,8 +90,8 @@ class TelegramManager:
             # The brain is synchronous, we run it in a thread to not block the bot loop
             reply, _ = await asyncio.to_thread(self._brain.procesar_mensaje, user_input, profile_id="telegram_user")
             await update.message.reply_text(reply)
-        except Exception as e:
-            log_error("telegram_text_handler_failed", error=str(e))
+        except Exception as exc:
+            log_error("telegram_text_handler_failed", error=type(exc).__name__)
             await update.message.reply_text(
                 self._text(
                     "Sorry, Administrator. My messaging core failed.",
@@ -137,14 +138,14 @@ class TelegramManager:
 
             reply, _ = await asyncio.to_thread(self._brain.procesar_mensaje, text, profile_id="telegram_user")
             await update.message.reply_text(f"📝 {text}\n\n{reply}")
-        except Exception as e:
-            log_error("telegram_voice_handler_failed", error=str(e))
+        except Exception as exc:
+            log_error("telegram_voice_handler_failed", error=type(exc).__name__)
             await update.message.reply_text(
                 self._text("Error processing your voice message.", "Error procesando su mensaje de voz.")
             )
 
     async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
-        log_error("telegram_runtime_error", error=str(context.error))
+        log_error("telegram_runtime_error", error=type(context.error).__name__)
 
     def start(self):
         if not TELEGRAM_ENABLED:
@@ -182,33 +183,33 @@ class TelegramManager:
             return False
         try:
             from utils.jarvis_text import normalizar_tratamiento_admin
+
             texto_limpio = normalizar_tratamiento_admin((texto or "").strip())
             texto_para_leer = self._brain._limpiar_metadatos_voz(texto_limpio)
 
             if audio and self._tts_engine:
-                from pydub import AudioSegment
                 audio_bytes = self._tts_engine.sintetizar(texto_para_leer[:600])
-                with io.BytesIO(audio_bytes) as wav_buf:
-                    snd = AudioSegment.from_wav(wav_buf)
-                    with io.BytesIO() as ogg_buf:
-                        snd.export(ogg_buf, format="opus", codec="libopus")
-                        ogg_buf.seek(0)
-                        url_voice = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVoice"
-                        http_requests.post(
-                            url_voice,
-                            data={"chat_id": TELEGRAM_CHAT_ID},
-                            files={"voice": ("jarvis.ogg", ogg_buf, "audio/ogg")},
-                            timeout=15,
-                        )
-                        return True
+                ogg_bytes = convert_to_ogg_opus(audio_bytes)
+                with io.BytesIO(ogg_bytes) as ogg_buf:
+                    url_voice = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVoice"
+                    response = http_requests.post(
+                        url_voice,
+                        data={"chat_id": TELEGRAM_CHAT_ID},
+                        files={"voice": ("jarvis.ogg", ogg_buf, "audio/ogg")},
+                        timeout=15,
+                    )
+                    response.raise_for_status()
+                return True
 
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            http_requests.post(
+            response = http_requests.post(
                 url, json={"chat_id": TELEGRAM_CHAT_ID, "text": texto_para_leer}, timeout=5
             )
+            response.raise_for_status()
             return True
-        except Exception as e:
-            log_error("telegram_send_failed", error=str(e))
+        except Exception as exc:
+            log_error("telegram_send_failed", error=type(exc).__name__)
             return False
+
 
 telegram_manager = TelegramManager()
