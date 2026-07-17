@@ -64,6 +64,7 @@ from quart import (
     request,
 )  # pyright: ignore[reportMissingImports]
 from services import security_manager
+from services.monitoring_service import monitoring_service
 from utils.jarvis_auth import (
     activar_perfil_invitado as _activate_guest_profile,
 )
@@ -722,6 +723,7 @@ init_status_routes(
         memory_lock,
         _profiles_memory,
         _proactive_snapshot,
+        monitoring_service.snapshot,
     )
 )
 init_language_routes(
@@ -731,6 +733,51 @@ init_language_routes(
         "whisper_model_ref": globals(),
     }
 )
+
+
+def _configure_monitoring_service():
+    telegram_service = None
+    if jarvis_config.RUNTIME_FEATURES.telegram_enabled:
+        try:
+            from services.telegram_manager import telegram_manager as telegram_service
+        except Exception as exc:
+            log_warning("monitoring_telegram_unavailable", error=type(exc).__name__)
+
+    monitoring_service.inject_dependencies(
+        telegram_service,
+        jarvis_brain,
+        security_manager,
+        (
+            core_tools.generar_resumen_noticias
+            if jarvis_config.RUNTIME_FEATURES.briefing_enabled
+            else None
+        ),
+        None,
+    )
+
+
+@app.before_serving
+async def _start_monitoring_service():
+    try:
+        _configure_monitoring_service()
+        started = monitoring_service.start_heartbeat()
+        obs_event(
+            "monitoring_lifecycle_start",
+            configured=monitoring_service.configured,
+            started=bool(started),
+        )
+    except Exception as exc:
+        log_warning("monitoring_startup_failed", error=type(exc).__name__)
+
+
+@app.after_serving
+async def _stop_monitoring_service():
+    try:
+        stopped = monitoring_service.stop()
+        obs_event("monitoring_lifecycle_stop", stopped=bool(stopped))
+    except Exception as exc:
+        log_warning("monitoring_shutdown_failed", error=type(exc).__name__)
+
 
 TTS_PRONUN_MAP: dict = {}
 

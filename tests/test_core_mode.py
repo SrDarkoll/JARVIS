@@ -21,6 +21,7 @@ def test_core_mode_is_the_safe_default():
     assert flags.plugins_enabled is False
     assert flags.briefing_enabled is False
     assert flags.telegram_enabled is False
+    assert flags.monitoring_enabled is False
 
 
 def test_full_mode_enables_optional_features():
@@ -35,6 +36,7 @@ def test_full_mode_enables_optional_features():
     assert flags.plugins_enabled is True
     assert flags.briefing_enabled is True
     assert flags.telegram_enabled is True
+    assert flags.monitoring_enabled is True
 
 
 def test_core_mode_allows_explicit_feature_override():
@@ -52,6 +54,17 @@ def test_core_mode_allows_explicit_feature_override():
     assert flags.voice_id_enabled is True
     assert flags.rag_enabled is True
     assert flags.vision_enabled is False
+
+
+def test_core_mode_allows_explicit_monitoring_override():
+    from core.jarvis_config import resolve_runtime_features  # pyright: ignore[reportMissingImports]
+
+    flags = resolve_runtime_features(
+        {"JARVIS_CORE_MODE": "true", "JARVIS_MONITORING_ENABLED": "yes"}
+    )
+
+    assert flags.core_mode is True
+    assert flags.monitoring_enabled is True
 
 
 def test_core_mode_does_not_import_speechbrain():
@@ -139,6 +152,39 @@ assert TELEGRAM_AVAILABLE is False
 manager = TelegramManager()
 manager.start()
 assert manager.thread is None
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_core_mode_monitoring_does_not_import_apscheduler():
+    env = os.environ.copy()
+    env.pop("JARVIS_TEST_MODE", None)
+    env["JARVIS_CORE_MODE"] = "true"
+    env["PYTHONPATH"] = str(ROOT / "src" / "backend")
+    script = """
+import builtins
+original_import = builtins.__import__
+
+def guarded_import(name, *args, **kwargs):
+    if name == "apscheduler" or name.startswith("apscheduler."):
+        raise AssertionError("apscheduler import attempted with monitoring disabled")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = guarded_import
+from services.monitoring_service import monitoring_service
+assert monitoring_service.configured is False
+assert monitoring_service._scheduler is None
 """
 
     result = subprocess.run(

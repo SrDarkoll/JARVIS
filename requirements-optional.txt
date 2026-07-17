@@ -11,7 +11,7 @@ speechbrain>=1.0
 
 # Telegram and proactive scheduling
 python-telegram-bot>=21.0
-apscheduler>=3.10
+apscheduler>=3.10,<4
 
 # Browser automation, vision, and optional search provider
 playwright>=1.40

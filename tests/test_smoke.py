@@ -278,6 +278,9 @@ def test_status_endpoint_reports_runtime_mode():
     assert data["features"]["voice_id"] is False
     assert data["features"]["rag"] is False
     assert data["features"]["vision"] is False
+    assert data["features"]["monitoring"] is False
+    assert isinstance(data["features"]["monitoring_available"], bool)
+    assert data["features"]["monitoring_running"] is False
 
 
 def test_noticias_endpoint_returns_202_when_not_ready():
@@ -1049,11 +1052,12 @@ def test_monitoring_service_imports():
 
 
 def test_monitoring_service_scheduler():
-    from core.jarvis_config import CORE_MODE
+    from core.jarvis_config import MONITORING_ENABLED
     from services import monitoring_service  # pyright: ignore[reportMissingImports]
 
     ms = monitoring_service.monitoring_service
-    assert (ms._scheduler is None) is CORE_MODE
+    expected = MONITORING_ENABLED and monitoring_service.SCHEDULER_AVAILABLE
+    assert (ms._scheduler is not None) is expected
 
 
 # =============================================================================

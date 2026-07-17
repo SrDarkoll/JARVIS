@@ -25,6 +25,7 @@ class RuntimeFeatures:
     plugins_enabled: bool
     briefing_enabled: bool
     telegram_enabled: bool
+    monitoring_enabled: bool
 
 
 def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
@@ -51,6 +52,7 @@ def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFea
         plugins_enabled=_read_bool(source, "JARVIS_PLUGINS_ENABLED", optional_default),
         briefing_enabled=_read_bool(source, "JARVIS_BRIEFING_ENABLED", optional_default),
         telegram_enabled=_read_bool(source, "JARVIS_TELEGRAM_ENABLED", optional_default),
+        monitoring_enabled=_read_bool(source, "JARVIS_MONITORING_ENABLED", optional_default),
     )
 
 
@@ -90,6 +92,7 @@ VISION_ENABLED = RUNTIME_FEATURES.vision_enabled
 PLUGINS_ENABLED = RUNTIME_FEATURES.plugins_enabled
 BRIEFING_ENABLED = RUNTIME_FEATURES.briefing_enabled
 TELEGRAM_ENABLED = RUNTIME_FEATURES.telegram_enabled
+MONITORING_ENABLED = RUNTIME_FEATURES.monitoring_enabled
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("JARVIS_GROQ_MODEL", "qwen/qwen3.6-27b")
 GROQ_VISION_MODEL = os.getenv("JARVIS_GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
