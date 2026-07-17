@@ -1666,17 +1666,15 @@ def test_profiles_memory_detail_can_update_and_clear_facts(monkeypatch):
     assert data["history"] == []
 
 
-def test_desktop_session_uses_stable_localhost_origin(monkeypatch):
-    import os
-
+def test_desktop_session_uses_stable_localhost_origin(monkeypatch, tmp_path):
     from core.desktop_session import load_desktop_session
 
-    desktop_home = os.path.join(os.getcwd(), "scratch", "desktop_session_test")
-    monkeypatch.setenv("LOCALAPPDATA", desktop_home)
+    desktop_home = tmp_path / "desktop-home"
+    monkeypatch.setenv("JARVIS_DESKTOP_HOME", str(desktop_home))
     session = load_desktop_session(port=5002)
 
     assert session.origin == "http://localhost:5002"
-    assert desktop_home in session.webview_storage_dir
+    assert str(desktop_home) in session.webview_storage_dir
     assert session.persist_permissions is True
 
 
