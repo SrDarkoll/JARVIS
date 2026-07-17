@@ -1,7 +1,7 @@
 # JARVIS Stability and Distribution Design
 
 **Date:** 2026-07-17
-**Status:** Approved direction, pending written-spec review
+**Status:** Approved
 
 ## Objective
 
