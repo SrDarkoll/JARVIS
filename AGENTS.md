@@ -114,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-347 passed, 1 skipped in 24.44s
+363 passed, 1 skipped in 16.56s
 ```
 
 Python syntax/import compilation:

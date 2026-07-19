@@ -1106,7 +1106,9 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     )
     if not texto:
         _set_voice_identity("transcription_empty", similarity_value=0.0)
-        return _voice_response({"response": "I couldn't hear you clearly.", "should_listen": True})
+        return _voice_response(
+            {"response": "I couldn't hear you clearly.", "should_listen": False}
+        )
     route_actual = _intent_clasificar_peticion_voz(texto)
     voice_debug["route_mode"] = route_actual.get("mode") or voice_debug.get("route_mode") or ""
     voice_debug["route_reason"] = route_actual.get("reason") or voice_debug.get("route_reason") or ""

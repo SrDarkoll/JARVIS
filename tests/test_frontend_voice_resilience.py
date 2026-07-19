@@ -125,6 +125,7 @@ def test_main_submits_audio_when_browser_transcript_is_empty():
     assert "'X-Transcript': encodeURIComponent(transcript)" in source
     assert "recordedAudioMimeType" in source
     assert "e.data.type" in source
+    assert "data.should_listen = false;" in source
 
 
 def test_voice_diagnostics_have_english_and_spanish_translations():

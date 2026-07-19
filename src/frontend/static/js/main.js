@@ -1473,6 +1473,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ui.addConversationSegment('user', transcript);
                         } else if (transcriptionSource === 'unavailable') {
                             ui.addLogEntry(t('voice_transcription_unavailable'));
+                            data.should_listen = false;
                         }
                     }
                     const simRaw = Number(dbg.similarity ?? NaN);

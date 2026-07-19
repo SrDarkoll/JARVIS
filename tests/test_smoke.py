@@ -1562,6 +1562,29 @@ def test_voice_route_emits_identity_debug_and_observability(monkeypatch):
         assert required in event_names
 
 
+def test_voice_empty_transcription_returns_to_passive_mode(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import voice_routes
+    from voice.transcription import TranscriptionResult
+
+    class UnavailableTranscription:
+        @staticmethod
+        def transcribe(*_args, **_kwargs):
+            return TranscriptionResult("", "unavailable")
+
+    monkeypatch.setattr(voice_routes, "_transcription_service", UnavailableTranscription())
+    monkeypatch.setattr(voice_routes, "_norm_a_wav", lambda b: (b, True))
+    monkeypatch.setattr(voice_routes, "_bytes_es_wav_valido", lambda _b: True)
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post("/api/voice", data=b"RIFFFAKEAUDIO", headers={"X-Transcript": ""})
+
+    assert r.status_code == 200
+    data = r.get_json() or {}
+    assert data.get("transcription_source") == "unavailable"
+    assert data.get("should_listen") is False
+
+
 def test_voice_fast_info_hint_skips_biometric_lookup(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
     from api import voice_routes
