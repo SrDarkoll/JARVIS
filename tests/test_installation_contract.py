@@ -167,3 +167,18 @@ def test_frontend_uses_the_supported_threejs_module_build():
     assert (vendor / "three.module.min.js").is_file()
     assert (vendor / "three.core.min.js").is_file()
     assert (vendor / "three.LICENSE.txt").is_file()
+
+
+def test_voice_support_contract_documents_adaptive_transcription():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "JARVIS_STT_PROVIDER" in env_example
+    assert "whisper-large-v3-turbo" in env_example
+    assert "SpeechRecognition" in readme
+    assert "Firefox" in readme
+    assert "Safari" in readme
+    assert "non-loopback" in readme.lower()
+    assert "HTTPS" in readme
+    assert "voice-capabilities.js" in agents

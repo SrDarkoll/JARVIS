@@ -128,6 +128,8 @@ Frontend JavaScript syntax checks:
 ```powershell
 node --check src\frontend\static\js\main.js
 node --check src\frontend\static\js\modules\api.js
+node --check src\frontend\static\js\modules\recognition-policy.js
+node --check src\frontend\static\js\modules\voice-capabilities.js
 ```
 
 Patch hygiene:
@@ -192,6 +194,12 @@ Spotify recommendation regressions:
 pytest tests\test_spotify_recs.py -q
 ```
 
+Adaptive voice transcription regressions:
+
+```powershell
+pytest tests\test_voice_transcription.py tests\test_frontend_voice_resilience.py -q
+```
+
 Spotify OAuth must use the exact registered redirect
 `http://127.0.0.1:8888/callback`; `localhost` aliases are rejected. Default
 development-mode mixes must avoid restricted recommendation/audio-feature,
@@ -237,6 +245,11 @@ ruff check src tests
 - For JavaScript-only changes, run the `node --check` commands listed above.
 - For visual or interaction changes, start the app and verify the affected flow in a browser.
 - Keep the UI compatible with the WebView2 desktop shell.
+- Keep `SpeechRecognition` optional. It may accelerate transcription and provide the passive wake word, but it must not gate `MediaRecorder` capture or `/api/voice` submission.
+- Use `src/frontend/static/js/modules/voice-capabilities.js` to distinguish secure context, `getUserMedia`, `MediaRecorder`, and browser recognition support.
+- Do not request microphone permission during page startup. Request it only after the existing voice-link user gesture or an established wake-word flow.
+- Preserve the actual recorded MIME type so Safari/default `MediaRecorder` formats can reach backend FFmpeg when browser-side WAV conversion is unavailable.
+- A browser recognition network error should stop recognition retries while allowing active audio capture, silence detection, and the active timeout to finish.
 
 ## GitHub-Ready Checklist
 

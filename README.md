@@ -204,7 +204,7 @@ Environment groups:
 | Spotify | Optional | `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
 | Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
 | Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
-| Voice/audio | Optional tuning | `ESPEAK_ROOT`, `JARVIS_WHISPER_*`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
+| Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
 | Runtime paths | Optional relocation | `JARVIS_RUNTIME_DIR`, `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR` |
 
 Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
@@ -241,6 +241,62 @@ Then open:
 ```text
 http://localhost:5002
 ```
+
+## Voice And Browser Support
+
+`python start_app.py` with the WebView2 desktop shell is the primary Windows
+path. `http://localhost:5002` is the stable loopback URL when using a regular
+browser. Opening Jarvis from any non-loopback address, including a LAN IP,
+requires HTTPS before browsers will expose microphone capture.
+
+Browser voice uses two independent capabilities:
+
+- `MediaRecorder` captures the command audio sent to `/api/voice`.
+- `SpeechRecognition` is an optional browser hint and enables the passive
+  "Jarvis" wake word when the browser speech service works.
+
+The absence or network failure of `SpeechRecognition` no longer disables voice
+commands. Use the existing **voice link** button, speak normally, and Jarvis will
+send the captured audio to the backend. Edge and Chrome can provide both the
+wake word and a transcript hint. Firefox and Safari can use backend
+transcription when their current browser/runtime does not expose compatible
+browser speech recognition; passive wake-word support is best effort there.
+Text input remains available in every case.
+
+The default `JARVIS_STT_PROVIDER=auto` order is:
+
+1. Accept a sufficiently reliable browser transcript hint.
+2. Transcribe recorded audio with Groq using
+   `JARVIS_GROQ_STT_MODEL=whisper-large-v3-turbo` when `GROQ_API_KEY` is set.
+3. Fall back to local `faster-whisper` when
+   `JARVIS_LOCAL_STT_ENABLED=true`.
+4. Return a controlled unavailable response while leaving text input active.
+
+Set `JARVIS_STT_PROVIDER` to `browser`, `groq`, or `local` to restrict the
+backend provider path. The local Whisper model is downloaded and loaded lazily,
+only when a request reaches that fallback; its first request can therefore take
+longer and requires enough disk space for the selected `JARVIS_WHISPER_MODEL`.
+`/api/status` reports the selected provider and safe availability state without
+returning keys or model paths.
+
+Voice diagnostics distinguish these cases:
+
+- **Permission denied:** allow microphone access for the Jarvis origin and
+  check Windows/macOS privacy settings.
+- **Device missing:** connect or enable an input microphone.
+- **Device busy:** close another application holding exclusive microphone
+  access, then press the voice link again.
+- **Insecure context:** use `http://localhost:5002` locally or HTTPS for LAN
+  access.
+- **Browser speech network failure:** continue with the existing voice link;
+  recorded audio will use backend STT.
+
+On Windows, if permission was previously denied, reset it in the browser's site
+settings and in **Settings > Privacy & security > Microphone**, then reload
+Jarvis and press the voice link. Browser support details for secure microphone
+contexts and speech recognition are documented by MDN under
+[`getUserMedia`](https://developer.mozilla.org/docs/Web/API/MediaDevices/getUserMedia)
+and [`SpeechRecognition`](https://developer.mozilla.org/docs/Web/API/SpeechRecognition).
 
 ## Testing
 
@@ -320,4 +376,6 @@ Before publishing or tagging a release:
 - No Spotify device: open Spotify on a device and play one song once.
 - TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.
 - Audio conversion fails: verify FFmpeg is on `PATH`. Browser voice, voice identity, and Telegram OGG/Opus output all use FFmpeg; `pydub` is not required.
+- Browser wake word unavailable: press the existing voice link and use backend STT; Firefox and Safari may not expose `SpeechRecognition`.
+- Microphone works on localhost but not a LAN IP: use HTTPS for the non-loopback origin.
 - Missing API keys: Jarvis should still start, but provider-specific tools will return setup/configuration messages instead of crashing.
