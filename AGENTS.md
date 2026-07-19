@@ -191,7 +191,7 @@ pytest tests\test_smoke.py::test_dynamic_queries_force_web_tools tests\test_comp
 Spotify recommendation regressions:
 
 ```powershell
-pytest tests\test_spotify_recs.py -q
+pytest tests\test_spotify_desktop_matching.py tests\test_spotify_desktop_windows.py tests\test_spotify_desktop_controller.py tests\test_spotify_recs.py -q
 ```
 
 Adaptive voice transcription regressions:
@@ -205,6 +205,11 @@ Spotify OAuth must use the exact registered redirect
 development-mode mixes must avoid restricted recommendation/audio-feature,
 related-artist, artist-top-track, and public-playlist-content endpoints. Enable
 `SPOTIFY_EXTENDED_QUOTA_MODE` only for an app approved for extended quota mode.
+`SPOTIFY_PLAYBACK_MODE=auto` must probe only cached OAuth state and must not open
+an authorization flow during a playback command. Windows desktop automation
+must revalidate the foreground Spotify handle before keyboard or mouse input,
+avoid fixed coordinates on the deterministic path, and delete visual-recovery
+captures after every attempt.
 
 ## Security Workflow
 

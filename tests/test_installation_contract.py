@@ -153,6 +153,12 @@ def test_spotify_desktop_mode_and_dependency_contract():
     assert "SPOTIFY_DESKTOP_START_TIMEOUT = _read_float(" in config
     assert "SPOTIFY_DESKTOP_ACTION_TIMEOUT = _read_float(" in config
 
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "SPOTIFY_PLAYBACK_MODE=desktop" in readme
+    assert "does not bypass Spotify Free restrictions" in readme
+    assert "test_spotify_desktop_controller.py" in agents
+
 
 def test_spotify_playback_mode_rejects_unknown_values():
     from core.jarvis_config import resolve_spotify_playback_mode

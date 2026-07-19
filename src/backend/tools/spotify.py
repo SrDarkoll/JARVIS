@@ -92,7 +92,7 @@ else:
         print("  [SPOTIFY] Invalid redirect URI. Use an explicit loopback IP.")
     else:
         print(
-            "  [SPOTIFY] SPOTIPY_CLIENT_ID/SPOTIPY_CLIENT_SECRET no configurados en .env. Funciones Spotify deshabilitadas."
+            "  [SPOTIFY] Web API credentials are not configured; Windows desktop fallback remains available."
         )
 
 SPOTIFY_RADIO_QUEUE_SIZE = 12

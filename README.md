@@ -15,7 +15,7 @@ Expect hardware-specific behavior around microphones, speakers, Spotify devices,
 - Admin voice enrollment and guest voice profile registration.
 - Per-profile memory and shared memory facts.
 - Local reminders, weather, news summaries, time/date answers, and dynamic web search routing.
-- Spotify playback, playback controls, AutoMix, and dynamic mix generation using user top tracks, recent tracks, artist/genre context, and playlist fallbacks when the Spotify account permits it.
+- Spotify playback and controls through either the Windows desktop client or an eligible Web API account, plus API-backed AutoMix and dynamic recommendations when the account permits them.
 - Telegram bot integration with `TELEGRAM_CHAT_ID` filtering.
 - Local desktop/system tools gated by authorization and security policy.
 - Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
@@ -189,7 +189,8 @@ Strongly recommended before LAN access or shared-machine use:
 
 Optional integrations:
 
-- Spotify: `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`
+- Spotify Desktop on Windows: `SPOTIFY_PLAYBACK_MODE=desktop` (no developer keys required)
+- Spotify Web API: `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`
 - Telegram: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`
 - Search/news providers: `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`
 - Hugging Face/RAG: `HF_TOKEN`, `EMBEDDING_MODEL`, `JARVIS_HF_CACHE`
@@ -201,7 +202,7 @@ Environment groups:
 | --- | --- | --- |
 | LLM core | Required for real chat | `GROQ_API_KEY` |
 | Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS` |
-| Spotify | Optional | `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
+| Spotify | Optional | `SPOTIFY_PLAYBACK_MODE`, `SPOTIFY_DESKTOP_START_TIMEOUT`, `SPOTIFY_DESKTOP_ACTION_TIMEOUT`, `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
 | Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
 | Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
 | Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
@@ -330,9 +331,41 @@ Ruff is useful for future cleanup, but it is not currently enforced as a release
 
 ## Spotify Notes
 
-Jarvis uses Spotify playback APIs and builds an AutoMix playlist/queue after a seed song or mix request. Register exactly `http://127.0.0.1:8888/callback` in the Spotify developer dashboard and use the same value in `.env`; Spotify no longer accepts `localhost` redirect aliases. Delete `src/backend/.cache-jarvis` and authenticate again after changing the redirect URI or scopes.
+### Spotify playback modes
 
-The development-mode mix strategy uses endpoints available to current apps:
+- `SPOTIFY_PLAYBACK_MODE=auto` uses an already-authorized Web API token when
+  one is valid. If no cached token exists or the API cannot perform playback,
+  Jarvis controls the Windows Spotify Desktop client instead without opening an
+  OAuth browser during the command.
+- `SPOTIFY_PLAYBACK_MODE=desktop` does not require Spotify developer keys. It
+  opens or restores Spotify, briefly focuses it, searches through Windows UI
+  Automation, ranks accessible results, activates one match, and verifies the
+  now-playing metadata before reporting success.
+- `SPOTIFY_PLAYBACK_MODE=api` keeps the Spotipy/OAuth integration and requires
+  an eligible Spotify developer application and account.
+
+Desktop mode requires Windows, the installed Spotify Desktop client, and a
+signed-in Spotify session. It does not bypass Spotify Free restrictions,
+advertisements, regional availability, account limits, or DRM. Search and
+control may hold foreground focus for a few seconds, bounded by
+`SPOTIFY_DESKTOP_ACTION_TIMEOUT`; switching to another window cancels the click
+instead of sending input to the wrong application. Desktop mix requests start
+the requested seed and then rely on Spotify's own autoplay and recommendations.
+
+Deterministic UI Automation is always attempted first and does not use fixed
+screen coordinates. Optional visual recovery requires full mode, Pillow, and a
+configured vision model. It captures only the Spotify window, sends that image
+to the configured model provider, validates the returned bounds and foreground
+window, and deletes the local image immediately after the attempt.
+
+For Web API mode, register exactly `http://127.0.0.1:8888/callback` in the
+Spotify developer dashboard and use the same value in `.env`; Spotify does not
+accept `localhost` redirect aliases. Delete `src/backend/.cache-jarvis` and
+authenticate again after changing the redirect URI or scopes.
+
+Jarvis builds an API-backed AutoMix playlist/queue after a seed song or mix
+request when Web API access is available. The development-mode mix strategy
+uses endpoints available to current apps:
 
 - start from the requested song/artist/genre seed;
 - add user top tracks when `user-top-read` is granted;
@@ -350,7 +383,9 @@ Spotify API limitations:
 - Development-mode apps cannot rely on Recommendations, Audio Features, Related Artists, Spotify editorial playlists, or artist top tracks. Extended-quota apps are not affected by those development-mode restrictions.
 - Development-mode apps require the app owner to have Premium; new apps are limited to five authorized users.
 - Playlist contents are available only for playlists the current user owns or collaborates on.
-- Direct playback control requires Spotify Premium and an active device.
+- Web API playback control requires Spotify Premium and an active device. This
+  requirement does not apply to local desktop UI Automation, although normal
+  Spotify Free account restrictions still apply.
 
 See Spotify's official [Web API endpoint changes](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), [February 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), and [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
 
@@ -372,8 +407,9 @@ Before publishing or tagging a release:
 ## Troubleshooting
 
 - Missing model files: run `git lfs pull`.
-- Spotify says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `src/backend/.cache-jarvis`, restart, and authenticate again.
-- No Spotify device: open Spotify on a device and play one song once.
+- Spotify Web API says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `src/backend/.cache-jarvis`, restart, and authenticate again.
+- Spotify Desktop cannot search: keep Spotify signed in, restore its main window, use an English or Spanish accessible interface, and verify `SPOTIFY_PLAYBACK_MODE=desktop`.
+- No Spotify API device: open Spotify on a device and play one song once, or use desktop mode on Windows.
 - TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.
 - Audio conversion fails: verify FFmpeg is on `PATH`. Browser voice, voice identity, and Telegram OGG/Opus output all use FFmpeg; `pydub` is not required.
 - Browser wake word unavailable: press the existing voice link and use backend STT; Firefox and Safari may not expose `SpeechRecognition`.
