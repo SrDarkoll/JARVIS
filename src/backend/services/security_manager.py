@@ -6,6 +6,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from core.jarvis_context import context
+from core import jarvis_config
 from core.security.tool_policy import evaluate_tool_policy, export_tool_policy_table
 
 # DEPENDENCY INJECTION
@@ -61,8 +62,8 @@ SECURITY_POLICY = {}
 SECURITY_STATE = {}
 SECURITY_LOCK = threading.RLock()
 PROACTIVE_STATE = {
-    "enabled": True,
-    "cooldown_seconds": 600,
+    "enabled": bool(jarvis_config.PROACTIVE_ACTIVO),
+    "cooldown_seconds": int(jarvis_config.PROACTIVE_COOLDOWN),
     "alerts": [],
     "last_health_check": "",
     "tool_errors_window": [],

@@ -41,11 +41,12 @@ class TestSecurityPolicyDefaults:
         assert isinstance(defaults["safe_apps"], list)
 
     def test_proactive_state_defaults(self):
+        from core import jarvis_config
         from services import security_manager
 
         state = security_manager.PROACTIVE_STATE
-        assert state["enabled"] is True
-        assert state["cooldown_seconds"] == 600
+        assert state["enabled"] is bool(jarvis_config.PROACTIVE_ACTIVO)
+        assert state["cooldown_seconds"] == jarvis_config.PROACTIVE_COOLDOWN
         assert isinstance(state["alerts"], list)
         assert isinstance(state["tool_errors_window"], list)
 

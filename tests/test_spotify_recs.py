@@ -1,6 +1,18 @@
 """Pruebas unitarias para helpers de recomendaciones de Spotify."""
 
+from pathlib import Path
+
+from core import jarvis_config
 from tools import spotify
+
+
+def _track(track_id: str, artist: str = "Artist") -> dict:
+    return {
+        "id": track_id,
+        "uri": f"spotify:track:{track_id}",
+        "name": track_id,
+        "artists": [{"id": f"{artist}-id", "name": artist}],
+    }
 
 
 def test_spotify_ready_contract():
@@ -13,6 +25,89 @@ def test_spotify_ready_contract():
 def test_spotify_scope_supports_dynamic_mix_inputs():
     assert "user-top-read" in spotify.SPOTIFY_SCOPE
     assert "user-read-recently-played" in spotify.SPOTIFY_SCOPE
+
+
+def test_spotify_uses_single_supported_cache_path():
+    expected = Path(jarvis_config.BASE_DIR) / ".cache-jarvis"
+
+    assert Path(jarvis_config.SPOTIFY_CACHE) == expected
+    assert Path(spotify.SPOTIFY_CACHE) == expected
+
+
+def test_spotify_redirect_requires_an_explicit_loopback_ip():
+    assert spotify._spotify_redirect_error("http://127.0.0.1:8888/callback") is None
+    assert spotify._spotify_redirect_error("http://[::1]:8888/callback") is None
+    assert spotify._spotify_redirect_error("http://localhost:8888/callback")
+    assert spotify._spotify_redirect_error("https://example.com/callback")
+    assert spotify._spotify_redirect_error("not-a-uri")
+
+    expected_enabled = bool(
+        spotify.SPOTIFY_CLIENT_ID
+        and spotify.SPOTIFY_CLIENT_SECRET
+        and spotify.SPOTIFY_REDIRECT_ERROR is None
+    )
+    assert spotify.SPOTIFY_ENABLED is expected_enabled
+
+
+def test_spotify_access_token_uses_supported_cache_handler(monkeypatch):
+    class CacheHandler:
+        def get_cached_token(self):
+            return {"access_token": "cached-token"}
+
+    class AuthManager:
+        def __init__(self):
+            self.calls = 0
+            self.validations = 0
+            self.cache_handler = CacheHandler()
+
+        def validate_token(self, token_info):
+            self.validations += 1
+            return token_info
+
+        def get_access_token(self, **_kwargs):
+            self.calls += 1
+            return None
+
+    class FakeSpotify:
+        def __init__(self):
+            self.auth_manager = AuthManager()
+
+    fake = FakeSpotify()
+    monkeypatch.setattr(spotify, "sp", fake)
+
+    assert spotify._spotify_access_token() == "cached-token"
+    assert fake.auth_manager.validations == 1
+    assert fake.auth_manager.calls == 0
+
+
+def test_spotify_access_token_requests_the_non_deprecated_string_shape(monkeypatch):
+    class CacheHandler:
+        def get_cached_token(self):
+            return None
+
+    class AuthManager:
+        def __init__(self):
+            self.calls = []
+            self.cache_handler = CacheHandler()
+
+        def validate_token(self, token_info):
+            return token_info
+
+        def get_access_token(self, **kwargs):
+            self.calls.append(kwargs)
+            return "interactive-token"
+
+    class FakeSpotify:
+        def __init__(self):
+            self.auth_manager = AuthManager()
+
+    fake = FakeSpotify()
+    monkeypatch.setattr(spotify, "sp", fake)
+
+    assert spotify._spotify_access_token() == "interactive-token"
+    assert fake.auth_manager.calls == [
+        {"as_dict": False, "check_cache": False}
+    ]
 
 
 def test_spotify_dynamic_mix_uses_user_taste_and_genre_candidates(monkeypatch):
@@ -147,39 +242,60 @@ def test_spotify_obtener_similares_returns_bounded_list_for_minimal_track():
     assert len(similares) <= 5
 
 
-def test_spotify_mix_uses_album_and_artist_context_without_recommendations(monkeypatch):
+def test_spotify_default_mix_never_calls_restricted_endpoints(monkeypatch):
     class FakeSpotify:
         def __init__(self):
-            self.recommendations_called = False
+            self.search_calls = []
 
         def recommendations(self, *args, **kwargs):
-            self.recommendations_called = True
-            return {"tracks": []}
+            raise AssertionError("recommendations is unavailable in development mode")
+
+        def audio_features(self, *args, **kwargs):
+            raise AssertionError("audio features is unavailable in development mode")
+
+        def artist_related_artists(self, *args, **kwargs):
+            raise AssertionError("related artists is unavailable in development mode")
+
+        def artist_top_tracks(self, *args, **kwargs):
+            raise AssertionError("artist top tracks is unavailable in development mode")
 
         def album_tracks(self, album_id, limit=50):
             assert album_id == "album1"
             return {
                 "items": [
-                    {"id": "seed", "uri": "spotify:track:seed", "name": "Seed"},
-                    {"id": "album-next", "uri": "spotify:track:album-next", "name": "Album Next"},
+                    _track("seed"),
+                    _track("album-next"),
                 ]
             }
 
-        def artist_top_tracks(self, artist_id):
-            assert artist_id in {"artist1", "related1"}
-            return {
-                "tracks": [
-                    {"id": f"{artist_id}-top", "uri": f"spotify:track:{artist_id}-top", "name": "Top"},
-                ]
-            }
+        def current_user_top_tracks(self, limit=10, time_range="medium_term"):
+            return {"items": [_track("top-user", "Top Artist")]}
 
-        def artist_related_artists(self, artist_id):
-            assert artist_id == "artist1"
-            return {"artists": [{"id": "related1", "name": "Related"}]}
+        def current_user_recently_played(self, limit=10):
+            return {"items": [{"track": _track("recent-user", "Recent Artist")}]}
+
+        def current_user_top_artists(self, limit=8, time_range="medium_term"):
+            return {"items": [{"name": "Top Artist", "genres": ["latin pop"]}]}
+
+        def artist(self, artist_id):
+            return {"id": artist_id, "name": "Artist", "genres": ["rock"]}
+
+        def current_user(self):
+            return {"id": "owner"}
+
+        def current_user_playlists(self, limit=50, offset=0):
+            return {"items": [], "next": None}
+
+        def search(self, q, limit=10, type="track", **kwargs):
+            assert type == "track", "default mode must not inspect public playlist contents"
+            assert limit <= 10
+            self.search_calls.append((q, limit, kwargs))
+            return {"tracks": {"items": [_track(f"search-{len(self.search_calls)}")]}}
 
     fake = FakeSpotify()
     monkeypatch.setattr(spotify, "sp", fake)
     monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
+    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", False)
 
     seed = {
         "id": "seed",
@@ -189,14 +305,142 @@ def test_spotify_mix_uses_album_and_artist_context_without_recommendations(monke
         "artists": [{"id": "artist1", "name": "Artist"}],
     }
 
-    similares = spotify._spotify_obtener_similares(seed, limite=3)
+    similares = spotify._spotify_obtener_similares(seed, limite=8)
 
-    assert not fake.recommendations_called
-    assert [track["uri"] for track in similares] == [
-        "spotify:track:album-next",
-        "spotify:track:artist1-top",
-        "spotify:track:related1-top",
+    assert similares
+    assert len(similares) <= 8
+    assert fake.search_calls
+    assert all(limit <= 10 for _query, limit, _kwargs in fake.search_calls)
+
+
+def test_spotify_extended_quota_endpoints_are_opt_in(monkeypatch):
+    class FakeSpotify:
+        def __init__(self):
+            self.calls = []
+
+        def recommendations(self, **kwargs):
+            self.calls.append("recommendations")
+            return {"tracks": [_track("recommended")]}
+
+        def audio_features(self, track_ids):
+            self.calls.append("audio_features")
+            return [{"energy": 0.9, "danceability": 0.8}]
+
+        def artist_top_tracks(self, artist_id, **kwargs):
+            self.calls.append(f"top:{artist_id}")
+            return {"tracks": [_track(f"top-{artist_id}")]}
+
+        def artist_related_artists(self, artist_id):
+            self.calls.append(f"related:{artist_id}")
+            return {"artists": [{"id": "related", "name": "Related"}]}
+
+        def search(self, q, limit=10, type="track", **kwargs):
+            return {"tracks": {"items": [_track("feature-search")]}}
+
+    fake = FakeSpotify()
+    monkeypatch.setattr(spotify, "sp", fake)
+    monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
+    seed = {
+        "id": "seed",
+        "uri": "spotify:track:seed",
+        "name": "Seed",
+        "artists": [{"id": "artist1", "name": "Artist"}],
+    }
+
+    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", False)
+    assert spotify._spotify_extended_quota_candidates(seed, limit=8) == []
+    assert fake.calls == []
+
+    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", True)
+    candidates = spotify._spotify_extended_quota_candidates(seed, limit=8)
+
+    assert candidates
+    assert "recommendations" in fake.calls
+    assert "audio_features" in fake.calls
+    assert "top:artist1" in fake.calls
+    assert "related:artist1" in fake.calls
+
+
+def test_spotify_automix_reads_new_and_legacy_playlist_item_shapes(monkeypatch):
+    class FakeSpotify:
+        def playlist_items(self, **kwargs):
+            return {
+                "items": [
+                    {"item": _track("new-shape")},
+                    {"track": _track("legacy-shape")},
+                    {"item": {"type": "episode", "uri": "spotify:episode:skip"}},
+                ],
+                "next": None,
+            }
+
+    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+
+    assert spotify._spotify_obtener_uris_playlist("automix") == [
+        "spotify:track:new-shape",
+        "spotify:track:legacy-shape",
     ]
+
+
+def test_spotify_creates_automix_with_current_user_playlist_api(monkeypatch):
+    class FakeSpotify:
+        def __init__(self):
+            self.created = []
+
+        def current_user_playlist_create(self, **kwargs):
+            self.created.append(kwargs)
+            return {"id": "automix", **kwargs}
+
+    fake = FakeSpotify()
+    monkeypatch.setattr(spotify, "sp", fake)
+
+    result = spotify._spotify_crear_playlist_me(
+        name="JARVIS AutoMix",
+        public=False,
+        collaborative=False,
+        description="JARVIS mix",
+    )
+
+    assert result["id"] == "automix"
+    assert fake.created == [
+        {
+            "name": "JARVIS AutoMix",
+            "public": False,
+            "collaborative": False,
+            "description": "JARVIS mix",
+        }
+    ]
+
+
+def test_spotify_logs_provider_error_types_without_raw_messages(monkeypatch, capsys):
+    class FakeSpotify:
+        def current_user(self):
+            raise RuntimeError("provider-body-with-secret-token")
+
+    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+
+    assert spotify._spotify_usuario_actual_id() is None
+    output = capsys.readouterr().out
+    assert "RuntimeError" in output
+    assert "provider-body-with-secret-token" not in output
+
+
+def test_spotify_playback_errors_do_not_expose_provider_details(monkeypatch, capsys):
+    secret_error = r"provider failed through C:\Users\ramir\private\oauth-token"
+
+    class FakeSpotify:
+        def pause_playback(self, *args, **kwargs):
+            raise RuntimeError(secret_error)
+
+    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify, "_spotify_dispositivo_objetivo", lambda: None)
+    monkeypatch.setattr(spotify, "_spotify_activar_cliente", lambda: False)
+
+    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+    output = capsys.readouterr().out
+
+    assert secret_error not in response
+    assert secret_error not in output
+    assert "RuntimeError" in output
 
 
 def test_post_playback_starts_automix_playlist_context(monkeypatch):

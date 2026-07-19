@@ -1,5 +1,4 @@
 from __future__ import annotations
-import sys
 
 
 def _make_safe_mock_tool():

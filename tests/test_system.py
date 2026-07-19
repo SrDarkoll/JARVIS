@@ -139,7 +139,7 @@ class TestBorrarMemoria:
         with patch.object(system.os.path, "exists", return_value=False):
             with patch.object(system, "MEMORIA_FILE", "/fake/memoria.txt"):
                 with patch.object(system, "MEMORIA_PROFILES_FILE", "/fake/profiles.txt"):
-                    out = system.borrar_memoria.invoke({})
+                    system.borrar_memoria.invoke({})
 
         assert len(audit_calls) == 1
         args, kwargs = audit_calls[0]

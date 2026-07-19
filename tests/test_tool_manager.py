@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sys
 
-import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND = os.path.join(ROOT, "src", "backend")

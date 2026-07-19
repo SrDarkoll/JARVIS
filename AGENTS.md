@@ -52,11 +52,17 @@ Manual setup fallback:
 
 ```bash
 python -m venv venv
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+# Windows:
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+# Linux/macOS:
+venv/bin/python -m pip install --upgrade pip
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements-dev.txt
 # Only when testing full optional integrations:
-pip install -r requirements-optional.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-optional.txt
+# Linux/macOS: venv/bin/python -m pip install -r requirements-optional.txt
 ```
 
 Environment setup:
@@ -71,6 +77,11 @@ Minimum real LLM usage requires `GROQ_API_KEY`. For shared machines, LAN exposur
 Piper TTS, basic memory, Spotify, base tools, and the web UI while skipping
 voice biometrics, RAG, vision, plugins, briefing, and Telegram. Use
 `JARVIS_CORE_MODE=false` only when validating the complete optional feature set.
+
+Run a setup script before the launcher. `start_app.py` automatically re-executes
+through the project `venv` when it exists, which prevents global Python package
+conflicts. FFmpeg is the only direct audio-conversion backend for browser voice,
+voice identity, and Telegram OGG/Opus output.
 
 ## Run Commands
 
@@ -103,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-251 passed, 1 skipped, 1 warning
+347 passed, 1 skipped in 24.44s
 ```
 
 Python syntax/import compilation:
@@ -126,6 +137,14 @@ git diff --check
 ```
 
 On Windows, `git diff --check` may print LF/CRLF warnings. Treat whitespace errors as blockers; line-ending warnings alone are informational unless the task is specifically about line endings.
+
+Dependency and release checks:
+
+```powershell
+python -m pip check
+python -m pip_audit -r requirements.txt
+python -m ruff check src/backend tests --select F
+```
 
 ## Targeted Regression Commands
 
@@ -173,6 +192,12 @@ Spotify recommendation regressions:
 pytest tests\test_spotify_recs.py -q
 ```
 
+Spotify OAuth must use the exact registered redirect
+`http://127.0.0.1:8888/callback`; `localhost` aliases are rejected. Default
+development-mode mixes must avoid restricted recommendation/audio-feature,
+related-artist, artist-top-track, and public-playlist-content endpoints. Enable
+`SPOTIFY_EXTENDED_QUOTA_MODE` only for an app approved for extended quota mode.
+
 ## Security Workflow
 
 - Add or update tests before changing security-sensitive behavior.
@@ -194,6 +219,8 @@ pytest tests\test_spotify_recs.py -q
 - `tests/conftest.py` sets repo-local runtime paths. Avoid tests that depend on global OS temp behavior when possible.
 - On Windows, stale or locked temp directories can cause pytest setup issues. Prefer repo-local scratch paths and explicit cleanup of files created by the test.
 - Avoid using real network calls in unit tests. Mock provider clients and requests.
+- `JARVIS_MONITORING_ENABLED` defaults off in core mode and on in full mode. Installing APScheduler does not enable jobs by itself.
+- Without `GROQ_API_KEY`, AI-backed routes must return controlled `llm_unconfigured` errors while setup/status and local preflight paths remain usable.
 
 ## Linting Notes
 
@@ -219,6 +246,8 @@ Before publishing a branch or release:
 - `.env` is not tracked.
 - `.env.example` documents required and optional variables.
 - `git lfs ls-files` includes tracked `.onnx` voice models.
+- `python -m pip check` reports no broken requirements.
+- `python -m pip_audit -r requirements.txt` reports no known runtime vulnerability.
 - `pytest -q` passes.
 - `python -m compileall -q start_app.py src\backend` passes.
 - `node --check src\frontend\static\js\main.js` passes.

@@ -1,3 +1,5 @@
+import * as THREE from '../../vendor/three.module.min.js';
+
 /**
  * Motor de Renderizado del Reactor Arc v2.0 (Three.js)
  * Implementa una esfera de energía, anillos de confinamiento y partículas.

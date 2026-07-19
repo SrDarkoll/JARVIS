@@ -10,14 +10,21 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 def test_load_chat_openai_uses_openai_compatible_fallback_on_import_runtime_error(monkeypatch):
     original_import = builtins.__import__
+    warnings = []
+    secret_error = r"provider failed through C:\Users\ramir\private\proxy-token"
 
     def guarded_import(name, *args, **kwargs):
         if name.startswith("langchain_openai"):
-            raise RuntimeError("torch kernel collision")
+            raise RuntimeError(secret_error)
         return original_import(name, *args, **kwargs)
 
     monkeypatch.delenv("JARVIS_TEST_MODE", raising=False)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(
+        llm_engine,
+        "log_warning",
+        lambda event, **fields: warnings.append((event, fields)),
+    )
 
     ChatOpenAI = llm_engine._load_chat_openai()
     model = ChatOpenAI(model="qwen/qwen3.6-27b", temperature=0, api_key="test-key", base_url="https://example.invalid")
@@ -26,6 +33,10 @@ def test_load_chat_openai_uses_openai_compatible_fallback_on_import_runtime_erro
     assert model.model == "qwen/qwen3.6-27b"
     assert hasattr(model, "invoke")
     assert model.bind_tools([], tool_choice="auto") is not None
+    assert warnings == [
+        ("langchain_openai_import_failed", {"error": "RuntimeError"})
+    ]
+    assert secret_error not in repr(warnings)
 
 
 def test_openai_compatible_fallback_invokes_chat_completion(monkeypatch):

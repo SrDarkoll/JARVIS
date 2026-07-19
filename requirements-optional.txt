@@ -1,22 +1,26 @@
 # Optional dependencies for JARVIS full mode.
 # Install after requirements.txt when enabling heavy integrations.
+-c requirements.txt
 
 # RAG / embeddings
 langchain-community==0.4.1
-faiss-cpu>=1.8
-sentence-transformers>=3.0
+langchain-huggingface==1.2.2
+faiss-cpu>=1.8,<2
+sentence-transformers>=5.2,<6
+torch==2.11.0
+torchaudio==2.11.0
 
 # Voice biometrics
-speechbrain>=1.0
+speechbrain>=1.1,<2
 
 # Telegram and proactive scheduling
-python-telegram-bot>=21.0
+python-telegram-bot>=21,<23
 apscheduler>=3.10,<4
 
 # Browser automation, vision, and optional search provider
-playwright>=1.40
-Pillow>=10.0
-tavily-python>=0.5
+playwright>=1.40,<2
+Pillow>=10,<13
+tavily-python>=0.5,<1
 
 # Windows-only controls and temperature telemetry
 pycaw>=1.0; sys_platform == "win32"

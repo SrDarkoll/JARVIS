@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -10,7 +11,7 @@ def _requirement_names(path: Path) -> set[str]:
     names = set()
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-        if not line or line.startswith(("#", "-r ")):
+        if not line or line.startswith(("#", "-r ", "-c ")):
             continue
         package = line.split(";", 1)[0].strip()
         for separator in ("==", ">=", "<=", "~=", "!=", ">", "<", "["):
@@ -40,7 +41,10 @@ def test_optional_requirements_contain_full_feature_dependencies():
     expected = {
         "speechbrain",
         "faiss-cpu",
+        "langchain-huggingface",
         "sentence-transformers",
+        "torch",
+        "torchaudio",
         "python-telegram-bot",
         "playwright",
         "wmi",
@@ -49,6 +53,22 @@ def test_optional_requirements_contain_full_feature_dependencies():
     }
 
     assert expected <= optional
+
+
+def test_optional_ml_dependencies_use_compatible_major_versions():
+    optional = (ROOT / "requirements-optional.txt").read_text(encoding="utf-8")
+
+    assert "-c requirements.txt" in optional
+    assert "langchain-huggingface==1.2.2" in optional
+    assert "sentence-transformers>=5.2,<6" in optional
+    assert "torch==2.11.0" in optional
+    assert "torchaudio==2.11.0" in optional
+
+    rag_source = (ROOT / "src/backend/engines/memory_rag.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from langchain_huggingface import HuggingFaceEmbeddings" in rag_source
+    assert "langchain_community.embeddings" not in rag_source
 
 
 def test_core_requirements_declare_direct_audio_dependencies():
@@ -102,3 +122,48 @@ def test_setup_scripts_use_the_project_interpreter_for_all_python_tools():
     assert '"$VENV_PYTHON" -m pip install -r requirements-dev.txt' in shell
     assert '"$VENV_PYTHON" -m playwright install chromium' in shell
     assert 'source venv/bin/activate' not in shell
+
+
+def test_spotipy_version_and_spotify_environment_contract():
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    config = (ROOT / "src/backend/core/jarvis_config.py").read_text(encoding="utf-8")
+
+    assert re.search(r"(?m)^spotipy>=2\.26,<3$", requirements)
+    assert 'SPOTIPY_REDIRECT_URI="http://127.0.0.1:8888/callback"' in env_example
+    assert 'SPOTIFY_AUTO_SHUFFLE="false"' in env_example
+    assert 'SPOTIFY_EXTENDED_QUOTA_MODE="false"' in env_example
+    assert (
+        'SPOTIFY_AUTO_SHUFFLE = _read_bool(os.environ, "SPOTIFY_AUTO_SHUFFLE", False)'
+        in config
+    )
+    assert 'SPOTIFY_EXTENDED_QUOTA_MODE = _read_bool(' in config
+
+
+def test_public_llm_configuration_is_groq_only():
+    public_files = (
+        ROOT / ".env.example",
+        ROOT / "src/backend/core/jarvis_config.py",
+        ROOT / "jarvis_settings.py",
+    )
+    public_config = "\n".join(
+        path.read_text(encoding="utf-8") for path in public_files
+    )
+
+    assert "GROQ_API_KEY" in public_config
+    assert "MINIMAX" not in public_config.upper()
+
+
+def test_frontend_uses_the_supported_threejs_module_build():
+    template = (ROOT / "src/frontend/templates/index.html").read_text(encoding="utf-8")
+    reactor = (ROOT / "src/frontend/static/js/modules/reactor.js").read_text(
+        encoding="utf-8"
+    )
+    vendor = ROOT / "src/frontend/static/vendor"
+
+    assert "vendor/three.min.js" not in template
+    assert "window.THREE" not in reactor
+    assert "../../vendor/three.module.min.js" in reactor
+    assert (vendor / "three.module.min.js").is_file()
+    assert (vendor / "three.core.min.js").is_file()
+    assert (vendor / "three.LICENSE.txt").is_file()

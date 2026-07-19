@@ -54,8 +54,8 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
                 rag_limpio = brain_utils._limpiar_contexto_memoria(rag_context)
                 if rag_limpio:
                     memoria_texto += "\n\n" + rag_limpio
-        except Exception as e:
-            log_warning("rag_context_retrieval_failed", error=str(e))
+        except Exception as exc:
+            log_warning("rag_context_retrieval_failed", error=type(exc).__name__)
 
     lang = get_current_language()
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
@@ -78,8 +78,8 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
             _pid_es_owner = _pid_activo == jarvis_state.DEFAULT_PROFILE_ID
             _nombre_activo = _snap.get("nombre") or (bt["profile_administrator"] if _pid_es_owner else bt["profile_guest"])
             perfil_activo = f"{_nombre_activo} ({bt['profile_label']}: {_pid_activo})"
-    except Exception as e:
-        log_warning("auth_snapshot_read_failed", error=str(e))
+    except Exception as exc:
+        log_warning("auth_snapshot_read_failed", error=type(exc).__name__)
 
     ahora = datetime.now()
     getattr(jarvis_settings, "LOCALE", "en-US")

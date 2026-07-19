@@ -5,6 +5,10 @@ import { convertBlobToWav } from './modules/audio-encoder.js';
 import { VoiceManager } from './modules/voice.js';
 import { ArcReactor } from './modules/reactor.js';
 import { WidgetManager } from './modules/widgets.js';
+import {
+    isMicrophonePermissionError,
+    shouldRestartPassiveRecognition,
+} from './modules/recognition-policy.js';
 import { t, setLanguage, currentLang, updateUI } from './i18n.js';
 
 // --- CONSTANTES GLOBALES ---
@@ -545,6 +549,7 @@ document.addEventListener('DOMContentLoaded', () => {
     syncLanguageFromBackend();
     dom.activateBtn?.addEventListener('click', () => {
         dom.activateBtn.blur();
+        resetMicrophonePermissionBlock();
         if (isSpeaking) {
             interrumpirAudio();
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -591,6 +596,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let passiveRestartTimer = null;
     let activeStartTimer = null;
     let passiveErrorRestartPending = false;
+    let microphonePermissionBlocked = false;
+    let microphoneBlockLogged = false;
 
     function isExpectedRecognitionStartError(err) {
         const name = String(err?.name || '').toLowerCase();
@@ -607,6 +614,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function safeStartRecognition(kind) {
         if (adminEnrollmentActive) {
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: start(${kind}) skipped (admin enrollment)`);
+            return false;
+        }
+        if (microphonePermissionBlocked) {
             return false;
         }
         const recognition = kind === 'passive' ? passiveRecognition : activeRecognition;
@@ -668,11 +678,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function isMicPermissionError(errType) {
-        const kind = String(errType || '').toLowerCase();
-        return kind === 'not-allowed' || kind === 'service-not-allowed' || kind === 'audio-capture';
-    }
-
     function clearPassiveRestartTimer() {
         if (passiveRestartTimer) {
             clearTimeout(passiveRestartTimer);
@@ -687,16 +692,55 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function resetMicrophonePermissionBlock() {
+        microphonePermissionBlocked = false;
+        microphoneBlockLogged = false;
+    }
+
+    function markMicrophonePermissionBlocked() {
+        microphonePermissionBlocked = true;
+        passiveErrorRestartPending = false;
+        activeRestartPending = false;
+        clearPassiveRestartTimer();
+        clearActiveStartTimer();
+        if (activeTimeout) {
+            clearTimeout(activeTimeout);
+            activeTimeout = null;
+        }
+        voice.stopSilenceDetector();
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            try { mediaRecorder.stop(); } catch (_) { }
+        }
+        mediaRecorder = null;
+        if (activeAudioStream) {
+            activeAudioStream.getTracks().forEach(track => track.stop());
+            activeAudioStream = null;
+        }
+        setCurrentMode('idle', 'microphone_permission_blocked');
+        updateButtonUI('idle');
+        if (!microphoneBlockLogged) {
+            microphoneBlockLogged = true;
+            ui.addLogEntry(t('bio_mic_blocked'));
+        }
+    }
+
     function schedulePassiveRestart(delayMs = 300) {
-        if (adminEnrollmentActive) {
+        if (!shouldRestartPassiveRecognition(
+            currentMode,
+            adminEnrollmentActive,
+            microphonePermissionBlocked
+        )) {
             clearPassiveRestartTimer();
-            if (VOICE_DEBUG) ui.addLogEntry('> DEBUG TIMER: passive restart skipped (admin enrollment)');
             return;
         }
         clearPassiveRestartTimer();
         passiveRestartTimer = setTimeout(() => {
             passiveRestartTimer = null;
-            if (currentMode === 'passive' && !adminEnrollmentActive) {
+            if (shouldRestartPassiveRecognition(
+                currentMode,
+                adminEnrollmentActive,
+                microphonePermissionBlocked
+            )) {
                 safeStartRecognition('passive');
             }
         }, delayMs);
@@ -778,8 +822,8 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         passiveRecognition.onerror = (err) => {
             passiveRecognitionRunning = false;
-            if (err.error === 'not-allowed' || err.error === 'audio-capture') {
-                ui.addLogEntry(`> ALERTA MICRO: Permiso denegado (${err.error}).`);
+            if (isMicrophonePermissionError(err.error)) {
+                markMicrophonePermissionBlocked();
                 return;
             }
             if (err.error === 'no-speech' || err.error === 'aborted') {
@@ -856,9 +900,8 @@ document.addEventListener('DOMContentLoaded', () => {
             activeRecognitionRunning = false;
             const errType = String(event?.error || '').toLowerCase();
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: active onerror (${errType || 'unknown'})`);
-            if (isMicPermissionError(errType)) {
-                ui.addLogEntry(t('bio_mic_blocked'));
-                startPassiveListening();
+            if (isMicrophonePermissionError(errType)) {
+                markMicrophonePermissionBlocked();
                 return;
             }
             if (errType === 'network' || errType === 'no-speech' || errType === 'aborted') {
@@ -935,6 +978,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CAPTURE_CONSTRAINTS);
+            resetMicrophonePermissionBlock();
             activeAudioStream = stream;
             window._activeStartTime = Date.now();
 
@@ -959,6 +1003,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             armActiveTimeout(9000);
         } catch (e) {
+            if (isMicrophonePermissionError(e?.name)) {
+                markMicrophonePermissionBlocked();
+                return;
+            }
             logError('Micro', e, startPassiveListening);
         }
     }
@@ -1021,6 +1069,11 @@ document.addEventListener('DOMContentLoaded', () => {
         clearActiveStartTimer();
         clearPassiveRestartTimer();
         if (adminEnrollmentActive) return;
+        if (microphonePermissionBlocked) {
+            setCurrentMode('idle', 'microphone_permission_blocked');
+            updateButtonUI('idle');
+            return;
+        }
         passiveErrorRestartPending = false;
         activeCommandProcessRequested = false;
         activeRestartPending = false;

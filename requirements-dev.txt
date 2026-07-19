@@ -1,4 +1,6 @@
-# Development and test tools.
+# Development, test, lint, and release-audit tools.
 -r requirements.txt
-pytest>=8.0
-pytest-cov>=4.0
+pytest>=8.0,<9
+pytest-cov>=7.0,<8
+ruff==0.15.22
+pip-audit==2.10.1

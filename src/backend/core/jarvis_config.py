@@ -74,7 +74,7 @@ ROOT_DIR = _normalize_fs_path(os.path.dirname(SRC_DIR))
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 MODEL_PATH = os.path.join(ROOT_DIR, "models", "en_GB-northern_english_male-medium.onnx")
-SPOTIFY_CACHE = os.path.join(SRC_DIR, ".spotify_cache")
+SPOTIFY_CACHE = os.path.join(BASE_DIR, ".cache-jarvis")
 MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_jarvis.json")
 MEMORIA_PROFILES_FILE = os.path.join(BASE_DIR, "memoria_jarvis_profiles.json")
 OBS_DIR = os.path.join(BASE_DIR, "logs")
@@ -117,9 +117,10 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 # Spotify
 SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "")
-SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "https://google.com/callback")
+SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 SPOTIFY_MODO_SIMILARES = os.getenv("SPOTIFY_MODO_SIMILARES", "hybrid").strip().lower()
-SPOTIFY_AUTO_SHUFFLE = os.getenv("SPOTIFY_AUTO_SHUFFLE", "false").strip().lower() == "true"
+SPOTIFY_AUTO_SHUFFLE = _read_bool(os.environ, "SPOTIFY_AUTO_SHUFFLE", False)
+SPOTIFY_EXTENDED_QUOTA_MODE = _read_bool(os.environ, "SPOTIFY_EXTENDED_QUOTA_MODE", False)
 SPOTIFY_AUTOMIX_PLAYLIST_NAME = os.getenv("SPOTIFY_AUTOMIX_PLAYLIST_NAME", "JARVIS AutoMix").strip()
 
 

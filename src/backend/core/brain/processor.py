@@ -227,13 +227,9 @@ def _preflight(
                 else _ajustar_volumen_absoluto(v_vol)
             )
             return str(res), False
-        except Exception as e:
-            obs_event(
-                "volume_adjustment_error",
-                error=str(e)[:300],
-                input=user_input_norm[:100],
-            )
-            return f"Could not adjust volume: {e}", False
+        except Exception as exc:
+            obs_event("volume_adjustment_error", error=type(exc).__name__)
+            return "Could not adjust the system volume.", False
 
     # 5. Hybrid router
     router_reply = router._router_hibrido(user_input_norm)

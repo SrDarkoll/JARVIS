@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import struct
 import sys
@@ -143,7 +142,6 @@ def test_heartbeat_state_defaults():
 
 def test_import_jarvis_backend():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     assert jarvis_backend.app is not None
     rules = list(jarvis_backend.app.url_map.iter_rules())
@@ -155,7 +153,6 @@ def test_import_jarvis_backend():
 
 def test_flask_test_client_basic_routes():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
 
@@ -260,7 +257,6 @@ def test_chat_stream_rate_limits_like_chat(monkeypatch):
 
 def test_status_endpoint_returns_telemetry():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/status/full")
@@ -288,7 +284,6 @@ def test_status_endpoint_reports_runtime_mode():
 
 def test_noticias_endpoint_returns_202_when_not_ready():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/noticias")
@@ -300,7 +295,6 @@ def test_noticias_endpoint_returns_202_when_not_ready():
 
 def test_auth_status_endpoint():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/auth_status")
@@ -316,7 +310,6 @@ def test_auth_status_endpoint():
 
 def test_voice_registration_start_route():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/voice/registro/iniciar")
@@ -408,7 +401,6 @@ def test_owner_alias_not_registered_as_guest(monkeypatch):
 
 def test_owner_enroll_capture_requires_session():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     jarvis_backend._PENDING_VOICE_REGISTRATION.pop("127.0.0.1", None)
     c = _test_client(jarvis_backend.app)
@@ -577,7 +569,6 @@ def test_unknown_voice_registration_retry_on_failed_embedding(monkeypatch):
 
 def test_invalid_audio_returns_400_in_awaiting_name():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     ip = "__test_bad_audio__"
     jarvis_backend._PENDING_VOICE_REGISTRATION[ip] = {
@@ -603,7 +594,6 @@ def test_invalid_audio_returns_400_in_awaiting_name():
 
 def test_transcribir_audio_prefers_whisper_for_dubious_hint(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=2.6)
     calls = []
@@ -627,7 +617,6 @@ def test_transcribir_audio_prefers_whisper_for_dubious_hint(monkeypatch):
 
 def test_transcribir_audio_keeps_clear_browser_hint(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=1.0)
     calls = []
@@ -651,7 +640,6 @@ def test_transcribir_audio_keeps_clear_browser_hint(monkeypatch):
 
 def test_transcribir_audio_keeps_confident_short_question(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=1.1)
     calls = []
@@ -675,7 +663,6 @@ def test_transcribir_audio_keeps_confident_short_question(monkeypatch):
 
 def test_normalizar_a_wav_rejects_garbage():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Random bytes should be rejected (returns False or raises)
     _, ok = jarvis_backend._normalizar_a_wav(b"\x00\x01\x02\x03")
@@ -684,7 +671,6 @@ def test_normalizar_a_wav_rejects_garbage():
 
 def test_normalizar_a_wav_accepts_wav():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav = _make_test_wav(duration_s=0.5)
     _, ok = jarvis_backend._normalizar_a_wav(wav)
@@ -693,7 +679,6 @@ def test_normalizar_a_wav_accepts_wav():
 
 def test_normalizar_a_wav_accepts_ogg():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Minimal OGG header: "OggS"
     ogg = b"OggS" + b"\x00" * 20
@@ -712,7 +697,6 @@ def test_normalizar_a_wav_accepts_ogg():
 
 def test_chat_accepts_profile_id_payload():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/chat", json={"message": "hola", "profile_id": "web_test_profile"})
@@ -975,7 +959,6 @@ def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
 
 def test_chat_rejects_empty_message():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/chat", json={"message": ""})
@@ -1015,7 +998,6 @@ def test_chat_stream_rejects_invalid_json_payload():
 
 def test_chat_stream_endpoint_exists():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     # Should accept POST (may return 200, 400, or 503 depending on LLM state)
@@ -1029,8 +1011,6 @@ def test_chat_stream_endpoint_exists():
 
 
 def test_guest_cannot_authorize_high_level_actions():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
     from utils.jarvis_auth import revocar_autorizacion  # pyright: ignore[reportMissingImports]
 
@@ -1046,8 +1026,6 @@ def test_guest_cannot_authorize_high_level_actions():
 
 
 def test_owner_biometric_authorization_works():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from utils.jarvis_auth import (  # pyright: ignore[reportMissingImports]
         revocar_autorizacion,
         verificar_autorizacion,
@@ -1069,8 +1047,6 @@ def test_jarvis_brain_needs_tools():
 
 
 def test_dynamic_queries_force_web_tools():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
 
     assert jarvis_brain._debe_buscar_en_web("precio actual del bitcoin") is True
@@ -1114,8 +1090,6 @@ def test_brain_handles_unknown_input():
 
 
 def test_tts_engine_pronunciation():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from jarvis_backend import _aplicar_pronunciacion_tts
 
     res_yt = _aplicar_pronunciacion_tts("YouTube").lower()
@@ -1127,7 +1101,6 @@ def test_tts_engine_pronunciation():
 
 def test_tts_endpoint_exists():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/tts", json={"text": "hola"})
@@ -1151,7 +1124,6 @@ def test_tts_returns_503_when_engine_not_loaded(monkeypatch):
 
 def test_tts_rejects_too_short_text():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/tts", json={"text": "..."})
@@ -1350,13 +1322,16 @@ def test_widget_stripping_logic():
 
 def test_briefing_once_per_day_logic():
     """Verify the briefing date guard logic works correctly."""
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     hoy = datetime.now().strftime("%Y-%m-%d")
-    ayer = datetime.now().strftime("%Y-%m-%d")  # simplified check
+    ayer = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Same day = should skip
     assert hoy == hoy
+
+    # A previous day must not be treated as today's completed briefing.
+    assert ayer != hoy
 
     # Different format should still match as string
     assert hoy == datetime.now().strftime("%Y-%m-%d")
@@ -1414,7 +1389,6 @@ def test_low_similarity_does_not_trigger_session_continuity(monkeypatch):
 def test_voice_cancel_registration():
     """POST /api/voice/cancelar should clear pending registrations."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Set up a fake pending registration
     jarvis_backend._PENDING_VOICE_REGISTRATION["127.0.0.1"] = {
@@ -1439,7 +1413,6 @@ def test_voice_cancel_registration():
 def test_voice_cancel_all_registrations():
     """POST /api/voice/cancelar should clear ALL if no pending for that IP."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     jarvis_backend._PENDING_VOICE_REGISTRATION.clear()
     jarvis_backend._PENDING_VOICE_REGISTRATION["10.0.0.1"] = {
@@ -1517,7 +1490,7 @@ def test_voice_route_emits_identity_debug_and_observability(monkeypatch):
     def _capture(event_type, **payload):
         events.append((event_type, payload))
 
-    from api import voice_routes; monkeypatch.setattr(voice_routes, "_obs_event", _capture)
+    monkeypatch.setattr(voice_routes, "_obs_event", _capture)
     monkeypatch.setattr(voice_routes, "_norm_a_wav", lambda b: (b"wav-ok", True))
     monkeypatch.setattr(voice_routes, "_bytes_es_wav_valido", lambda _b: True)
     monkeypatch.setattr(
@@ -2017,7 +1990,6 @@ def test_healthcheck_cpu_ram_thresholds():
 def test_voice_endpoint_rejects_get():
     """POST-only endpoints should reject GET requests."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/voice")
@@ -2027,7 +1999,6 @@ def test_voice_endpoint_rejects_get():
 def test_tts_endpoint_rejects_get():
     """TTS endpoint should reject GET requests."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/tts")

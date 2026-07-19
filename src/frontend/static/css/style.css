@@ -1237,3 +1237,237 @@ body::before {
 ::-webkit-scrollbar-corner {
     background: rgba(0, 10, 20, 0.8);
 }
+
+/* ═══════════════════════════════════════════════════
+   MEJORAS VISUALES HUD PREMIUM (Stark Tech)
+   ═══════════════════════════════════════════════════ */
+
+/* 1. Esquinas Sci-Fi de Paneles y Botón */
+.panel-corners {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.panel-corners::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 14px;
+    height: 14px;
+    border-top: 2px solid var(--primary);
+    border-left: 2px solid var(--primary);
+    box-shadow: -2px -2px 8px var(--primary-glow);
+    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.panel-corners::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    border-bottom: 2px solid var(--primary);
+    border-right: 2px solid var(--primary);
+    box-shadow: 2px 2px 8px var(--primary-glow);
+    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.tech-panel:hover .panel-corners::before {
+    top: -4px;
+    left: -4px;
+    border-color: #ffffff;
+    box-shadow: -2px -2px 12px #ffffff;
+}
+
+.tech-panel:hover .panel-corners::after {
+    bottom: -4px;
+    right: -4px;
+    border-color: #ffffff;
+    box-shadow: 2px 2px 12px #ffffff;
+}
+
+.btn-corners {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.btn-corners::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    border-top: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    transition: all 0.3s ease;
+}
+
+.btn-corners::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-bottom: 2px solid currentColor;
+    border-left: 2px solid currentColor;
+    transition: all 0.3s ease;
+}
+
+.voice-btn-tech:hover .btn-corners::before {
+    top: -2px;
+    right: -2px;
+}
+
+.voice-btn-tech:hover .btn-corners::after {
+    bottom: -2px;
+    left: -2px;
+}
+
+/* 2. Animaciones de Barrido ("Sheen") en Relleno de Métricas */
+.fill-tech {
+    background: linear-gradient(90deg,
+        var(--primary) 0%,
+        var(--primary) 40%,
+        rgba(255, 255, 255, 0.85) 50%,
+        var(--primary) 60%,
+        var(--primary) 100%
+    ) !important;
+    background-size: 200% 100% !important;
+    animation: fill-sheen 4s infinite linear;
+}
+
+.warning-fill {
+    background: linear-gradient(90deg,
+        var(--warning) 0%,
+        var(--warning) 40%,
+        rgba(255, 255, 255, 0.85) 50%,
+        var(--warning) 60%,
+        var(--warning) 100%
+    ) !important;
+    background-size: 200% 100% !important;
+}
+
+.alt-fill {
+    background: linear-gradient(90deg,
+        var(--secondary) 0%,
+        var(--secondary) 40%,
+        rgba(255, 255, 255, 0.85) 50%,
+        var(--secondary) 60%,
+        var(--secondary) 100%
+    ) !important;
+    background-size: 200% 100% !important;
+}
+
+@keyframes fill-sheen {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* 3. Retroiluminación Ambiental Radial Pulsante */
+.vignette-overlay {
+    background:
+        radial-gradient(circle at center, rgba(0, 242, 255, 0.05) 0%, transparent 65%),
+        radial-gradient(circle at center, transparent 35%, rgba(1, 4, 9, 0.95) 100%) !important;
+    animation: ambient-pulse 8s ease-in-out infinite;
+}
+
+@keyframes ambient-pulse {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* 4. Mini-etiquetas de Estado de Sistema en Títulos */
+.hud-title {
+    width: 100% !important;
+}
+
+.hud-title::after {
+    content: 'SYS.ACTIVE';
+    display: inline-block !important;
+    font-family: var(--font-header);
+    font-size: 0.55rem;
+    color: var(--primary);
+    border: 1px solid var(--primary-glow);
+    padding: 0px 5px;
+    margin-left: auto;
+    border-radius: 2px;
+    letter-spacing: 1px;
+    opacity: 0.75;
+    font-weight: 700;
+    animation: title-blink 3s steps(2, start) infinite;
+}
+
+.terminal-panel .hud-title::after {
+    content: 'SYS.LOG';
+}
+
+.control-center .hud-title::after {
+    content: 'SYS.CMD';
+}
+
+@keyframes title-blink {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 0.3; }
+}
+
+/* 5. Optimización de Profundidad de Glassmorphism */
+.tech-panel {
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    box-shadow:
+        0 8px 32px 0 rgba(0, 0, 0, 0.75),
+        inset 0 0 20px rgba(0, 242, 255, 0.05) !important;
+}
+
+.tech-panel:hover {
+    border-color: var(--primary) !important;
+    box-shadow:
+        0 12px 40px 0 rgba(0, 242, 255, 0.15),
+        inset 0 0 30px var(--primary-dim) !important;
+}
+
+.tech-glass {
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    box-shadow:
+        0 8px 32px 0 rgba(0, 0, 0, 0.65),
+        inset 0 0 15px rgba(0, 242, 255, 0.03) !important;
+}
+
+/* 6. Efecto de barrido adicional en botones rápidos al pasar cursor */
+.quick-action.tech-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.quick-action.tech-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.18), transparent);
+    transition: all 0.5s ease;
+    pointer-events: none;
+}
+
+.quick-action.tech-btn:hover::before {
+    left: 100%;
+}

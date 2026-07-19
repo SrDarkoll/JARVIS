@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.0.1">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -218,7 +218,6 @@
         </footer>
     </main>
 
-    <script defer src="{{ url_for('static', filename='vendor/three.min.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 

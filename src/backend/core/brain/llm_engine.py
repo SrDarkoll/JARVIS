@@ -297,8 +297,8 @@ def _load_chat_openai():
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
 
         return ChatOpenAI
-    except Exception as e:
-        log_warning("langchain_openai_import_failed", error=str(e))
+    except Exception as exc:
+        log_warning("langchain_openai_import_failed", error=type(exc).__name__)
         return _OpenAICompatibleChatOpenAI
 
 
