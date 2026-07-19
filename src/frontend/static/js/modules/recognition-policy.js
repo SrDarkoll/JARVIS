@@ -17,9 +17,11 @@ export function isMicrophonePermissionError(errorType) {
 export function shouldRestartPassiveRecognition(
     currentMode,
     adminEnrollmentActive,
-    microphonePermissionBlocked
+    microphonePermissionBlocked,
+    browserRecognitionDegraded
 ) {
     return currentMode === 'passive'
         && !adminEnrollmentActive
-        && !microphonePermissionBlocked;
+        && !microphonePermissionBlocked
+        && !browserRecognitionDegraded;
 }
