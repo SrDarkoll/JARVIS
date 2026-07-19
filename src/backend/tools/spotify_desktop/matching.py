@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import replace
+from difflib import SequenceMatcher
+
+from tools.spotify_desktop.models import (
+    MatchDecision,
+    MatchStatus,
+    SpotifyCandidate,
+    SpotifyRequest,
+)
+
+_VARIANT_TERMS = {
+    "acoustic",
+    "cover",
+    "en vivo",
+    "instrumental",
+    "karaoke",
+    "live",
+    "remix",
+    "sped up",
+    "tribute",
+}
+
+
+def normalize_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", ascii_text.lower())).strip()
+
+
+def _token_overlap(expected: str, actual: str) -> float:
+    expected_tokens = set(normalize_text(expected).split())
+    actual_tokens = set(normalize_text(actual).split())
+    if not expected_tokens:
+        return 0.0
+    return len(expected_tokens & actual_tokens) / len(expected_tokens)
+
+
+def _variant_penalty(request: SpotifyRequest, candidate: SpotifyCandidate) -> float:
+    requested = normalize_text(request.raw)
+    observed = normalize_text(
+        f"{candidate.title} {candidate.subtitle} {candidate.artist}"
+    )
+    penalty = 0.0
+    for term in _VARIANT_TERMS:
+        normalized_term = normalize_text(term)
+        if normalized_term in observed and normalized_term not in requested:
+            penalty += 0.12
+    return min(penalty, 0.36)
+
+
+def score_candidate(request: SpotifyRequest, candidate: SpotifyCandidate) -> float:
+    expected_title = request.title or request.query
+    title = normalize_text(candidate.title)
+    title_sequence = SequenceMatcher(
+        None, normalize_text(expected_title), title
+    ).ratio()
+    title_tokens = _token_overlap(expected_title, candidate.title)
+    score = (title_sequence * 0.55) + (title_tokens * 0.25)
+
+    if request.artist:
+        artist_sequence = SequenceMatcher(
+            None,
+            normalize_text(request.artist),
+            normalize_text(candidate.artist),
+        ).ratio()
+        score += artist_sequence * 0.20
+        if artist_sequence < 0.45:
+            score -= 0.18
+    elif candidate.kind != "track":
+        score -= 0.20
+
+    return max(0.0, min(1.0, score - _variant_penalty(request, candidate)))
+
+
+def choose_candidate(
+    request: SpotifyRequest,
+    candidates: list[SpotifyCandidate],
+) -> MatchDecision:
+    ranked = sorted(
+        (replace(item, score=score_candidate(request, item)) for item in candidates),
+        key=lambda item: item.score,
+        reverse=True,
+    )
+    if not ranked or ranked[0].score < 0.55:
+        return MatchDecision(status=MatchStatus.NOT_FOUND)
+
+    best = ranked[0]
+    runner_up = ranked[1] if len(ranked) > 1 else None
+    same_title_different_artist = bool(
+        not request.artist
+        and runner_up
+        and normalize_text(best.title) == normalize_text(runner_up.title)
+        and normalize_text(best.artist) != normalize_text(runner_up.artist)
+    )
+    margin = best.score - (runner_up.score if runner_up else 0.0)
+    if best.score < 0.74 or margin < 0.07 or same_title_different_artist:
+        return MatchDecision(
+            status=MatchStatus.AMBIGUOUS,
+            alternatives=tuple(ranked[:3]),
+            confidence=best.score,
+        )
+    return MatchDecision(
+        status=MatchStatus.SELECTED,
+        selected=best,
+        confidence=best.score,
+    )
