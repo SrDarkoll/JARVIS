@@ -1,3 +1,4 @@
+from tools.spotify_desktop.controller import SpotifyDesktopController
 from tools.spotify_desktop.models import (
     AutomationState,
     DesktopResultStatus,
@@ -14,6 +15,7 @@ __all__ = [
     "MatchDecision",
     "MatchStatus",
     "SpotifyCandidate",
+    "SpotifyDesktopController",
     "SpotifyDesktopResult",
     "SpotifyRequest",
 ]
