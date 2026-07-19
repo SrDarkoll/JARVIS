@@ -61,6 +61,26 @@ def _read_float(
     return max(minimum, min(value, maximum))
 
 
+def _read_choice(
+    env: Mapping[str, str],
+    name: str,
+    default: str,
+    choices: set[str],
+) -> str:
+    value = str(env.get(name, default) or default).strip().lower()
+    return value if value in choices else default
+
+
+def resolve_spotify_playback_mode(env: Mapping[str, str] | None = None) -> str:
+    source = os.environ if env is None else env
+    return _read_choice(
+        source,
+        "SPOTIFY_PLAYBACK_MODE",
+        "auto",
+        {"auto", "api", "desktop"},
+    )
+
+
 def resolve_speech_to_text_config(
     env: Mapping[str, str] | None = None,
 ) -> SpeechToTextConfig:
@@ -165,6 +185,13 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "")
 SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
+SPOTIFY_PLAYBACK_MODE = resolve_spotify_playback_mode()
+SPOTIFY_DESKTOP_START_TIMEOUT = _read_float(
+    os.environ, "SPOTIFY_DESKTOP_START_TIMEOUT", 20.0, 5.0, 60.0
+)
+SPOTIFY_DESKTOP_ACTION_TIMEOUT = _read_float(
+    os.environ, "SPOTIFY_DESKTOP_ACTION_TIMEOUT", 8.0, 2.0, 30.0
+)
 SPOTIFY_MODO_SIMILARES = os.getenv("SPOTIFY_MODO_SIMILARES", "hybrid").strip().lower()
 SPOTIFY_AUTO_SHUFFLE = _read_bool(os.environ, "SPOTIFY_AUTO_SHUFFLE", False)
 SPOTIFY_EXTENDED_QUOTA_MODE = _read_bool(os.environ, "SPOTIFY_EXTENDED_QUOTA_MODE", False)

@@ -140,6 +140,29 @@ def test_spotipy_version_and_spotify_environment_contract():
     assert 'SPOTIFY_EXTENDED_QUOTA_MODE = _read_bool(' in config
 
 
+def test_spotify_desktop_mode_and_dependency_contract():
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    config = (ROOT / "src/backend/core/jarvis_config.py").read_text(encoding="utf-8")
+
+    assert 'SPOTIFY_PLAYBACK_MODE="auto"' in env_example
+    assert 'SPOTIFY_DESKTOP_START_TIMEOUT="20"' in env_example
+    assert 'SPOTIFY_DESKTOP_ACTION_TIMEOUT="8"' in env_example
+    assert 'pywinauto>=0.6.9,<0.7; sys_platform == "win32"' in requirements
+    assert "SPOTIFY_PLAYBACK_MODE = resolve_spotify_playback_mode()" in config
+    assert "SPOTIFY_DESKTOP_START_TIMEOUT = _read_float(" in config
+    assert "SPOTIFY_DESKTOP_ACTION_TIMEOUT = _read_float(" in config
+
+
+def test_spotify_playback_mode_rejects_unknown_values():
+    from core.jarvis_config import resolve_spotify_playback_mode
+
+    assert resolve_spotify_playback_mode({}) == "auto"
+    assert resolve_spotify_playback_mode({"SPOTIFY_PLAYBACK_MODE": "desktop"}) == "desktop"
+    assert resolve_spotify_playback_mode({"SPOTIFY_PLAYBACK_MODE": "api"}) == "api"
+    assert resolve_spotify_playback_mode({"SPOTIFY_PLAYBACK_MODE": "invalid"}) == "auto"
+
+
 def test_public_llm_configuration_is_groq_only():
     public_files = (
         ROOT / ".env.example",
