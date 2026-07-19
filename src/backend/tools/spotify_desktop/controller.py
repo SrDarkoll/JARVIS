@@ -150,6 +150,62 @@ class SpotifyDesktopController:
             states=tuple(states),
         )
 
+    def _try_visual_recovery(
+        self,
+        window,
+        request: SpotifyRequest,
+        generation: int,
+        states: list[AutomationState],
+    ) -> SpotifyDesktopResult | None:
+        if self._visual is None or not self._windows.is_foreground(window):
+            return None
+        try:
+            activated = self._visual.activate(
+                window.handle,
+                self._windows.bounds(window),
+                request.query,
+            )
+        except Exception as error:
+            self._logger.warning(
+                "spotify_visual_recovery_failed error_type=%s",
+                type(error).__name__,
+            )
+            return None
+        if not activated:
+            return None
+
+        states.extend(
+            [
+                AutomationState.SELECTING,
+                AutomationState.PLAYING,
+                AutomationState.VERIFYING,
+            ]
+        )
+        expected = SpotifyCandidate(
+            element_id="visual-recovery",
+            title=request.title or request.query,
+            artist=request.artist,
+        )
+        verified = self._verify(window, expected, generation)
+        if verified is None:
+            return self._cancelled_result(states)
+        if not verified:
+            states.append(AutomationState.FAILED)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                message_key="spotify_playback_not_verified",
+                states=tuple(states),
+            )
+
+        states.append(AutomationState.COMPLETE)
+        return SpotifyDesktopResult(
+            status=DesktopResultStatus.SUCCESS,
+            title=request.title,
+            artist=request.artist,
+            message_key="spotify_playback_started",
+            states=tuple(states),
+        )
+
     def play(self, request: SpotifyRequest) -> SpotifyDesktopResult:
         states = [AutomationState.IDLE]
         generation = self._next_generation()
@@ -180,7 +236,25 @@ class SpotifyDesktopController:
                 )
 
             states.append(AutomationState.SEARCHING)
-            self._uia.search(window.handle, request.query)
+            try:
+                self._uia.search(window.handle, request.query)
+            except RuntimeError as error:
+                if str(error) != "spotify_search_unavailable":
+                    raise
+                visual_result = self._try_visual_recovery(
+                    window,
+                    request,
+                    generation,
+                    states,
+                )
+                if visual_result is not None:
+                    return visual_result
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_search_unavailable",
+                    states=tuple(states),
+                )
             if self._cancelled(generation):
                 return self._cancelled_result(states)
 
@@ -188,6 +262,14 @@ class SpotifyDesktopController:
             if decision is None:
                 return self._cancelled_result(states)
             if decision.status is MatchStatus.NOT_FOUND:
+                visual_result = self._try_visual_recovery(
+                    window,
+                    request,
+                    generation,
+                    states,
+                )
+                if visual_result is not None:
+                    return visual_result
                 states.append(AutomationState.FAILED)
                 return SpotifyDesktopResult(
                     status=DesktopResultStatus.NOT_FOUND,

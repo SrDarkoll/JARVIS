@@ -97,6 +97,17 @@ def _foreground_window() -> int:
     return int(ctypes.windll.user32.GetForegroundWindow())
 
 
+def _window_bounds(handle: int) -> tuple[int, int, int, int]:
+    if not IS_WINDOWS:
+        raise OSError("spotify_desktop_windows_only")
+    rectangle = wintypes.RECT()
+    if not ctypes.windll.user32.GetWindowRect(
+        wintypes.HWND(handle), ctypes.byref(rectangle)
+    ):
+        raise OSError("spotify_window_bounds_unavailable")
+    return rectangle.left, rectangle.top, rectangle.right, rectangle.bottom
+
+
 class WindowsSpotifyWindowAdapter:
     def __init__(
         self,
@@ -106,6 +117,7 @@ class WindowsSpotifyWindowAdapter:
         start_client: Callable[[], None] = _start_spotify_client,
         focus_window: Callable[[int], bool] = _focus_window,
         foreground_window: Callable[[], int] = _foreground_window,
+        window_bounds: Callable[[int], tuple[int, int, int, int]] = _window_bounds,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval: float = 0.25,
@@ -115,6 +127,7 @@ class WindowsSpotifyWindowAdapter:
         self._start_client = start_client
         self._focus_window = focus_window
         self._foreground_window = foreground_window
+        self._window_bounds = window_bounds
         self._monotonic = monotonic
         self._sleep = sleep
         self._poll_interval = max(0.01, poll_interval)
@@ -153,6 +166,9 @@ class WindowsSpotifyWindowAdapter:
             if candidate.handle == window.handle and candidate.pid == window.pid:
                 return candidate.title
         return ""
+
+    def bounds(self, window: SpotifyWindow) -> tuple[int, int, int, int]:
+        return self._window_bounds(window.handle)
 
 
 _SEARCH_NAMES = {

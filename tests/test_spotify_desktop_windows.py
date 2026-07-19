@@ -110,6 +110,21 @@ def test_current_title_requires_same_process_and_handle():
     assert adapter.current_title(SpotifyWindow(handle=904, pid=42, title="Spotify")) == ""
 
 
+def test_bounds_are_read_for_the_verified_spotify_handle():
+    observed = []
+    adapter = WindowsSpotifyWindowAdapter(
+        process_ids=lambda: {42},
+        windows=lambda: [SpotifyWindow(handle=906, pid=42, title="Spotify")],
+        start_client=lambda: None,
+        focus_window=lambda _handle: True,
+        window_bounds=lambda handle: observed.append(handle) or (10, 20, 810, 620),
+    )
+    window = adapter.ensure_window(timeout=1)
+
+    assert adapter.bounds(window) == (10, 20, 810, 620)
+    assert observed == [906]
+
+
 class FakeControl:
     def __init__(self, *, name="", control_type="", children=None):
         self.name = name

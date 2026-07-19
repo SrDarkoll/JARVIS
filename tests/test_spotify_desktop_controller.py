@@ -8,6 +8,11 @@ from tools.spotify_desktop.models import (
     SpotifyRequest,
 )
 from tools.spotify_desktop.windows import SpotifyWindow
+from tools.spotify_desktop.visual import (
+    SpotifyVisualRecovery,
+    VisualTarget,
+    _visual_target_from_response,
+)
 
 
 class FakeClock:
@@ -39,6 +44,9 @@ class FakeWindowAdapter:
 
     def current_title(self, _window):
         return next(self.titles, "")
+
+    def bounds(self, _window):
+        return (0, 0, 100, 100)
 
 
 class FakeUIA:
@@ -85,13 +93,14 @@ def expected_candidate(element_id="expected"):
     )
 
 
-def make_controller(windows, uia, *, action_timeout=1, clock=None):
+def make_controller(windows, uia, *, action_timeout=1, clock=None, visual=None):
     options = {}
     if clock is not None:
         options = {"monotonic": clock.monotonic, "sleep": clock.sleep}
     return SpotifyDesktopController(
         windows,
         uia,
+        visual_recovery=visual,
         start_timeout=2,
         action_timeout=action_timeout,
         **options,
@@ -266,3 +275,124 @@ def test_controller_logs_state_and_duration_without_query(caplog):
     assert "final_state=complete" in output
     assert "duration_ms=" in output
     assert "No te apartes" not in output
+
+
+def test_visual_target_must_stay_inside_spotify_window(tmp_path):
+    recovery = SpotifyVisualRecovery(
+        scratch_dir=tmp_path,
+        capture=lambda _handle, path: path.write_bytes(b"png"),
+        analyze=lambda _path, _query: VisualTarget(10, 10, 20, 20, "expected"),
+        click=lambda _handle, _x, _y: True,
+    )
+
+    assert recovery.activate(700, (0, 0, 100, 100), "expected")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_visual_target_outside_window_is_rejected_and_deleted(tmp_path):
+    recovery = SpotifyVisualRecovery(
+        scratch_dir=tmp_path,
+        capture=lambda _handle, path: path.write_bytes(b"png"),
+        analyze=lambda _path, _query: VisualTarget(90, 90, 30, 30, "outside"),
+        click=lambda _handle, _x, _y: True,
+    )
+
+    assert not recovery.activate(700, (0, 0, 100, 100), "expected")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_visual_recovery_is_unavailable_without_analyzer(tmp_path):
+    recovery = SpotifyVisualRecovery(scratch_dir=tmp_path)
+    assert not recovery.available
+
+
+class VisionResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+def test_visual_response_parser_accepts_structured_json():
+    target = _visual_target_from_response(
+        VisionResponse(
+            '{"x": 10, "y": 20, "width": 30, "height": 40, "label": "track"}'
+        )
+    )
+    assert target == VisualTarget(10, 20, 30, 40, "track")
+
+
+def test_visual_response_parser_extracts_surrounded_json():
+    target = _visual_target_from_response(
+        VisionResponse('result: {"x": 1, "y": 2, "width": 3, "height": 4}')
+    )
+    assert target == VisualTarget(1, 2, 3, 4)
+
+
+def test_visual_response_parser_rejects_missing_fields_and_non_json():
+    assert _visual_target_from_response(VisionResponse('{"x": 1}')) is None
+    assert _visual_target_from_response(VisionResponse("no reliable match")) is None
+
+
+def test_negative_visual_geometry_never_clicks(tmp_path):
+    clicks = []
+    recovery = SpotifyVisualRecovery(
+        scratch_dir=tmp_path,
+        capture=lambda _handle, path: path.write_bytes(b"png"),
+        analyze=lambda _path, _query: VisualTarget(-1, 10, 20, 20, "expected"),
+        click=lambda _handle, x, y: clicks.append((x, y)) or True,
+    )
+
+    assert not recovery.activate(700, (0, 0, 100, 100), "expected")
+    assert clicks == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_visual_recovery_runs_only_after_search_layout_is_unavailable():
+    class SearchUnavailableUIA(FakeUIA):
+        def search(self, _handle, _query):
+            raise RuntimeError("spotify_search_unavailable")
+
+    class VisualRecovery:
+        def __init__(self):
+            self.calls = []
+
+        def activate(self, handle, bounds, query):
+            self.calls.append((handle, bounds, query))
+            return True
+
+    visual = VisualRecovery()
+    uia = SearchUnavailableUIA(
+        [],
+        now_playing=("No Te Apartes de M\u00ed", "Vicentico"),
+    )
+    result = make_controller(
+        FakeWindowAdapter(),
+        uia,
+        visual=visual,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert visual.calls == [(700, (0, 0, 100, 100), request().query)]
+
+
+def test_visual_recovery_does_not_hide_unrelated_programming_errors():
+    class BrokenUIA(FakeUIA):
+        def search(self, _handle, _query):
+            raise RuntimeError("unexpected layout bug")
+
+    class VisualRecovery:
+        def __init__(self):
+            self.called = False
+
+        def activate(self, _handle, _bounds, _query):
+            self.called = True
+            return True
+
+    visual = VisualRecovery()
+    result = make_controller(
+        FakeWindowAdapter(),
+        BrokenUIA([]),
+        visual=visual,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.FAILED
+    assert not visual.called
