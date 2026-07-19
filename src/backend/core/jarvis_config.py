@@ -28,6 +28,17 @@ class RuntimeFeatures:
     monitoring_enabled: bool
 
 
+@dataclass(frozen=True)
+class SpeechToTextConfig:
+    provider: str
+    groq_model: str
+    local_enabled: bool
+    local_model: str
+    local_device: str
+    local_compute_type: str
+    timeout_seconds: float
+
+
 def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     raw = env.get(name)
     if raw is None or not str(raw).strip():
@@ -38,6 +49,41 @@ def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _read_float(
+    env: Mapping[str, str], name: str, default: float, minimum: float, maximum: float
+) -> float:
+    try:
+        value = float(str(env.get(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def resolve_speech_to_text_config(
+    env: Mapping[str, str] | None = None,
+) -> SpeechToTextConfig:
+    source = os.environ if env is None else env
+    provider = str(source.get("JARVIS_STT_PROVIDER", "auto") or "auto").strip().lower()
+    if provider not in {"auto", "browser", "groq", "local"}:
+        provider = "auto"
+    return SpeechToTextConfig(
+        provider=provider,
+        groq_model=str(
+            source.get("JARVIS_GROQ_STT_MODEL", "whisper-large-v3-turbo")
+            or "whisper-large-v3-turbo"
+        ).strip(),
+        local_enabled=_read_bool(source, "JARVIS_LOCAL_STT_ENABLED", True),
+        local_model=str(source.get("JARVIS_WHISPER_MODEL", "medium") or "medium").strip(),
+        local_device=str(source.get("JARVIS_WHISPER_DEVICE", "cpu") or "cpu").strip(),
+        local_compute_type=str(
+            source.get("JARVIS_WHISPER_COMPUTE_TYPE", "int8") or "int8"
+        ).strip(),
+        timeout_seconds=_read_float(
+            source, "JARVIS_STT_TIMEOUT_SECONDS", 20.0, 5.0, 60.0
+        ),
+    )
 
 
 def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFeatures:
@@ -73,6 +119,7 @@ ROOT_DIR = _normalize_fs_path(os.path.dirname(SRC_DIR))
 
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
+SPEECH_TO_TEXT = resolve_speech_to_text_config()
 MODEL_PATH = os.path.join(ROOT_DIR, "models", "en_GB-northern_english_male-medium.onnx")
 SPOTIFY_CACHE = os.path.join(BASE_DIR, ".cache-jarvis")
 MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_jarvis.json")
