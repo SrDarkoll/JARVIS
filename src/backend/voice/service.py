@@ -49,6 +49,7 @@ from voice.pipeline import (
     transcribir_audio as _real_transcribir_audio,
 )
 from voice.state_machine import VoiceStage, normalize_stage
+from voice.transcription import TranscriptionResult
 from voice.voice_response import build_voice_debug as _response_build_voice_debug
 
 _UNVERIFIED_GUEST_PID = "guest_unverified"
@@ -318,6 +319,7 @@ _autorizar_por_biometria = None
 _revocar_autorizacion = None
 _activar_perfil_invitado = None
 _whisper_model = None
+_transcription_service = None
 _brain = None
 _obs_event = None
 _obs_snapshot = None
@@ -334,7 +336,7 @@ def _sync_runtime_globals(runtime) -> None:
     global _reserved_owner_aliases, _owner_similarity_override
     global _verificar_autorizacion, _autorizar_por_biometria
     global _revocar_autorizacion, _activar_perfil_invitado
-    global _whisper_model, _brain, _obs_event, _obs_snapshot
+    global _whisper_model, _transcription_service, _brain, _obs_event, _obs_snapshot
     global _reparar_unicode, _normalizar_tratamiento_admin, _time_mod
 
     _voice_id_motor = runtime._voice_id_motor
@@ -356,12 +358,47 @@ def _sync_runtime_globals(runtime) -> None:
     _revocar_autorizacion = runtime._revocar_autorizacion
     _activar_perfil_invitado = runtime._activar_perfil_invitado
     _whisper_model = runtime._whisper_model
+    _transcription_service = getattr(runtime, "_transcription_service", None)
     _brain = runtime._brain
     _obs_event = runtime._obs_event
     _obs_snapshot = runtime._obs_snapshot
     _reparar_unicode = runtime._reparar_unicode
     _normalizar_tratamiento_admin = runtime._normalizar_tratamiento_admin
     _time_mod = runtime._time_mod
+
+
+def _transcribe_command(
+    audio_bytes: bytes,
+    transcript_hint: str,
+    transcript_confidence,
+    *,
+    route_mode: str,
+    language: str,
+) -> TranscriptionResult:
+    if _transcription_service is not None:
+        return _transcription_service.transcribe(
+            audio_bytes,
+            transcript_hint,
+            transcript_confidence,
+            route_mode=route_mode,
+            language=language,
+        )
+
+    text = _capture_transcribir_dudoso(
+        audio_bytes,
+        transcript_hint=transcript_hint,
+        whisper_model=_whisper_model,
+        transcript_confidence=transcript_confidence,
+        route_mode=route_mode,
+    )
+    normalized_hint = _norm_hint(transcript_hint)
+    if not text:
+        source = "unavailable"
+    elif normalized_hint and _norm_hint(text) == normalized_hint:
+        source = "browser"
+    else:
+        source = "local"
+    return TranscriptionResult(text, source)
 
 def _voice_is_english() -> bool:
     return get_current_language().startswith("en")
@@ -667,6 +704,12 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
     body = dict(payload or {})
     source = str(body.get("identity_source") or voice_debug.get("identity_source") or "unknown")
     body["identity_source"] = source
+    transcription_source = str(
+        body.get("transcription_source")
+        or voice_debug.get("transcription_source")
+        or "unavailable"
+    )
+    body["transcription_source"] = transcription_source
     profile_out = str(body.get("profile_id") or voice_debug.get("profile_id") or "")
     nombre_out = str(body.get("nombre") or voice_debug.get("nombre") or "")
     sim_out = _to_float_safe(voice_debug.get("similarity"), 0.0)
@@ -690,6 +733,7 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
         "transcript_confidence": round(
             _to_float_safe(voice_debug.get("transcript_confidence"), -1.0), 3
         ),
+        "transcription_source": transcription_source,
         "identify_decision": voice_debug.get("identify_decision") or "",
         "top_profile_id": voice_debug.get("top_profile_id") or "",
         "top_nombre": voice_debug.get("top_nombre") or "",
@@ -710,6 +754,7 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
         conversion_ok=bool(voice_debug.get("conversion_ok")),
         route_mode=voice_debug.get("route_mode") or "",
         route_reason=voice_debug.get("route_reason") or "",
+        transcription_source=transcription_source,
         identify_decision=voice_debug.get("identify_decision") or "",
         transcript=(voice_debug.get("transcript") or "")[:200],
     )
@@ -772,6 +817,7 @@ def _build_voice_debug(
         "top_similarity": 0.0,
         "top2_gap": 0.0,
         "transcript": "",
+        "transcription_source": "unavailable",
     }
 
 
@@ -1045,15 +1091,18 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
 
     _set_voice_identity(source=identity_source, profile=profile_id, display_name=nombre, similarity_value=similitud)
 
-    # Transcribir (with Dudoso shim)
-    texto = _capture_transcribir_dudoso(
+    transcription = _transcribe_command(
         wav_purificado,
-        transcript_hint=transcript_hint,
-        whisper_model=_whisper_model,
-        transcript_confidence=transcript_confidence,
+        transcript_hint,
+        transcript_confidence,
         route_mode=route_hint.get("mode") or "secure",
+        language=get_active_whisper_language(),
     )
+    texto = transcription.text
     voice_debug["transcript"] = str(texto or "")
+    voice_debug["transcription_source"] = str(
+        transcription.source or "unavailable"
+    )
     if not texto:
         _set_voice_identity("transcription_empty", similarity_value=0.0)
         return _voice_response({"response": "I couldn't hear you clearly.", "should_listen": True})

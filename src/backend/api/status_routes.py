@@ -27,6 +27,7 @@ memory_lock = None
 _profile_memory = None
 _proactive_snapshot = None
 _monitoring_snapshot = None
+_transcription_snapshot = None
 
 
 class StatusRoutesConfig:
@@ -43,6 +44,7 @@ class StatusRoutesConfig:
         profile_memory,
         proactive_snapshot_fn,
         monitoring_snapshot_fn=None,
+        transcription_snapshot_fn=None,
     ):
         self.services = services
         self.reminders_lock = reminders_lock
@@ -55,12 +57,14 @@ class StatusRoutesConfig:
         self.profile_memory = profile_memory
         self.proactive_snapshot_fn = proactive_snapshot_fn
         self.monitoring_snapshot_fn = monitoring_snapshot_fn
+        self.transcription_snapshot_fn = transcription_snapshot_fn
 
 
 def init_status_routes(config: StatusRoutesConfig):
     global _services, reminders_lock, SECURITY_POLICY
     global PROACTIVE_STATE, PROACTIVE_LOCK, PLUGINS_DIR, DEFAULT_PROFILE_ID, memory_lock
     global _profile_memory, _proactive_snapshot, _monitoring_snapshot
+    global _transcription_snapshot
     _services = config.services
     reminders_lock = config.reminders_lock
     SECURITY_POLICY = config.security_policy
@@ -72,6 +76,7 @@ def init_status_routes(config: StatusRoutesConfig):
     _profile_memory = config.profile_memory
     _proactive_snapshot = config.proactive_snapshot_fn
     _monitoring_snapshot = config.monitoring_snapshot_fn
+    _transcription_snapshot = config.transcription_snapshot_fn
 
 
 def _monitoring_status() -> dict[str, bool]:
@@ -89,6 +94,22 @@ def _monitoring_status() -> dict[str, bool]:
     except Exception as exc:
         log_warning("monitoring_status_failed", error=type(exc).__name__)
     return status
+
+
+def _speech_to_text_status() -> dict:
+    fallback = {
+        "provider": "auto",
+        "groq_configured": False,
+        "local_enabled": False,
+        "local_state": "unavailable",
+    }
+    if not callable(_transcription_snapshot):
+        return fallback
+    try:
+        return {**fallback, **(_transcription_snapshot() or {})}
+    except Exception as exc:
+        log_warning("transcription_status_failed", error=type(exc).__name__)
+        return fallback
 
 
 @status_bp.route("/api/status", methods=["GET"])
@@ -109,6 +130,7 @@ def api_status():
                 "monitoring_available": monitoring["available"],
                 "monitoring_running": monitoring["running"],
             },
+            "speech_to_text": _speech_to_text_status(),
             "profile": jarvis_state.get_active_profile_id(),
             "heartbeat": jarvis_state.heartbeat_state.get("last_pulse", 0),
         }

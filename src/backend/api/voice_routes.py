@@ -87,6 +87,7 @@ _autorizar_por_biometria = _authorize_by_biometrics
 _revocar_autorizacion = _revoke_authorization
 _activar_perfil_invitado = _activate_guest_profile
 _whisper_model = None
+_transcription_service = None
 _brain = None
 _obs_event = None
 _obs_snapshot = None
@@ -117,6 +118,7 @@ class VoiceRoutesConfig:
         revoke_authorization,
         activate_guest_profile,
         whisper_model,
+        transcription_service,
         brain,
         obs_event,
         obs_snapshot,
@@ -143,6 +145,7 @@ class VoiceRoutesConfig:
         self.revoke_authorization = revoke_authorization
         self.activate_guest_profile = activate_guest_profile
         self.whisper_model = whisper_model
+        self.transcription_service = transcription_service
         self.brain = brain
         self.obs_event = obs_event
         self.obs_snapshot = obs_snapshot
@@ -159,7 +162,7 @@ def init_voice_routes(config: VoiceRoutesConfig):
     global _reserved_owner_aliases, _owner_similarity_override
     global _verify_authorization, _authorize_by_biometrics
     global _revoke_authorization, _activate_guest_profile
-    global _whisper_model, _brain, _obs_event, _obs_snapshot
+    global _whisper_model, _transcription_service, _brain, _obs_event, _obs_snapshot
     global _reparar_unicode, _normalizar_tratamiento_admin, _time_mod
     _voice_id_motor = config.voice_id_motor
     _biometrics_enabled = config.biometrics_enabled
@@ -188,6 +191,7 @@ def init_voice_routes(config: VoiceRoutesConfig):
     globals()["_revocar_autorizacion"] = _revoke_authorization
     globals()["_activar_perfil_invitado"] = _activate_guest_profile
     _whisper_model = config.whisper_model
+    _transcription_service = config.transcription_service
     _brain = config.brain
     _obs_event = config.obs_event
     _obs_snapshot = config.obs_snapshot

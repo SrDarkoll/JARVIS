@@ -52,6 +52,7 @@ def build_voice_debug(
         "top_similarity": 0.0,
         "top2_gap": 0.0,
         "transcript": "",
+        "transcription_source": "unavailable",
     }
 
 

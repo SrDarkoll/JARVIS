@@ -152,3 +152,39 @@ def test_lazy_whisper_loads_once_for_concurrent_requests(tmp_path):
     assert texts == ["local text"] * 4
     assert loads == [("tiny", "cpu", "int8")]
     assert local.snapshot()["state"] == "loaded"
+
+
+def test_voice_service_uses_transcription_coordinator_for_empty_hint(monkeypatch):
+    from voice import service as voice_service
+    from voice.transcription import TranscriptionResult
+
+    calls = []
+
+    class Coordinator:
+        def transcribe(
+            self, audio_bytes, transcript_hint, transcript_confidence, **kwargs
+        ):
+            calls.append((audio_bytes, transcript_hint, transcript_confidence, kwargs))
+            return TranscriptionResult("backend transcript", "groq")
+
+    monkeypatch.setattr(voice_service, "_transcription_service", Coordinator())
+    result = voice_service._transcribe_command(
+        b"wav", "", None, route_mode="secure", language="en"
+    )
+
+    assert result == TranscriptionResult("backend transcript", "groq")
+    assert calls[0][1] == ""
+
+
+def test_transcription_snapshot_contains_no_api_key():
+    from core.jarvis_config import resolve_speech_to_text_config
+    from voice.transcription import build_transcription_coordinator
+
+    coordinator = build_transcription_coordinator(
+        resolve_speech_to_text_config({}), "gsk_secret_value", "."
+    )
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["provider"] == "auto"
+    assert snapshot["groq_configured"] is True
+    assert "gsk_secret_value" not in repr(snapshot)

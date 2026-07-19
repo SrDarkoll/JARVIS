@@ -80,6 +80,7 @@ from utils.jarvis_auth import (
 from utils.jarvis_i18n import get_current_language
 from utils.jarvis_text import normalizar_tratamiento_admin, reparar_unicode
 from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
+from voice.transcription import build_transcription_coordinator
 
 # SAFE IMPORT OF BIOMETRICS
 try:
@@ -357,6 +358,11 @@ def _build_tts_engine():
 
 tts_engine = _build_tts_engine()
 whisper_model = None
+transcription_service = build_transcription_coordinator(
+    jarvis_config.SPEECH_TO_TEXT,
+    jarvis_config.GROQ_API_KEY,
+    os.getenv("JARVIS_RUNTIME_DIR") or jarvis_config.BASE_DIR,
+)
 
 
 def _warn_once(key: str, err: Exception | str) -> None:
@@ -703,6 +709,7 @@ init_voice_routes(
         _revoke_authorization,
         _activate_guest_profile,
         whisper_model,
+        transcription_service,
         jarvis_brain,
         obs_event,
         obs_snapshot,
@@ -724,6 +731,7 @@ init_status_routes(
         _profiles_memory,
         _proactive_snapshot,
         monitoring_service.snapshot,
+        transcription_service.snapshot,
     )
 )
 init_language_routes(

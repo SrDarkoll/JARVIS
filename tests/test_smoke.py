@@ -280,6 +280,19 @@ def test_status_endpoint_reports_runtime_mode():
     assert data["features"]["monitoring"] is False
     assert isinstance(data["features"]["monitoring_available"], bool)
     assert data["features"]["monitoring_running"] is False
+    assert data["speech_to_text"]["provider"] in {
+        "auto",
+        "browser",
+        "groq",
+        "local",
+    }
+    assert isinstance(data["speech_to_text"]["groq_configured"], bool)
+    assert data["speech_to_text"]["local_state"] in {
+        "not_loaded",
+        "loaded",
+        "disabled",
+        "unavailable",
+    }
 
 
 def test_noticias_endpoint_returns_202_when_not_ready():
