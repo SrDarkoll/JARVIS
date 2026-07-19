@@ -4,9 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.0.1">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -138,41 +138,12 @@
                     <div class="decor-line"></div>
                 </div>
 
-                <section id="operator-console" class="operator-console tech-glass" aria-live="polite">
-                    <div class="operator-console-header">
-                        <span class="operator-title" data-i18n="operator_center_title">MISSION CENTER</span>
-                        <strong id="operator-mode-label" class="operator-mode" data-i18n="operator_syncing">SYNCING</strong>
+                <section id="conversation-panel" class="conversation-panel tech-glass" aria-live="polite">
+                    <div class="conversation-header">
+                        <span class="conversation-title" data-i18n="conversation_panel_title">CONVERSATION</span>
                     </div>
-                    <div class="operator-console-grid">
-                        <div class="operator-mission-node">
-                            <div class="operator-kicker" data-i18n="operator_active_mission">ACTIVE MISSION</div>
-                            <div id="operator-mission-title" class="operator-mission-title" data-i18n="operator_no_active_mission">No active mission</div>
-                            <div class="operator-progress-track">
-                                <div id="operator-mission-progress-bar" class="operator-progress-fill" style="width: 0%;"></div>
-                            </div>
-                            <div id="operator-mission-meta" class="operator-meta-line" data-i18n="operator_zero_steps">0 steps prepared</div>
-                            <div id="operator-steps" class="operator-steps custom-scrollbar">
-                                <span class="operator-empty" data-i18n="operator_empty_steps">Waiting for supervised plan.</span>
-                            </div>
-                        </div>
-                        <div class="operator-state-node">
-                            <div class="operator-state-row">
-                                <span data-i18n="operator_profile">PROFILE</span>
-                                <strong id="operator-profile-label">--</strong>
-                            </div>
-                            <div class="operator-state-row">
-                                <span data-i18n="operator_memory">MEMORY</span>
-                                <strong id="operator-memory-count">--</strong>
-                            </div>
-                            <div class="operator-state-row">
-                                <span data-i18n="operator_guard">GUARD</span>
-                                <strong id="operator-guard-summary">--</strong>
-                            </div>
-                            <div class="operator-state-row">
-                                <span data-i18n="operator_audit">AUDIT</span>
-                                <strong id="operator-audit-count">--</strong>
-                            </div>
-                        </div>
+                    <div id="conversation-segments" class="conversation-segments custom-scrollbar">
+                        <div class="conversation-empty" data-i18n="conversation_empty">Conversation segments will appear here.</div>
                     </div>
                 </section>
 
@@ -247,7 +218,6 @@
         </footer>
     </main>
 
-    <script defer src="{{ url_for('static', filename='vendor/three.min.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 

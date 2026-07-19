@@ -4,35 +4,52 @@ Consolidado para usar ServiceContainer. inject_dependencies ahora mapea a 'servi
 """
 
 from core.service_container import services
-from tools.search import buscar_en_internet
-from tools.browser import (
-    abrir_navegador, navegar_en_navegador,
-    click_en_navegador, escribir_en_navegador,
-    leer_pagina_navegador, cerrar_navegador_playwright,
-    abrir_youtube,
+
+from tools.action_plan import (
+    crear_plan_acciones,
+    ejecutar_plan_acciones,
+    ver_plan_acciones,
 )
-from tools.spotify import reproducir_en_spotify, reproducir_mix_spotify, controlar_reproduccion
-from tools.system import (
-    ajustar_volumen, modo_no_molestar, controlar_pc,
-    abrir_aplicacion, ver_procesos_pesados, matar_proceso,
-    borrar_memoria,
+from tools.browser import (
+    abrir_navegador,
+    abrir_youtube,
+    cerrar_navegador_playwright,
+    click_en_navegador,
+    escribir_en_navegador,
+    leer_pagina_navegador,
+    navegar_en_navegador,
 )
 from tools.desktop_control import (
-    listar_ventanas, enfocar_ventana, controlar_ventana,
+    controlar_ventana,
+    enfocar_ventana,
+    listar_ventanas,
 )
-from tools.action_plan import (
-    crear_plan_acciones, ver_plan_acciones, ejecutar_plan_acciones,
+from tools.search import buscar_en_internet
+from tools.spotify import controlar_reproduccion, reproducir_en_spotify, reproducir_mix_spotify
+from tools.system import (
+    abrir_aplicacion,
+    ajustar_volumen,
+    borrar_memoria,
+    controlar_pc,
+    matar_proceso,
+    modo_no_molestar,
+    ver_procesos_pesados,
 )
 from tools.utilities import (
-    obtener_clima, obtener_partidos_nba,
-    poner_recordatorio, leer_archivo,
-    frase_motivacional, analizar_pantalla,
-    recargar_plugins, ejecutar_rutina,
+    analizar_pantalla,
+    ejecutar_rutina,
+    frase_motivacional,
+    leer_archivo,
+    obtener_clima,
+    obtener_deportes_espn,
+    poner_recordatorio,
+    recargar_plugins,
 )
+
 
 def _get_base_tools_impl():
     return [
-        buscar_en_internet, obtener_partidos_nba, obtener_clima,
+        buscar_en_internet, obtener_deportes_espn, obtener_clima,
         abrir_navegador, navegar_en_navegador, click_en_navegador,
         escribir_en_navegador, leer_pagina_navegador, cerrar_navegador_playwright,
         abrir_youtube, leer_archivo, poner_recordatorio,

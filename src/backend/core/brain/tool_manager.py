@@ -1,16 +1,17 @@
+import importlib.util
 import os
 import time as _time
-import importlib.util
-from datetime import datetime
-from typing import Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor
-from langchain_core.tools import tool
+from datetime import datetime
+from typing import Any
+
 import requests as http_requests
-from core.brain import brain_state, brain_utils
-from core.jarvis_observability import obs_event, obs_inc, obs_tool
-from core.jarvis_config import PLUGINS_DIR, BASE_DIR, SRC_DIR, ROOT_DIR, AUTOCURACION_ACTIVA
-from services import security_manager
 from core import jarvis_state
+from core.brain import brain_state, brain_utils
+from core.jarvis_config import AUTOCURACION_ACTIVA, BASE_DIR, PLUGINS_DIR, ROOT_DIR, SRC_DIR
+from core.jarvis_observability import obs_event, obs_inc, obs_tool
+from langchain_core.tools import tool
+from services import security_manager
 from tools._common import _open_url_or_app
 
 # Pool global para ejecución paralela de herramientas
@@ -308,7 +309,7 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
 
 def _intentar_autocuracion(
     tool_name: str, args: dict, user_input: str, motivo: str = ""
-) -> Optional[str]:
+) -> str | None:
     obs_inc("autocure_attempts", 1)
     obs_event("autocure_attempt", tool=tool_name, args=args, motivo=(motivo or "")[:200])
     try:

@@ -41,11 +41,12 @@ class TestSecurityPolicyDefaults:
         assert isinstance(defaults["safe_apps"], list)
 
     def test_proactive_state_defaults(self):
+        from core import jarvis_config
         from services import security_manager
 
         state = security_manager.PROACTIVE_STATE
-        assert state["enabled"] is True
-        assert state["cooldown_seconds"] == 600
+        assert state["enabled"] is bool(jarvis_config.PROACTIVE_ACTIVO)
+        assert state["cooldown_seconds"] == jarvis_config.PROACTIVE_COOLDOWN
         assert isinstance(state["alerts"], list)
         assert isinstance(state["tool_errors_window"], list)
 
@@ -84,6 +85,25 @@ class TestSecurityGuard:
                 assert allowed is True
                 assert reason == ""
 
+    def test_security_guard_requires_explicit_confirmation_even_when_authorized(self, mock_security_deps):
+        with patch.object(mock_security_deps, "SECURITY_POLICY", {"blocked_tools": [], "strict_mode": False}):
+            with patch.object(mock_security_deps, "verificar_autorizacion", lambda pid: True):
+                allowed, reason = mock_security_deps._security_guard(
+                    "controlar_pc", {}, "shutdown", "llm_loop", profile_id="admin"
+                )
+                assert allowed is False
+                assert "confirmacion" in reason.lower()
+
+                allowed_confirmed, reason_confirmed = mock_security_deps._security_guard(
+                    "controlar_pc",
+                    {"el_usuario_ya_confirmo": True},
+                    "shutdown",
+                    "llm_loop",
+                    profile_id="admin",
+                )
+                assert allowed_confirmed is True
+                assert reason_confirmed == ""
+
     def test_security_guard_strict_mode_domain_block(self, mock_security_deps):
         with patch.object(mock_security_deps, "SECURITY_POLICY", {
             "strict_mode": True,
@@ -118,6 +138,36 @@ class TestSecuritySnapshot:
                 assert "policy" in snap
                 assert "state" in snap
                 assert "tool_policies" in snap
+
+
+class TestQuickControlActions:
+    def test_quick_control_toggles_security_strict_mode(self, mock_security_deps):
+        policy = dict(mock_security_deps.SECURITY_POLICY_DEFAULT)
+        policy["strict_mode"] = False
+        policy_path = os.path.join(os.environ["JARVIS_RUNTIME_DIR"], "quick_policy.json")
+        with patch.object(mock_security_deps, "SECURITY_POLICY", policy):
+            with patch.object(mock_security_deps, "SECURITY_POLICY_FILE", policy_path):
+                result = mock_security_deps._ejecutar_accion_control("security_strict_toggle")
+
+        assert "enabled" in result.lower()
+        assert policy["strict_mode"] is True
+
+    def test_quick_control_invokes_routine_tools(self, mock_security_deps, monkeypatch):
+        calls = []
+
+        def fake_entry(tool_name, args, user_input, source="unknown", profile_id=None):
+            calls.append((tool_name, args, user_input, source, profile_id))
+            return "rutina ok"
+
+        import core.brain.tool_manager as tool_manager
+
+        monkeypatch.setattr(tool_manager, "_invocar_tool_entry", fake_entry)
+        result = mock_security_deps._ejecutar_accion_control("rutina_trabajo")
+
+        assert result == "rutina ok"
+        assert calls == [
+            ("ejecutar_rutina", {"nombre": "trabajo"}, "panel rutina_trabajo", "control_panel", None)
+        ]
 
 
 class TestSecurityNormalizePolicy:
@@ -175,19 +225,20 @@ class TestSecurityDomainAllowed:
 
 
 class TestLoadSaveSecurityPolicy:
-    def test_load_security_policy_uses_default_when_file_missing(self, mock_security_deps, tmp_path):
-        nonexistent = tmp_path / "nonexistent.json"
-        with patch.object(mock_security_deps, "SECURITY_POLICY_FILE", str(nonexistent)):
+    def test_load_security_policy_uses_default_when_file_missing(self, mock_security_deps):
+        nonexistent = os.path.join(os.environ["JARVIS_RUNTIME_DIR"], "nonexistent_policy.json")
+        with patch.object(mock_security_deps, "SECURITY_POLICY_FILE", nonexistent):
             mock_security_deps._load_security_policy()
             policy = mock_security_deps.SECURITY_POLICY
             assert policy.get("strict_mode") is False
             assert "google.com" in policy.get("allowed_web_domains", [])
 
-    def test_load_security_policy_valid_file(self, mock_security_deps, tmp_path):
-        policy_file = tmp_path / "policy.json"
-        policy_file.write_text('{"strict_mode": true, "blocked_tools": ["test_tool"]}')
+    def test_load_security_policy_valid_file(self, mock_security_deps):
+        policy_file = os.path.join(os.environ["JARVIS_RUNTIME_DIR"], "policy.json")
+        with open(policy_file, "w", encoding="utf-8") as f:
+            f.write('{"strict_mode": true, "blocked_tools": ["test_tool"]}')
 
-        with patch.object(mock_security_deps, "SECURITY_POLICY_FILE", str(policy_file)):
+        with patch.object(mock_security_deps, "SECURITY_POLICY_FILE", policy_file):
             mock_security_deps._load_security_policy()
             assert mock_security_deps.SECURITY_POLICY["strict_mode"] is True
             assert "test_tool" in mock_security_deps.SECURITY_POLICY["blocked_tools"]

@@ -1,8 +1,12 @@
-import os, json, re, threading, time as _time
+import json
+import os
+import threading
+import time as _time
+from datetime import datetime
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
 
 from core.jarvis_context import context
+from core import jarvis_config
 from core.security.tool_policy import evaluate_tool_policy, export_tool_policy_table
 
 # DEPENDENCY INJECTION
@@ -58,8 +62,8 @@ SECURITY_POLICY = {}
 SECURITY_STATE = {}
 SECURITY_LOCK = threading.RLock()
 PROACTIVE_STATE = {
-    "enabled": True,
-    "cooldown_seconds": 600,
+    "enabled": bool(jarvis_config.PROACTIVE_ACTIVO),
+    "cooldown_seconds": int(jarvis_config.PROACTIVE_COOLDOWN),
     "alerts": [],
     "last_health_check": "",
     "tool_errors_window": [],
@@ -176,7 +180,7 @@ def _load_security_policy():
     loaded = {}
     if os.path.exists(SECURITY_POLICY_FILE):
         try:
-            with open(SECURITY_POLICY_FILE, "r", encoding="utf-8") as f:
+            with open(SECURITY_POLICY_FILE, encoding="utf-8") as f:
                 loaded = json.load(f) or {}
         except Exception as e:
             print(f"[SECURITY] Could not read policy: {e}")
@@ -243,7 +247,7 @@ def _security_tail(limit: int = 60) -> list[dict]:
     if not os.path.exists(SECURITY_AUDIT_FILE):
         return []
     try:
-        with open(SECURITY_AUDIT_FILE, "r", encoding="utf-8") as f:
+        with open(SECURITY_AUDIT_FILE, encoding="utf-8") as f:
             lines = f.readlines()[-max(1, int(limit)) :]
         out = []
         for line in lines:
@@ -376,8 +380,9 @@ def _security_guard(
     confirmed = bool(
         (args or {}).get("_confirmed")
         or (args or {}).get("confirmed")
+        or (args or {}).get("confirmar")
+        or (args or {}).get("el_usuario_ya_confirmo")
         or str(source or "").lower() in {"control_panel", "auth_resume"}
-        or authorized
     )
     decision = evaluate_tool_policy(
         tool_name,
@@ -498,7 +503,7 @@ def _proactive_register_tool_error(tool_name: str, error_text: str):
         same_tool = sum(1 for x in win if x.get("tool") == tool_name)
 
     with SECURITY_LOCK:
-        threshold = int((SECURITY_POLICY.get("max_tool_errors_5m") or 12))
+        threshold = int(SECURITY_POLICY.get("max_tool_errors_5m") or 12)
     threshold = max(3, min(threshold, 100))
 
     if total_5m >= threshold:
@@ -569,4 +574,59 @@ def _actualizar_security_policy(payload: dict) -> dict:
 
 
 def _ejecutar_accion_control(action: str) -> str:
-    act = (action or "").strip
+    act = (action or "").strip().lower()
+    if not act:
+        return "No quick action specified."
+
+    if act == "reload_plugins":
+        if callable(_recargar_plugins_runtime):
+            return str(_recargar_plugins_runtime())
+        return "Plugin system is not initialized."
+
+    if act == "security_strict_toggle":
+        enabled = not bool(SECURITY_POLICY.get("strict_mode", False))
+        _actualizar_security_policy({"strict_mode": enabled})
+        return f"Strict security mode {'enabled' if enabled else 'disabled'}."
+
+    if act == "proactive_toggle":
+        with PROACTIVE_LOCK:
+            enabled = not bool(PROACTIVE_STATE.get("enabled", True))
+            PROACTIVE_STATE["enabled"] = enabled
+        return f"Proactive monitoring {'enabled' if enabled else 'disabled'}."
+
+    routine_map = {
+        "rutina_trabajo": "trabajo",
+        "rutina_gaming": "gaming",
+        "rutina_buenos_dias": "buenos dias",
+    }
+    if act in routine_map:
+        try:
+            from core.brain.tool_manager import _invocar_tool_entry
+
+            return str(
+                _invocar_tool_entry(
+                    "ejecutar_rutina",
+                    {"nombre": routine_map[act]},
+                    f"panel {act}",
+                    source="control_panel",
+                )
+            )
+        except Exception as exc:
+            return f"I could not execute routine '{routine_map[act]}'. Error: {exc}"
+
+    if act == "analizar_pantalla":
+        try:
+            from core.brain.tool_manager import _invocar_tool_entry
+
+            return str(
+                _invocar_tool_entry(
+                    "analizar_pantalla",
+                    {},
+                    "panel analizar_pantalla",
+                    source="control_panel",
+                )
+            )
+        except Exception as exc:
+            return f"I could not analyze the screen. Error: {exc}"
+
+    return f"Unknown quick action: {act}"

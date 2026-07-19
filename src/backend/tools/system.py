@@ -3,13 +3,25 @@ Herramientas de control del sistema: PC, aplicaciones, volumen, procesos.
 Optimizado para Windows con hooks de preparación para Linux/OS-Agnostic.
 """
 
-import os, re, subprocess, sys
+import os
+import re
+import subprocess
+import sys
+
 import psutil
-from langchain_core.tools import tool
-from utils.jarvis_auth import verificar_autorizacion
-from tools._common import _normalizar_profile_id, jarvis_state, memoria_lock, _perfiles_memoria, MEMORIA_FILE, MEMORIA_PROFILES_FILE
 from core.service_container import services
+from langchain_core.tools import tool
 from services import security_manager
+from utils.jarvis_auth import verificar_autorizacion
+
+from tools._common import (
+    MEMORIA_FILE,
+    MEMORIA_PROFILES_FILE,
+    _normalizar_profile_id,
+    _perfiles_memoria,
+    jarvis_state,
+    memoria_lock,
+)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -19,9 +31,10 @@ IS_WINDOWS = sys.platform == "win32"
 _VOL_AVAILABLE = False
 try:
     if IS_WINDOWS:
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-        from comtypes import CLSCTX_ALL, CoInitialize
         from ctypes import POINTER, cast
+
+        from comtypes import CLSCTX_ALL, CoInitialize
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
         _VOL_AVAILABLE = True
 except ImportError:
     _VOL_AVAILABLE = False

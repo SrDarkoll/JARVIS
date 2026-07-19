@@ -3,9 +3,13 @@ Helpers compartidos por todos los sub-módulos de tools.
 Consolidado para usar ServiceContainer exclusivamente.
 """
 
-import os, re, sys, unicodedata
-from core.service_container import services
+import os
+import re
+import sys
+import unicodedata
+
 from core import jarvis_state
+from core.service_container import services
 
 IS_WINDOWS = sys.platform == "win32"
 

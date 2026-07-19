@@ -1,11 +1,15 @@
-import json
-import traceback
 import asyncio
-from quart import Blueprint, request, jsonify, Response
+import json
+import time
+
 from core import jarvis_brain
-from core.jarvis_observability import obs_event, obs_inc
-from utils.jarvis_text import normalizar_tratamiento_admin
-from langchain_core.messages import HumanMessage
+from core.errors import (
+    CHAT_UNAVAILABLE_MESSAGE,
+    LLM_UNCONFIGURED_MESSAGE,
+    LLMUnavailableError,
+)
+from core.jarvis_observability import obs_event
+from quart import Blueprint, Response, jsonify, request
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -29,6 +33,67 @@ def init_chat_routes(config: ChatRoutesConfig):
     chat_limit_seconds = config.chat_limit_seconds
 
 
+def _rate_limit_response(ip: str, bucket: str):
+    if _ip_last_call is None or _ip_last_call_lock is None or chat_limit_seconds is None:
+        return None
+    key = (ip.lower().strip(), bucket)
+    now = time.time()
+    with _ip_last_call_lock:
+        last = _ip_last_call.get(key, 0.0)
+        elapsed = now - last
+        if elapsed < chat_limit_seconds:
+            return jsonify(
+                {
+                    "error": "Too many requests",
+                    "retry_after": round(
+                        max(0.0, chat_limit_seconds - elapsed),
+                        3,
+                    ),
+                }
+            ), 429
+        _ip_last_call[key] = now
+    return None
+
+
+async def _read_json_payload():
+    data = await request.get_json(silent=True)
+    if data is None:
+        raw_body = await request.get_data(cache=True)
+        if raw_body and raw_body.strip():
+            return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+        return {}, None
+    if not isinstance(data, dict):
+        return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+    return data, None
+
+
+def _llm_unconfigured_response():
+    return jsonify(
+        {
+            "error": "llm_unconfigured",
+            "message": LLM_UNCONFIGURED_MESSAGE,
+        }
+    ), 503
+
+
+def _chat_unavailable_response():
+    return jsonify(
+        {
+            "error": "chat_unavailable",
+            "message": CHAT_UNAVAILABLE_MESSAGE,
+        }
+    ), 503
+
+
+def _sse_error(code: str, message: str) -> str:
+    event = {
+        "type": "error",
+        "code": code,
+        "message": message,
+    }
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
 @chat_bp.route("/api/chat", methods=["GET", "POST"])
 async def api_chat():
     if request.method == "GET":
@@ -40,21 +105,18 @@ async def api_chat():
         ), 405
 
     try:
-        data = await request.get_json(force=True)
-        user_input = data.get("message", "")
+        data, payload_error = await _read_json_payload()
+        if payload_error:
+            return payload_error
+        user_input = (data.get("message") or "").strip()
         if not user_input:
             return jsonify({"error": "No message"}), 400
+        if len(user_input) > 4000:
+            return jsonify({"error": "Message too large"}), 413
         ip = request.remote_addr or "unknown"
-        key = (ip.lower().strip(), "chat")
-        now = __import__("time").time()
-        with _ip_last_call_lock:
-            last = _ip_last_call.get(key, 0.0)
-            elapsed = now - last
-            if elapsed < chat_limit_seconds:
-                return jsonify(
-                    {"error": "Too many requests", "retry_after": round(max(0.0, chat_limit_seconds - elapsed), 3)}
-                ), 429
-            _ip_last_call[key] = now
+        limited = _rate_limit_response(ip, "chat")
+        if limited:
+            return limited
         print(f"\n[LORD] {user_input}")
         profile_id = (data.get("profile_id") or "web_default").strip()
         obs_event(
@@ -76,43 +138,41 @@ async def api_chat():
             profile_id=profile_id,
         )
         return jsonify({"response": reply, "should_listen": should_listen})
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        traceback.print_exc()
-        try:
-            payload = (await request.get_json(silent=True)) or {}
-            ui = payload.get("message", "")
-            fallback_profile = (payload.get("profile_id") or "web_default").strip()
-            if jarvis_brain.llm is None:
-                raise RuntimeError("no llm")
-            messages = [
-                jarvis_brain.get_system_msg(ui, profile_id=fallback_profile),
-                HumanMessage(content=ui),
-            ]
-            reply = (await asyncio.to_thread(jarvis_brain.llm.invoke, messages)).content
-            return jsonify({"response": normalizar_tratamiento_admin(reply), "should_listen": False})
-        except Exception as e:
-            print(f"[WARN /api/chat] LLM invoke error: {e}")
-            return jsonify(
-                {
-                    "response": "I apologize, Administrator. Systems are rebooting.",
-                    "should_listen": False,
-                }
-            ), 200
+    except LLMUnavailableError:
+        obs_event(
+            "api_chat_unconfigured",
+            error="LLMUnavailableError",
+            ip=request.remote_addr or "unknown",
+        )
+        return _llm_unconfigured_response()
+    except Exception as exc:
+        obs_event(
+            "api_chat_failed",
+            error=type(exc).__name__,
+            ip=request.remote_addr or "unknown",
+        )
+        return _chat_unavailable_response()
 
 
-@chat_bp.route("/api/chat/stream", methods=["GET", "POST"])
+@chat_bp.route("/api/chat/stream", methods=["POST"])
 async def api_chat_stream():
-    data = (await request.get_json(force=True)) if request.method == "POST" else request.args
-    data = data or {}
+    data, payload_error = await _read_json_payload()
+    if payload_error:
+        return payload_error
     user_input = (data.get("message") or "").strip()
     if not user_input:
         return jsonify({"error": "No message"}), 400
+    if len(user_input) > 4000:
+        return jsonify({"error": "Message too large"}), 413
+    ip = request.remote_addr or "unknown"
+    limited = _rate_limit_response(ip, "chat_stream")
+    if limited:
+        return limited
     profile_id = (data.get("profile_id") or "web_default").strip()
     obs_event(
         "api_chat_stream_in",
         user_input=user_input[:220],
-        ip=request.remote_addr,
+        ip=ip,
         profile_id=profile_id,
     )
 
@@ -123,18 +183,30 @@ async def api_chat_stream():
             return None, True
 
     async def generate():
-        iterator = jarvis_brain.stream_procesar_mensaje_events(
-            user_input,
-            profile_id=profile_id,
-        )
         try:
+            iterator = jarvis_brain.stream_procesar_mensaje_events(
+                user_input,
+                profile_id=profile_id,
+            )
             while True:
-                evt, done = await asyncio.to_thread(_next_stream_event, iterator)
+                event, done = await asyncio.to_thread(_next_stream_event, iterator)
                 if done:
                     break
-                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-        except Exception as ex:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(ex)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except LLMUnavailableError:
+            obs_event(
+                "api_chat_stream_unconfigured",
+                error="LLMUnavailableError",
+                ip=ip,
+            )
+            yield _sse_error("llm_unconfigured", LLM_UNCONFIGURED_MESSAGE)
+        except Exception as exc:
+            obs_event(
+                "api_chat_stream_failed",
+                error=type(exc).__name__,
+                ip=ip,
+            )
+            yield _sse_error("chat_unavailable", CHAT_UNAVAILABLE_MESSAGE)
 
     return Response(
         generate(),

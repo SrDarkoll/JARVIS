@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-import types
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -323,7 +322,7 @@ def test_router_routes_spanish_nba_questions_to_nba_tool(monkeypatch):
         reply = router._router_hibrido("¿Quién está jugando ahorita en la NBA los partidos?")
 
         assert reply == "Resumen NBA localizado."
-        assert captured["tool_name"] == "obtener_partidos_nba"
+        assert captured["tool_name"] == "obtener_deportes_espn"
         assert captured["source"] == "router_directo"
     finally:
         set_current_language(prev_lang)

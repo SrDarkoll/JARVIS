@@ -1,19 +1,34 @@
 import os
-import time as _time
-import threading
 import re
+import threading
+import time as _time
+from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Iterator, Any
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from core import jarvis_state, core_tools
-from core.service_container import services
-from core.brain import brain_state, brain_utils, history_manager, llm_engine
-from core.brain import tool_manager, social_engine, security_engine, router
-from core.brain import prompts, keywords, music_engine
-from core.jarvis_observability import obs_event, obs_inc, obs_tool
-from core.jarvis_config import AUTOCURACION_ACTIVA
+
+from core import core_tools, jarvis_state
+from core.brain import (
+    brain_state,
+    brain_utils,
+    history_manager,
+    keywords,
+    music_engine,
+    prompts,
+    router,
+    security_engine,
+    social_engine,
+    tool_manager,
+)
+from core.errors import (
+    CHAT_UNAVAILABLE_MESSAGE,
+    LLM_UNCONFIGURED_MESSAGE,
+    LLMServiceError,
+    LLMUnavailableError,
+)
+from core.jarvis_observability import obs_event, obs_inc
 from core.jarvis_state import DEFAULT_PROFILE_ID
+from core.service_container import services
 from engines.memory_rag import rag_motor
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from utils.jarvis_text import reparar_unicode
 
 
@@ -50,6 +65,14 @@ def _llm_calls_disabled_for_tests() -> bool:
         "yes",
         "on",
     }
+
+
+def _invoke_model(model, messages: list, *, event: str):
+    try:
+        return model.invoke(messages)
+    except Exception as exc:
+        obs_event(event, error=type(exc).__name__)
+        raise LLMServiceError from None
 
 
 def _finalize_reply(
@@ -148,8 +171,8 @@ def _preflight(
     allow_compound: bool = True,
 ) -> tuple[str | None, bool]:
     from core.core_tools import (
-        _ajustar_volumen_relativo,
         _ajustar_volumen_absoluto,
+        _ajustar_volumen_relativo,
         agregar_recordatorio,
     )
 
@@ -204,13 +227,9 @@ def _preflight(
                 else _ajustar_volumen_absoluto(v_vol)
             )
             return str(res), False
-        except Exception as e:
-            obs_event(
-                "volume_adjustment_error",
-                error=str(e)[:300],
-                input=user_input_norm[:100],
-            )
-            return f"Could not adjust volume: {e}", False
+        except Exception as exc:
+            obs_event("volume_adjustment_error", error=type(exc).__name__)
+            return "Could not adjust the system volume.", False
 
     # 5. Hybrid router
     router_reply = router._router_hibrido(user_input_norm)
@@ -304,20 +323,45 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
         + [HumanMessage(content=user_input)]
     )
 
-    if brain_state.llm is None or _llm_calls_disabled_for_tests():
+    if _llm_calls_disabled_for_tests():
         return "Brain not initialized.", False
+    if brain_state.llm is None:
+        raise LLMUnavailableError
 
     if not necesita_tools(user_input):
-        reply = brain_state.llm.invoke(messages).content
+        response = _invoke_model(
+            brain_state.llm,
+            messages,
+            event="llm_direct_invoke_failed",
+        )
         return _finalize_reply(
-            brain_utils._limpiar_thinking(reply), messages, user_input, pid, "no_tools"
+            brain_utils._limpiar_thinking(response.content),
+            messages,
+            user_input,
+            pid,
+            "no_tools",
+        )
+
+    if brain_state.llm_with_tools is None:
+        response = _invoke_model(
+            brain_state.llm,
+            messages,
+            event="llm_plain_fallback_failed",
+        )
+        return _finalize_reply(
+            brain_utils._limpiar_thinking(response.content),
+            messages,
+            user_input,
+            pid,
+            "tools_unavailable_fallback",
         )
 
     try:
-        if brain_state.llm_with_tools is None:
-            return "Brain not initialized.", False
-
-        response = brain_state.llm_with_tools.invoke(messages)
+        response = _invoke_model(
+            brain_state.llm_with_tools,
+            messages,
+            event="llm_tool_invoke_failed",
+        )
         messages.append(response)
 
         # Shortcut for Spotify if it's the only tool
@@ -351,20 +395,37 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
                     try:
                         result = f.result(timeout=25)
                         messages.append(ToolMessage(content=core_tools._limpiar_respuesta(brain_utils._formatear_reply_por_perfil(str(result), pid)), tool_call_id=tc["id"]))
-                    except Exception as fe:
-                        messages.append(ToolMessage(content=f"Parallel error: {fe}", tool_call_id=tc["id"]))
+                    except Exception as exc:
+                        obs_event(
+                            "parallel_tool_failed",
+                            error=type(exc).__name__,
+                            tool=str(tc.get("name") or "")[:80],
+                        )
+                        messages.append(
+                            ToolMessage(
+                                content="Parallel tool execution failed.",
+                                tool_call_id=tc["id"],
+                            )
+                        )
 
-            response = brain_state.llm_with_tools.invoke(messages)
+            response = _invoke_model(
+                brain_state.llm_with_tools,
+                messages,
+                event="llm_tool_followup_failed",
+            )
             messages.append(response)
         reply = brain_utils._limpiar_thinking(response.content or "")
-    except Exception as e:
-        obs_event("llm_brain_error", error=str(e)[:300])
-        try:
-            # Fallback to Groq if MiniMax fails
-            fallback = brain_state.llm_fallback or brain_state.llm
-            reply = brain_utils._limpiar_thinking(fallback.invoke(messages).content or "")
-        except Exception:
-            reply = "I apologize, Administrator. A temporary internal error occurred in my reasoning core."
+    except Exception as exc:
+        obs_event("llm_brain_error", error=type(exc).__name__)
+        fallback = brain_state.llm_fallback or brain_state.llm
+        if fallback is None:
+            raise LLMServiceError from None
+        fallback_response = _invoke_model(
+            fallback,
+            messages,
+            event="llm_fallback_invoke_failed",
+        )
+        reply = brain_utils._limpiar_thinking(fallback_response.content or "")
 
     return _finalize_reply(reply, messages, user_input, pid, "final")
 
@@ -404,10 +465,12 @@ def stream_procesar_mensaje_events(
                 + history_manager._get_history_for_profile(pid)[-10:]
                 + [HumanMessage(content=user_input)]
             )
-            if brain_state.llm is None or _llm_calls_disabled_for_tests():
+            if _llm_calls_disabled_for_tests():
                 final = "Brain not initialized."
                 yield {"type": "done", "response": final, "should_listen": False}
                 return
+            if brain_state.llm is None:
+                raise LLMUnavailableError
 
             acc = []
             in_thinking = False
@@ -441,8 +504,20 @@ def stream_procesar_mensaje_events(
         reply, sl = _ejecutar_cerebro_llm(user_input, pid)
         yield {"type": "done", "response": reply, "should_listen": sl}
 
-    except Exception as e:
-        yield {"type": "error", "message": str(e)}
+    except LLMUnavailableError:
+        obs_event("llm_stream_unavailable", error="LLMUnavailableError")
+        yield {
+            "type": "error",
+            "code": "llm_unconfigured",
+            "message": LLM_UNCONFIGURED_MESSAGE,
+        }
+    except Exception as exc:
+        obs_event("llm_stream_failed", error=type(exc).__name__)
+        yield {
+            "type": "error",
+            "code": "chat_unavailable",
+            "message": CHAT_UNAVAILABLE_MESSAGE,
+        }
     finally:
         if context_token is not None:
             jarvis_state.reset_active_profile_id(context_token)

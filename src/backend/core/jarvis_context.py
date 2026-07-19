@@ -1,5 +1,6 @@
-import threading
 import logging
+import threading
+
 
 class JarvisContext:
     _instance = None
@@ -8,7 +9,7 @@ class JarvisContext:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(JarvisContext, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance.deps = {}
                 cls._instance.logger = logging.getLogger("JARVIS")
         return cls._instance

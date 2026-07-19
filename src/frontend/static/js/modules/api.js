@@ -32,13 +32,6 @@ export const API = {
         return await res.json();
     },
 
-    async fetchOperatorStatus() {
-        const res = await fetch('/api/operator/status', { cache: 'no-store' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'api_operator_status_fail');
-        return data;
-    },
-
     async fetchSetupStatus() {
         const res = await fetch('/api/setup/status', { cache: 'no-store' });
         if (!res.ok) throw new Error('api_setup_status_fail');

@@ -1,22 +1,34 @@
+import io
+import json
 import os
 import re
-import io
-import wave
-import json
-import threading
+import sys
 import tempfile
-from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
+import threading
+import wave
+
 from core.jarvis_observability import obs_event
+from utils.jarvis_tts_lexicon import TTS_PRONUN_DEFAULT
+
+IS_WINDOWS = sys.platform == "win32"
 
 # This configuration assumes eSpeak is installed here in Windows, customizable via .env
-ESPEAK_ROOT = os.getenv("ESPEAK_ROOT", r"C:\Program Files\eSpeak NG")
-if os.path.exists(ESPEAK_ROOT):
-    os.environ["PATH"] += os.pathsep + ESPEAK_ROOT
-    os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = os.path.join(ESPEAK_ROOT, "libespeak-ng.dll")
-    os.environ["ESPEAK_DATA_PATH"] = ESPEAK_ROOT
+if IS_WINDOWS:
+    ESPEAK_ROOT = os.getenv("ESPEAK_ROOT", r"C:\Program Files\eSpeak NG")
+    if os.path.exists(ESPEAK_ROOT):
+        os.environ["PATH"] += os.pathsep + ESPEAK_ROOT
+        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = os.path.join(ESPEAK_ROOT, "libespeak-ng.dll")
+        os.environ["ESPEAK_DATA_PATH"] = ESPEAK_ROOT
+else:
+    # Unix-like systems usually have espeak-ng in standard paths like /usr/lib/libespeak-ng.so
+    ESPEAK_ROOT = os.getenv("ESPEAK_ROOT", "/usr")
+    # Si el usuario configura ESPEAK_ROOT, le hacemos caso; si no, dejamos que phonemizer lo encuentre
+    if "ESPEAK_ROOT" in os.environ and os.path.exists(ESPEAK_ROOT):
+        # phonemizer auto-detects libespeak-ng.so or dylib on linux/mac if in PATH
+        os.environ["ESPEAK_DATA_PATH"] = ESPEAK_ROOT
 
-from piper.voice import PiperVoice
 from piper.config import SynthesisConfig
+from piper.voice import PiperVoice
 
 try:
     from rvc_python.infer import RVCInference
@@ -170,7 +182,7 @@ class TTSEngine:
         loaded = {}
         if os.path.exists(self.pronun_file):
             try:
-                with open(self.pronun_file, "r", encoding="utf-8") as f:
+                with open(self.pronun_file, encoding="utf-8") as f:
                     loaded = json.load(f) or {}
             except Exception as e:
                 print(f"[TTS] Could not read pronunciation rules: {e}")

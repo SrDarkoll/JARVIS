@@ -8,7 +8,6 @@ from __future__ import annotations
 
 # Re-exporta todo desde voice_id para compatibilidad con imports existentes.
 # La lógica real vive aquí — voice_id.py es solo un wrapper de 2 líneas.
-
 import io
 import os
 import sqlite3
@@ -18,11 +17,15 @@ import time as _time
 
 import numpy as np
 import soundfile as sf
+from core.jarvis_config import BASE_DIR, VOICE_ID_ENABLED
+from utils.audio_conversion import AudioConversionError, convert_to_wav
 
 VOICE_ID_DISPONIBLE = False
 
 if os.getenv("JARVIS_TEST_MODE") == "1":
     print("[VOICE_ID] Disabled in test mode.")
+elif not VOICE_ID_ENABLED:
+    print("[VOICE_ID] Disabled by runtime configuration.")
 else:
     try:
         from speechbrain.inference import SpeakerRecognition
@@ -37,7 +40,6 @@ try:
 except NameError:
     SpeakerRecognition = None
 
-from core.jarvis_config import BASE_DIR
 from core.jarvis_observability import obs_event
 from core.jarvis_state import DEFAULT_PROFILE_ID
 
@@ -594,8 +596,6 @@ class VoiceIdentifier:
 
     def _preprocess_audio_bytes(self, audio_bytes: bytes) -> bytes | None:
         try:
-            from scipy.signal import resample_poly
-
             if not isinstance(audio_bytes, (bytes, bytearray)) or len(audio_bytes) < 100:
                 return None
 
@@ -604,105 +604,11 @@ class VoiceIdentifier:
             es_wav = magic[:4] == b"RIFF" and b"WAVE" in audio_bytes[:12]
 
             if not es_wav:
-                suffix = (
-                    ".webm"
-                    if magic[:4] == b"\x1a\x45\xdf\xa3"
-                    else ".ogg"
-                    if magic[:4] == b"OggS"
-                    else ".mp3"
-                    if magic[:3] == b"ID3" or magic[:2] == b"\xff\xfb"
-                    else ".webm"
-                )
-                _fd_in, temp_in = tempfile.mkstemp(suffix=suffix, dir=RUNTIME_DIR)
-                os.close(_fd_in)
-                _fd_wav, temp_wav = tempfile.mkstemp(suffix=".wav", dir=RUNTIME_DIR)
-                os.close(_fd_wav)
-                convertido = False
                 try:
-                    with open(temp_in, "wb") as f:
-                        f.write(audio_bytes)
-                    try:
-                        from pydub import AudioSegment
-
-                        seg = AudioSegment.from_file(temp_in)
-                        seg.set_channels(1).set_frame_rate(16000).export(temp_wav, format="wav")
-                        if os.path.exists(temp_wav) and os.path.getsize(temp_wav) > 44:
-                            with open(temp_wav, "rb") as f:
-                                audio_a_procesar = f.read()
-                            convertido = True
-                    except Exception as pydub_e:
-                        print(f"[VOICE_ID] pydub preprocess falló: {pydub_e}")
-                    if not convertido:
-                        import subprocess
-
-                        for cmd in [
-                            [
-                                "ffmpeg",
-                                "-y",
-                                "-i",
-                                temp_in,
-                                "-ar",
-                                "16000",
-                                "-ac",
-                                "1",
-                                "-acodec",
-                                "pcm_s16le",
-                                temp_wav,
-                            ],
-                            [
-                                "ffmpeg",
-                                "-y",
-                                "-f",
-                                "matroska",
-                                "-i",
-                                temp_in,
-                                "-ar",
-                                "16000",
-                                "-ac",
-                                "1",
-                                "-acodec",
-                                "pcm_s16le",
-                                temp_wav,
-                            ],
-                            [
-                                "ffmpeg",
-                                "-y",
-                                "-err_detect",
-                                "ignore_err",
-                                "-fflags",
-                                "+genpts+discardcorrupt",
-                                "-i",
-                                temp_in,
-                                "-ar",
-                                "16000",
-                                "-ac",
-                                "1",
-                                "-acodec",
-                                "pcm_s16le",
-                                temp_wav,
-                            ],
-                        ]:
-                            try:
-                                r = subprocess.run(cmd, capture_output=True, timeout=30)
-                                if (
-                                    r.returncode == 0
-                                    and os.path.exists(temp_wav)
-                                    and os.path.getsize(temp_wav) > 44
-                                ):
-                                    with open(temp_wav, "rb") as f:
-                                        audio_a_procesar = f.read()
-                                    convertido = True
-                                    break
-                            except (FileNotFoundError, Exception):
-                                pass
-                finally:
-                    for p in [temp_in, temp_wav]:
-                        if os.path.exists(p):
-                            try:
-                                os.remove(p)
-                            except OSError:
-                                pass
-                if not convertido:
+                    audio_a_procesar = convert_to_wav(
+                        audio_bytes, runtime_dir=RUNTIME_DIR
+                    )
+                except AudioConversionError:
                     return None
 
             wav, sr = sf.read(io.BytesIO(audio_a_procesar))
@@ -717,6 +623,8 @@ class VoiceIdentifier:
             wav = self._apply_vad(wav, sr)
 
             if sr != 16000:
+                from scipy.signal import resample_poly
+
                 gcd = np.gcd(sr, 16000)
                 wav = resample_poly(wav, 16000 // gcd, sr // gcd)
                 sr = 16000

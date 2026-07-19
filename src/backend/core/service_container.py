@@ -1,7 +1,10 @@
 import threading
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Optional, List, Dict
+from typing import Any
+
 from core import jarvis_state
+
 
 class ServiceContainer:
     _instance = None
@@ -10,7 +13,7 @@ class ServiceContainer:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(ServiceContainer, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._initialized = False
         return cls._instance
 
@@ -20,19 +23,19 @@ class ServiceContainer:
         self._initialized = True
 
         # --- Observability ---
-        self.obs_inc: Optional[Callable[[str, int], None]] = None
-        self.obs_event: Optional[Callable[[str, Any], None]] = None
+        self.obs_inc: Callable[[str, int], None] | None = None
+        self.obs_event: Callable[[str, Any], None] | None = None
 
         # --- Security ---
-        self.security_audit: Optional[Callable[..., None]] = None
-        self.security_guard: Optional[Callable[..., Any]] = None
-        self.security_allow_fallback: Optional[Callable[[], bool]] = None
-        self.proactive_tool_error: Optional[Callable[..., None]] = None
+        self.security_audit: Callable[..., None] | None = None
+        self.security_guard: Callable[..., Any] | None = None
+        self.security_allow_fallback: Callable[[], bool] | None = None
+        self.proactive_tool_error: Callable[..., None] | None = None
 
         # --- Core Utilities ---
-        self.reparar_unicode: Optional[Callable[[str], str]] = None
-        self.invocar_tool: Optional[Callable[..., Any]] = None
-        self.recargar_plugins: Optional[Callable[[], str]] = None
+        self.reparar_unicode: Callable[[str], str] | None = None
+        self.invocar_tool: Callable[..., Any] | None = None
+        self.recargar_plugins: Callable[[], str] | None = None
 
         # --- LLM Engines ---
         self.llm: Any = None
@@ -71,7 +74,7 @@ class ServiceContainer:
         self.log_event("reminder_added", text=text, minutes=minutes)
         print(f"  [SERVICES] Reminder added: {text} in {minutes} min")
 
-    def get_reminders(self) -> List[Dict]:
+    def get_reminders(self) -> list[dict]:
         with jarvis_state.recordatorios_lock:
             return list(jarvis_state._recordatorios)
 

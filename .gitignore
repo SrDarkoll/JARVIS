@@ -28,6 +28,7 @@ wheels/
 .env
 .env.*
 !.env.example
+.envrc
 .venv
 venv/
 ENV/
@@ -38,6 +39,11 @@ tmp/
 temp/
 .pytest_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+test_espn*.py
+test_out*.txt
 
 # J.A.R.V.I.S. Logs & Cache
 src/backend/logs/

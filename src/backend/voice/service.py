@@ -9,31 +9,47 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from core.api_contracts import validate_voice_response
 from core.jarvis_state import DEFAULT_PROFILE_ID as _OWNER_PID
 from core.runtime_logger import log_error, log_warning
 from utils.jarvis_i18n import get_current_language
+
 from voice.capture import transcribir_dudoso as _capture_transcribir_dudoso
 from voice.guest_registration import (
     persist_guest_profile_registration as _guest_persist_profile_registration,
 )
 from voice.intent_classifier import (
     clasificar_peticion_voz as _intent_clasificar_peticion_voz,
+)
+from voice.intent_classifier import (
     es_pregunta_simple_voz as _intent_es_pregunta_simple_voz,
+)
+from voice.intent_classifier import (
     es_presentacion_nombre_voz as _intent_es_presentacion_nombre_voz,
 )
 from voice.pipeline import (
     get_active_whisper_language,
+)
+from voice.pipeline import (
     hint_necesita_reintento_whisper as _hint_necesita_whisper,
+)
+from voice.pipeline import (
     normalizar_confianza_transcript as _norm_conf,
+)
+from voice.pipeline import (
     normalizar_transcript_hint as _norm_hint,
+)
+from voice.pipeline import (
     reconstruir_transcripcion_por_pausas as _reconstruir_pausas,
+)
+from voice.pipeline import (
     transcribir_audio as _real_transcribir_audio,
 )
-from voice.voice_response import build_voice_debug as _response_build_voice_debug
 from voice.state_machine import VoiceStage, normalize_stage
+from voice.voice_response import build_voice_debug as _response_build_voice_debug
 
 _UNVERIFIED_GUEST_PID = "guest_unverified"
 
@@ -900,7 +916,6 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     if not audio_bytes:
         return _voice_response({"error": _voice_text("No audio received", "Sin audio"), "should_listen": True}, status=400)
 
-    client_is_owner = client_profile_id_norm == _brain.DEFAULT_PROFILE_ID
     owner_session_active = (
         client_profile_id_norm == _brain.DEFAULT_PROFILE_ID
         and _verificar_autorizacion(_brain.DEFAULT_PROFILE_ID)

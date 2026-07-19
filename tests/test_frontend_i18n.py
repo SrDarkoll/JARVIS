@@ -7,76 +7,79 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "src" / "frontend" / "templates" / "index.html"
 MAIN_JS = ROOT / "src" / "frontend" / "static" / "js" / "main.js"
 I18N_JS = ROOT / "src" / "frontend" / "static" / "js" / "i18n.js"
+STYLE_CSS = ROOT / "src" / "frontend" / "static" / "css" / "style.css"
 
 
 class FrontendI18nTests(unittest.TestCase):
-    def test_operator_console_static_labels_use_i18n_keys(self):
+    def test_conversation_panel_replaces_operator_console(self):
         html = INDEX.read_text(encoding="utf-8")
+        self.assertNotIn('id="operator-console"', html)
+        self.assertNotIn("MISSION CENTER", html)
+
         match = re.search(
-            r'<section id="operator-console"[\s\S]*?</section>',
+            r'<section id="conversation-panel"[\s\S]*?</section>',
             html,
         )
         self.assertIsNotNone(match)
         block = match.group(0)
 
         for key in (
-            "operator_center_title",
-            "operator_active_mission",
-            "operator_no_active_mission",
-            "operator_empty_steps",
-            "operator_profile",
-            "operator_memory",
-            "operator_guard",
-            "operator_audit",
+            "conversation_panel_title",
+            "conversation_empty",
         ):
             self.assertIn(f'data-i18n="{key}"', block)
 
         for literal in (
-            "CENTRO DE MISIONES",
-            "MISION ACTIVA",
-            "Sin mision activa",
-            "Esperando plan supervisado.",
+            "ACTIVE MISSION",
+            "GUEST VIEW ONLY",
+            "No active mission",
         ):
             self.assertNotIn(literal, block)
 
-    def test_operator_console_dynamic_labels_use_translations(self):
+    def test_conversation_segments_are_dynamic(self):
         main_js = MAIN_JS.read_text(encoding="utf-8")
-        self.assertIn("t('operator_mode_admin')", main_js)
-        self.assertIn("t('operator_mode_guest')", main_js)
-        self.assertIn("t('operator_no_active_mission')", main_js)
-        self.assertIn("t('operator_empty_steps')", main_js)
-        self.assertIn("t('operator_profiles_count')", main_js)
-        self.assertIn("t('operator_mission_meta')", main_js)
+        ui_js = (ROOT / "src" / "frontend" / "static" / "js" / "modules" / "ui.js").read_text(encoding="utf-8")
+
+        self.assertIn("conversationSegments", main_js)
+        self.assertIn("addConversationSegment", main_js)
+        self.assertIn("updateAssistantSegment", main_js)
+        self.assertIn("addConversationSegment(role", ui_js)
+        self.assertIn("conversation-segment", ui_js)
 
         for literal in (
-            "INVITADO LECTURA",
-            "Sin mision activa",
-            "Esperando plan supervisado.",
-            "confirmacion requerida",
+            "operatorModeLabel",
+            "operatorMissionTitle",
+            "pollOperatorStatus",
         ):
             self.assertNotIn(literal, main_js)
 
-    def test_operator_console_keys_exist_for_english_and_spanish(self):
+    def test_conversation_keys_exist_for_english_and_spanish(self):
         i18n_js = I18N_JS.read_text(encoding="utf-8")
         for key in (
-            "operator_center_title",
-            "operator_active_mission",
-            "operator_no_active_mission",
-            "operator_empty_steps",
-            "operator_profile",
-            "operator_memory",
-            "operator_guard",
-            "operator_audit",
-            "operator_mode_admin",
-            "operator_mode_guest",
-            "operator_profiles_count",
-            "operator_guard_summary",
-            "operator_audit_count",
-            "operator_mission_meta",
-            "operator_confirmation_required",
-            "operator_ready",
+            "conversation_panel_title",
+            "conversation_empty",
+            "conversation_user",
+            "conversation_jarvis",
+            "conversation_system",
         ):
             self.assertGreaterEqual(i18n_js.count(f'"{key}"'), 2, key)
+
+        self.assertNotIn("MISSION CENTER", i18n_js)
+        self.assertNotIn("CENTRO DE MISIONES", i18n_js)
+
+    def test_conversation_layout_is_not_clipped_by_center_stage(self):
+        css = STYLE_CSS.read_text(encoding="utf-8")
+
+        center_stage = re.search(r"\.center-stage\s*\{(?P<body>[\s\S]*?)\n\}", css)
+        self.assertIsNotNone(center_stage)
+        self.assertIn("overflow-y: auto", center_stage.group("body"))
+        self.assertNotIn("overflow: hidden", center_stage.group("body"))
+
+        conversation_panel = re.search(r"\.conversation-panel\s*\{(?P<body>[\s\S]*?)\n\}", css)
+        self.assertIsNotNone(conversation_panel)
+        self.assertIn("height: clamp", conversation_panel.group("body"))
+        self.assertIn("max-height: none", conversation_panel.group("body"))
+        self.assertIn("flex: 0 0 clamp", conversation_panel.group("body"))
 
 
 if __name__ == "__main__":

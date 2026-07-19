@@ -3,13 +3,11 @@ TTS Routes: audio synthesis and pronunciation management.
 The engine instance is injected via init_tts_routes().
 """
 
-from quart import Blueprint, request, jsonify, make_response
 import re
-import threading
 import time as _time
-import traceback
 
 from core.jarvis_observability import obs_event
+from quart import Blueprint, jsonify, make_response, request
 
 tts_bp = Blueprint("tts", __name__)
 
@@ -75,8 +73,16 @@ def _check_rate_limit(ip, limit, endpoint):
     return True, 0.0
 
 
-def _tts_unavailable_response(reason: str = "Voice engine not loaded"):
-    return jsonify({"error": "tts_unavailable", "message": reason}), 503
+def _tts_unavailable_response():
+    return jsonify(
+        {"error": "tts_unavailable", "message": "Voice engine is unavailable."}
+    ), 503
+
+
+def _tts_failed_response():
+    return jsonify(
+        {"error": "tts_failed", "message": "Voice synthesis failed."}
+    ), 500
 
 
 @tts_bp.route("/api/tts", methods=["GET", "POST"])
@@ -88,9 +94,10 @@ async def generate_tts():
     if not allowed:
         return jsonify({"error": "rate_limit", "retry_after": round(retry_after, 3)}), 429
 
-    t_enter = _time.time()
-
-    if not _tts_api_lock.acquire(timeout=10):
+    api_lock = _tts_api_lock
+    if api_lock is None or not callable(getattr(api_lock, "acquire", None)):
+        return _tts_unavailable_response()
+    if not api_lock.acquire(timeout=10):
         return jsonify({"error": "tts_busy", "retry_after": 1.2}), 429
 
     try:
@@ -106,7 +113,7 @@ async def generate_tts():
         if _tts_engine is None or getattr(_tts_engine, "voice", None) is None:
             return _tts_unavailable_response()
         if not callable(_synthesize_audio):
-            return _tts_unavailable_response("Voice synthesizer not initialized")
+            return _tts_unavailable_response()
 
         text = reparar_unicode(text)
         text = re.sub(r"\s+", " ", text).strip()
@@ -124,25 +131,21 @@ async def generate_tts():
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Connection"] = "close"
         return resp
-    except RuntimeError as e:
-        msg = str(e)
-        if "piper" in msg.lower() or "voice" in msg.lower():
-            obs_event("tts_unavailable", error=msg[:300], text=text[:100] if text else "")
-            return _tts_unavailable_response(msg)
-        err = traceback.format_exc()
-        obs_event("tts_api_error", error=msg[:300], text=text[:100] if text else "")
-        return jsonify({"error": msg, "trace": err}), 500
-    except Exception as e:
-        err = traceback.format_exc()
-        obs_event("tts_api_error", error=str(e)[:300], text=text[:100] if text else "")
-        return jsonify({"error": str(e), "trace": err}), 500
+    except RuntimeError as exc:
+        obs_event("tts_unavailable", error=type(exc).__name__)
+        return _tts_unavailable_response()
+    except Exception as exc:
+        obs_event("tts_api_error", error=type(exc).__name__)
+        return _tts_failed_response()
     finally:
-        _tts_api_lock.release()
+        api_lock.release()
 
 
 @tts_bp.route("/api/tts/pronunciation", methods=["GET"])
 @tts_bp.route("/api/tts/pronunciacion", methods=["GET"])
 def get_tts_pronunciation():
+    if _tts_engine is None or getattr(_tts_engine, "tts_lock", None) is None:
+        return _tts_unavailable_response()
     with _tts_engine.tts_lock:
         return jsonify({"rules": dict(_tts_engine.tts_pronun_map)})
 
@@ -150,6 +153,11 @@ def get_tts_pronunciation():
 @tts_bp.route("/api/tts/pronunciation", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion", methods=["POST"])
 async def update_tts_pronunciation():
+    if _tts_engine is None or not callable(
+        getattr(_tts_engine, "update_reglas", None)
+    ):
+        return _tts_unavailable_response()
+
     data = (await request.get_json(silent=True)) or {}
     rules_input = data.get("rules", {})
     if not isinstance(rules_input, dict):
@@ -168,4 +176,8 @@ async def update_tts_pronunciation():
 @tts_bp.route("/api/tts/pronunciation/reset", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion/reset", methods=["POST"])
 def reset_tts_pronunciation():
+    if _tts_engine is None or not callable(
+        getattr(_tts_engine, "reset_reglas", None)
+    ):
+        return _tts_unavailable_response()
     return jsonify({"message": "Reset", "rules": _tts_engine.reset_reglas()})

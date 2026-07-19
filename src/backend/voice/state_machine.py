@@ -7,10 +7,10 @@ scattered stringly-typed flow control.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class VoiceStage(str, Enum):
+class VoiceStage(StrEnum):
     IDLE = "idle"
     AWAITING_SAMPLE = "awaiting_sample"
     AWAITING_NAME = "awaiting_name"

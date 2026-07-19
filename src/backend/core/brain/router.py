@@ -1,12 +1,11 @@
 import re
 import unicodedata
-from typing import Any
-from utils.jarvis_text import reparar_unicode
-from core.brain.brain_utils import _normalizar_ascii, _compactar_resumen_busqueda
-from core.jarvis_observability import obs_inc
-from core import core_tools
+
 from core.app_config import get_default_location
+from core.brain.brain_utils import _compactar_resumen_busqueda, _normalizar_ascii
+from core.jarvis_observability import obs_inc
 from utils.jarvis_i18n import get_current_language
+from utils.jarvis_text import reparar_unicode
 
 _ROUTER_WEB_DIRECTO = {
     "facebook": "https://www.facebook.com",
@@ -470,7 +469,7 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
             )
         )
 
-    sports_markers = ["nba", "basket", "basketball"]
+    sports_markers = ["nba", "basket", "basketball", "nfl", "football", "soccer", "futbol", "fútbol", "f1", "formula 1", "mlb", "baseball", "beisbol", "tennis", "tenis", "champions", "premier", "liga"]
     sports_intent_markers = [
         "partido",
         "partidos",
@@ -486,10 +485,24 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
     ]
     if any(k in t_ascii for k in sports_markers) and any(k in t_ascii for k in sports_intent_markers):
         obs_inc("router_hits", 1)
+
+        # Simple extraction for common leagues
+        deporte_val, liga_val = "basketball", "nba"
+        if any(k in t_ascii for k in ["nfl", "football", "americano"]):
+            deporte_val, liga_val = "football", "nfl"
+        elif any(k in t_ascii for k in ["mlb", "baseball", "beisbol"]):
+            deporte_val, liga_val = "baseball", "mlb"
+        elif any(k in t_ascii for k in ["champions", "premier", "liga", "futbol", "soccer", "fútbol"]):
+            deporte_val = "soccer"
+            if "champions" in t_ascii: liga_val = "uefa.champions"
+            elif "premier" in t_ascii: liga_val = "eng.1"
+            elif "liga" in t_ascii: liga_val = "esp.1"
+            else: liga_val = "eng.1" # Default to premier
+
         return str(
             _invocar_tool_wrapper(
-                "obtener_partidos_nba",
-                {"consulta": "hoy"},
+                "obtener_deportes_espn",
+                {"deporte": deporte_val, "liga": liga_val, "consulta": "hoy"},
                 user_input,
                 source="router_directo",
             )
@@ -581,12 +594,25 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
                         source="router",
                     )
                 )
-            if any(k in t for k in ["nba", "basketball"]):
+            if any(k in t_ascii for k in sports_markers):
                 obs_inc("router_hits", 1)
+
+                deporte_val, liga_val = "basketball", "nba"
+                if any(k in t_ascii for k in ["nfl", "football", "americano"]):
+                    deporte_val, liga_val = "football", "nfl"
+                elif any(k in t_ascii for k in ["mlb", "baseball", "beisbol"]):
+                    deporte_val, liga_val = "baseball", "mlb"
+                elif any(k in t_ascii for k in ["champions", "premier", "liga", "futbol", "soccer", "fútbol"]):
+                    deporte_val = "soccer"
+                    if "champions" in t_ascii: liga_val = "uefa.champions"
+                    elif "premier" in t_ascii: liga_val = "eng.1"
+                    elif "liga" in t_ascii: liga_val = "esp.1"
+                    else: liga_val = "eng.1"
+
                 return str(
                     _invocar_tool_wrapper(
-                        "obtener_partidos_nba",
-                        {"consulta": "hoy"},
+                        "obtener_deportes_espn",
+                        {"deporte": deporte_val, "liga": liga_val, "consulta": "hoy"},
                         user_input,
                         source="router",
                     )
@@ -636,11 +662,23 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
                     source="router_dynamic",
                 )
             )
-        if any(k in t for k in ["nba", "basket", "basketball", "partido", "marcador"]):
+        if any(k in t_ascii for k in sports_markers) or any(k in t_ascii for k in sports_intent_markers):
+            deporte_val, liga_val = "basketball", "nba"
+            if any(k in t_ascii for k in ["nfl", "football", "americano"]):
+                deporte_val, liga_val = "football", "nfl"
+            elif any(k in t_ascii for k in ["mlb", "baseball", "beisbol"]):
+                deporte_val, liga_val = "baseball", "mlb"
+            elif any(k in t_ascii for k in ["champions", "premier", "liga", "futbol", "soccer", "fútbol"]):
+                deporte_val = "soccer"
+                if "champions" in t_ascii: liga_val = "uefa.champions"
+                elif "premier" in t_ascii: liga_val = "eng.1"
+                elif "liga" in t_ascii: liga_val = "esp.1"
+                else: liga_val = "eng.1"
+
             return str(
                 _invocar_tool_wrapper(
-                    "obtener_partidos_nba",
-                    {"consulta": "hoy"},
+                    "obtener_deportes_espn",
+                    {"deporte": deporte_val, "liga": liga_val, "consulta": "hoy"},
                     user_input,
                     source="router_dynamic",
                 )
@@ -695,23 +733,22 @@ def _router_hibrido(user_input: str, *, allow_compound: bool = True) -> str | No
         )
 
 # ── Info queries about tech entities → force web search ─────────────────
-    # "qué es minimax" would otherwise go to LLM which answers from internal
-    # config memory instead of fetching current info. Covers all question forms.
+    # Tech info queries should fetch current info instead of answering from memory.
     # Also catches "funciona X", "dime sobre X", "necesito saber de X" for tech topics.
     if any(
         k in t
         for k in [
-            "es minimax", "es openai", "es gpt", "es llama", "es groq", "es claude",
+            "es openai", "es gpt", "es llama", "es groq", "es claude",
             "es google", "es anthropic", "es langchain", "es grok", "es spotify",
         ]
     ) or (
         any(k in t for k in ["funcion", "funciona", "funcionar"])
         and any(e in t for e in [
-            "minimax", "openai", "gpt", "claude", "groq", "grok", "langchain", "spotify"
+            "openai", "gpt", "claude", "groq", "grok", "langchain", "spotify"
         ])
     ):
         _INFO_ENTIDADES_TECH = {
-            "minimax", "openai", "gpt", "claude", "gemini", "llama",
+            "openai", "gpt", "claude", "gemini", "llama",
             "mistral", "qwen", "deepseek", "groq", "anthropic", "google ai",
             "langchain", "grok", "spotify", "chatgpt",
         }

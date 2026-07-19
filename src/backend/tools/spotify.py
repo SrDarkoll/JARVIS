@@ -1,25 +1,54 @@
 """Integración completa de Spotify: autenticación, búsqueda, reproducción, cola, AutoMix, similares."""
 
-import os, re, time as _time
-import requests as http_requests
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-try:
-    from spotipy.cache_handler import CacheFileHandler
-except Exception:  # pragma: no cover - compatibility with older spotipy releases
-    CacheFileHandler = None
-from langchain_core.tools import tool
+import ipaddress
+import os
+import re
+import time as _time
+from urllib.parse import urlsplit
 
-from tools._common import BASE_DIR, _open_url_or_app
-from core.service_container import services
+import spotipy
+from spotipy.cache_handler import CacheFileHandler
+from spotipy.oauth2 import SpotifyOAuth
+
 from core import jarvis_config
+from langchain_core.tools import tool
 from utils.jarvis_i18n import get_current_language
+
+from tools._common import _open_url_or_app
 
 # ─────────────────────────────────────────
 # Configuración y autenticación
 # ─────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPOTIFY_CACHE = os.path.join(_BASE_DIR, ".cache-jarvis")
+def _spotify_log_error(operation: str, error: BaseException) -> None:
+    print(f"  [SPOTIFY] {operation} failed ({type(error).__name__}).")
+
+
+def _spotify_redirect_error(redirect_uri: str) -> str | None:
+    raw_uri = str(redirect_uri or "").strip()
+    if not raw_uri:
+        return "missing_redirect_uri"
+    try:
+        parsed = urlsplit(raw_uri)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "invalid_redirect_uri"
+    if parsed.scheme not in {"http", "https"}:
+        return "invalid_redirect_scheme"
+    if not host or host.lower() == "localhost":
+        return "explicit_loopback_ip_required"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "explicit_loopback_ip_required"
+    if not address.is_loopback:
+        return "explicit_loopback_ip_required"
+    if port is None:
+        return "redirect_port_required"
+    return None
+
+
+SPOTIFY_CACHE = jarvis_config.SPOTIFY_CACHE
 print(f"  [SPOTIFY] Cache: {SPOTIFY_CACHE}")
 
 SPOTIFY_CLIENT_ID = jarvis_config.SPOTIPY_CLIENT_ID
@@ -31,31 +60,36 @@ SPOTIFY_SCOPE = (
     "user-top-read user-read-recently-played"
 )
 
-SPOTIFY_ENABLED = bool(SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET)
+SPOTIFY_REDIRECT_ERROR = _spotify_redirect_error(SPOTIFY_REDIRECT_URI)
+SPOTIFY_ENABLED = bool(
+    SPOTIFY_CLIENT_ID
+    and SPOTIFY_CLIENT_SECRET
+    and SPOTIFY_REDIRECT_ERROR is None
+)
 
 if SPOTIFY_ENABLED:
-    auth_kwargs = {
-        "client_id": SPOTIFY_CLIENT_ID,
-        "client_secret": SPOTIFY_CLIENT_SECRET,
-        "redirect_uri": SPOTIFY_REDIRECT_URI,
-        "scope": SPOTIFY_SCOPE,
-    }
-    if CacheFileHandler is not None:
-        auth_kwargs["cache_handler"] = CacheFileHandler(cache_path=SPOTIFY_CACHE)
-    else:
-        auth_kwargs["cache_path"] = SPOTIFY_CACHE
     sp = spotipy.Spotify(
-        auth_manager=SpotifyOAuth(**auth_kwargs)
+        auth_manager=SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=SPOTIFY_REDIRECT_URI,
+            scope=SPOTIFY_SCOPE,
+            cache_handler=CacheFileHandler(cache_path=SPOTIFY_CACHE),
+        )
     )
 else:
     sp = None
-    print(
-        "  [SPOTIFY] SPOTIPY_CLIENT_ID/SPOTIPY_CLIENT_SECRET no configurados en .env. Funciones Spotify deshabilitadas."
-    )
+    if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_ERROR:
+        print("  [SPOTIFY] Invalid redirect URI. Use an explicit loopback IP.")
+    else:
+        print(
+            "  [SPOTIFY] SPOTIPY_CLIENT_ID/SPOTIPY_CLIENT_SECRET no configurados en .env. Funciones Spotify deshabilitadas."
+        )
 
 SPOTIFY_RADIO_QUEUE_SIZE = 12
 SPOTIFY_MODO_SIMILARES = jarvis_config.SPOTIFY_MODO_SIMILARES
 SPOTIFY_AUTO_SHUFFLE = jarvis_config.SPOTIFY_AUTO_SHUFFLE
+SPOTIFY_EXTENDED_QUOTA_MODE = jarvis_config.SPOTIFY_EXTENDED_QUOTA_MODE
 SPOTIFY_AUTOMIX_PLAYLIST_NAME = jarvis_config.SPOTIFY_AUTOMIX_PLAYLIST_NAME or "JARVIS AutoMix"
 _ULTIMA_CANCION_SOLICITADA = ""
 _SPOTIFY_USER_COUNTRY = ""
@@ -104,6 +138,14 @@ def _spotify_playback_success_message(
 # ─────────────────────────────────────────
 def _spotify_ready() -> tuple[bool, str | None]:
     if sp is None:
+        if SPOTIFY_REDIRECT_ERROR:
+            return (
+                False,
+                _spotify_text(
+                    "Spotify redirect configuration is invalid. Use an explicit loopback IP such as 127.0.0.1.",
+                    "La redireccion de Spotify no es valida. Use una IP loopback explicita como 127.0.0.1.",
+                ),
+            )
         return (
             False,
             _spotify_text(
@@ -126,8 +168,8 @@ def _spotify_usuario_actual_id() -> str | None:
     try:
         me = sp.current_user()
         return me.get("id")
-    except Exception as e:
-        print(f"  [SPOTIFY] current_user error: {e}")
+    except Exception as error:
+        _spotify_log_error("current_user", error)
         return None
 
 
@@ -144,8 +186,8 @@ def _spotify_market_objetivo() -> str | None:
         if len(country) == 2:
             _SPOTIFY_USER_COUNTRY = country
             return country
-    except Exception as e:
-        print(f"  [SPOTIFY] current_user country error: {e}")
+    except Exception as error:
+        _spotify_log_error("current_user_country", error)
     env_market = (os.getenv("SPOTIFY_MARKET") or "").strip().upper()
     return env_market if len(env_market) == 2 else None
 
@@ -214,8 +256,8 @@ def _spotify_search_items(q: str, item_type: str = "track", limit: int = 10) -> 
                 break
             offset += len(items)
         return found[:total_limit]
-    except Exception as e:
-        print(f"  [SPOTIFY] search error: {e}")
+    except Exception as error:
+        _spotify_log_error("search", error)
         return []
 
 
@@ -237,11 +279,11 @@ def _spotify_album_tracks(album_id: str, limit: int = 50) -> list:
     except TypeError:
         try:
             return (sp.album_tracks(album_id, limit=limit) or {}).get("items", [])
-        except Exception as e:
-            print(f"  [SPOTIFY] album_tracks error: {e}")
+        except Exception as error:
+            _spotify_log_error("album_tracks", error)
             return []
-    except Exception as e:
-        print(f"  [SPOTIFY] album_tracks error: {e}")
+    except Exception as error:
+        _spotify_log_error("album_tracks", error)
         return []
 
 
@@ -249,31 +291,39 @@ def _spotify_access_token() -> str | None:
     ready, _ = _spotify_ready()
     if not ready:
         return None
-    try:
-        token = sp.auth_manager.get_access_token(as_dict=False)
-        if isinstance(token, str) and token.strip():
-            return token.strip()
-    except TypeError:
+    auth_manager = getattr(sp, "auth_manager", None)
+    if auth_manager is None:
+        return None
+
+    def _extract_token(token_data) -> str | None:
+        if isinstance(token_data, str) and token_data.strip():
+            return token_data.strip()
+        if isinstance(token_data, dict):
+            token = token_data.get("access_token")
+            if isinstance(token, str) and token.strip():
+                return token.strip()
+        return None
+
+    cache_handler = getattr(auth_manager, "cache_handler", None)
+    if cache_handler is not None:
         try:
-            token_info = sp.auth_manager.get_access_token()
-            if isinstance(token_info, dict):
-                tok = token_info.get("access_token")
-                if isinstance(tok, str) and tok.strip():
-                    return tok.strip()
-            elif isinstance(token_info, str) and token_info.strip():
-                return token_info.strip()
-        except Exception as e:
-            print(f"  [SPOTIFY] get_access_token error (legacy): {e}")
-    except Exception as e:
-        print(f"  [SPOTIFY] get_access_token error: {e}")
+            token_info = cache_handler.get_cached_token()
+            validator = getattr(auth_manager, "validate_token", None)
+            if callable(validator):
+                token_info = validator(token_info)
+            token = _extract_token(token_info)
+            if token:
+                return token
+        except Exception as error:
+            _spotify_log_error("cache_handler.get_cached_token", error)
 
     try:
-        cached = sp.auth_manager.get_cached_token() or {}
-        tok = cached.get("access_token")
-        if isinstance(tok, str) and tok.strip():
-            return tok.strip()
-    except Exception as e:
-        print(f"  [SPOTIFY] get_cached_token error: {e}")
+        # Spotipy 2.26 warns for the legacy as_dict=True return shape.
+        return _extract_token(
+            auth_manager.get_access_token(as_dict=False, check_cache=False)
+        )
+    except Exception as error:
+        _spotify_log_error("get_access_token", error)
 
     return None
 
@@ -358,37 +408,16 @@ def _spotify_crear_playlist_me(
     ready, _ = _spotify_ready()
     if not ready:
         return None
-    token = _spotify_access_token()
-    if not token:
-        return None
-
-    payload = {
-        "name": name,
-        "public": bool(public),
-        "collaborative": bool(collaborative),
-        "description": description or "",
-    }
     try:
-        r = http_requests.post(
-            "https://api.spotify.com/v1/me/playlists",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=15,
+        return sp.current_user_playlist_create(
+            name=name,
+            public=bool(public),
+            collaborative=bool(collaborative),
+            description=description or "",
         )
-        if r.status_code in (200, 201):
-            return r.json()
-        if r.status_code == 403:
-            print(
-                "  [SPOTIFY] POST /me/playlists -> 403. Verifique scope 'playlist-modify-private' y allowlist."
-            )
-        else:
-            print(f"  [SPOTIFY] POST /me/playlists -> {r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        print(f"  [SPOTIFY] POST /me/playlists error: {e}")
-    return None
+    except Exception as error:
+        _spotify_log_error("current_user_playlist_create", error)
+        return None
 
 
 def _spotify_buscar_o_crear_playlist_automix(user_id: str) -> dict | None:
@@ -403,8 +432,9 @@ def _spotify_buscar_o_crear_playlist_automix(user_id: str) -> dict | None:
             for p in items:
                 owner_id = ((p.get("owner") or {}).get("id") or "").strip()
                 name = (p.get("name") or "").strip()
+                accessible = owner_id == user_id or p.get("collaborative") is True
                 if (
-                    owner_id == user_id
+                    accessible
                     and name.lower() == SPOTIFY_AUTOMIX_PLAYLIST_NAME.lower()
                 ):
                     return p
@@ -413,68 +443,46 @@ def _spotify_buscar_o_crear_playlist_automix(user_id: str) -> dict | None:
             offset += len(items)
             if len(items) == 0:
                 break
-    except Exception as e:
-        print(f"  [SPOTIFY] current_user_playlists error: {e}")
+    except Exception as error:
+        _spotify_log_error("current_user_playlists", error)
 
     descripcion = "Playlist temporal de mezcla automatica de JARVIS."
-    creada = _spotify_crear_playlist_me(
+    return _spotify_crear_playlist_me(
         name=SPOTIFY_AUTOMIX_PLAYLIST_NAME,
         public=False,
         collaborative=False,
         description=descripcion,
     )
-    if creada:
-        return creada
 
-    try:
-        return sp.current_user_create_playlist(
-            name=SPOTIFY_AUTOMIX_PLAYLIST_NAME,
-            public=False,
-            collaborative=False,
-            description=descripcion,
-        )
-    except TypeError:
-        try:
-            return sp.user_playlist_create(
-                user=user_id,
-                name=SPOTIFY_AUTOMIX_PLAYLIST_NAME,
-                public=False,
-                collaborative=False,
-                description=descripcion,
-            )
-        except Exception as e:
-            msg = str(e)
-            if "403" in msg or "Forbidden" in msg:
-                print(
-                    "  [SPOTIFY] create playlist forbidden en fallback. Falta scope 'playlist-modify-private' o token viejo."
-                )
-            else:
-                print(f"  [SPOTIFY] create playlist error (fallback): {e}")
-            return None
-    except Exception as e:
-        msg = str(e)
-        if "403" in msg or "Forbidden" in msg:
-            print(
-                "  [SPOTIFY] current_user_create_playlist forbidden. Reautentique Spotify para actualizar scopes."
-            )
-        else:
-            print(f"  [SPOTIFY] current_user_create_playlist error: {e}")
+
+def _spotify_playlist_item_track(item: dict) -> dict | None:
+    if not isinstance(item, dict):
         return None
+    for key in ("item", "track"):
+        track = item.get(key)
+        if not isinstance(track, dict):
+            continue
+        if track.get("type") not in (None, "track"):
+            continue
+        return track
+    return None
 
 
-def _spotify_obtener_uris_playlist(playlist_id: str, max_items: int = 300) -> list[str]:
+def _spotify_obtener_tracks_playlist(
+    playlist_id: str, max_items: int = 300
+) -> list[dict]:
     ready, _ = _spotify_ready()
     if not ready:
         return []
     try:
-        uris = []
+        tracks = []
         offset = 0
         max_items = max(1, int(max_items))
-        while len(uris) < max_items:
+        while len(tracks) < max_items:
             page = (
                 sp.playlist_items(
                     playlist_id=playlist_id,
-                    limit=min(100, max_items - len(uris)),
+                    limit=min(100, max_items - len(tracks)),
                     offset=offset,
                     additional_types=("track",),
                 )
@@ -483,20 +491,28 @@ def _spotify_obtener_uris_playlist(playlist_id: str, max_items: int = 300) -> li
             items = page.get("items", [])
             if not isinstance(items, list) or not items:
                 break
-            for it in items:
-                track = (it or {}).get("track") or {}
-                uri = track.get("uri")
-                if uri:
-                    uris.append(uri)
-                    if len(uris) >= max_items:
+            for item in items:
+                track = _spotify_playlist_item_track(item)
+                if track and track.get("uri"):
+                    tracks.append(track)
+                    if len(tracks) >= max_items:
                         break
             if not page.get("next"):
                 break
             offset += len(items)
-        return uris
-    except Exception as e:
-        print(f"  [SPOTIFY] playlist_items error: {e}")
+        return tracks
+    except Exception as error:
+        _spotify_log_error("playlist_items", error)
         return []
+
+
+def _spotify_obtener_uris_playlist(
+    playlist_id: str, max_items: int = 300
+) -> list[str]:
+    return [
+        track["uri"]
+        for track in _spotify_obtener_tracks_playlist(playlist_id, max_items=max_items)
+    ]
 
 
 def _spotify_reemplazar_playlist_con_uris(playlist_id: str, uris: list[str]) -> bool:
@@ -527,8 +543,8 @@ def _spotify_reemplazar_playlist_con_uris(playlist_id: str, uris: list[str]) -> 
             sp.playlist_add_items(playlist_id, parte)
         _time.sleep(0.35)
         return True
-    except Exception as e:
-        print(f"  [SPOTIFY] replace playlist items error: {e}")
+    except Exception as error:
+        _spotify_log_error("replace_playlist_items", error)
         return False
 
 
@@ -554,8 +570,8 @@ def _spotify_start_playlist_context(
             sp.start_playback(**kwargs)
         _time.sleep(0.5)
         return True
-    except Exception as e:
-        print(f"  [SPOTIFY] start playlist context error: {e}")
+    except Exception as error:
+        _spotify_log_error("start_playlist_context", error)
         return False
 
 
@@ -575,8 +591,8 @@ def _spotify_current_user_top_tracks(limit: int = 10) -> list[dict]:
             for item in page.get("items", []) or []:
                 if isinstance(item, dict):
                     tracks.append(item)
-        except Exception as e:
-            print(f"  [SPOTIFY] current_user_top_tracks error: {e}")
+        except Exception as error:
+            _spotify_log_error("current_user_top_tracks", error)
             break
         if tracks:
             break
@@ -594,8 +610,8 @@ def _spotify_recently_played_tracks(limit: int = 10) -> list[dict]:
             if isinstance(track, dict):
                 tracks.append(track)
         return tracks
-    except Exception as e:
-        print(f"  [SPOTIFY] current_user_recently_played error: {e}")
+    except Exception as error:
+        _spotify_log_error("current_user_recently_played", error)
         return []
 
 
@@ -612,37 +628,51 @@ def _spotify_artist_genres(artist_ids: list[str]) -> list[str]:
                 genre = str(genre or "").strip().lower()
                 if genre and genre not in genres:
                     genres.append(genre)
-        except Exception as e:
-            print(f"  [SPOTIFY] artist genres error: {e}")
+        except Exception as error:
+            _spotify_log_error("artist_genres", error)
     return genres
 
 
-def _spotify_user_top_genres(limit: int = 8) -> list[str]:
-    genres = []
+def _spotify_current_user_top_artists(limit: int = 8) -> list[dict]:
     if sp is None or not hasattr(sp, "current_user_top_artists"):
-        return genres
+        return []
     try:
         page = sp.current_user_top_artists(
             limit=max(1, min(int(limit), 10)),
             time_range="medium_term",
         ) or {}
-        for artist in page.get("items", []) or []:
-            for genre in (artist or {}).get("genres", []) or []:
-                genre = str(genre or "").strip().lower()
-                if genre and genre not in genres:
-                    genres.append(genre)
-    except Exception as e:
-        print(f"  [SPOTIFY] current_user_top_artists error: {e}")
+        return [
+            artist
+            for artist in page.get("items", []) or []
+            if isinstance(artist, dict)
+        ]
+    except Exception as error:
+        _spotify_log_error("current_user_top_artists", error)
+        return []
+
+
+def _spotify_user_top_genres(artists: list[dict]) -> list[str]:
+    genres = []
+    for artist in artists:
+        for genre in artist.get("genres", []) or []:
+            genre = str(genre or "").strip().lower()
+            if genre and genre not in genres:
+                genres.append(genre)
     return genres
 
 
 def _spotify_audio_feature_queries(track_id: str | None) -> list[str]:
-    if not track_id or sp is None or not hasattr(sp, "audio_features"):
+    if (
+        not SPOTIFY_EXTENDED_QUOTA_MODE
+        or not track_id
+        or sp is None
+        or not hasattr(sp, "audio_features")
+    ):
         return []
     try:
         features = (sp.audio_features([track_id]) or [None])[0] or {}
-    except Exception as e:
-        print(f"  [SPOTIFY] audio_features unavailable: {e}")
+    except Exception as error:
+        _spotify_log_error("audio_features", error)
         return []
     queries = []
     danceability = float(features.get("danceability") or 0)
@@ -660,91 +690,158 @@ def _spotify_audio_feature_queries(track_id: str | None) -> list[str]:
     return queries[:3]
 
 
-def _spotify_related_playlist_tracks(
-    seed_name: str,
-    seed_artist_names: list[str],
-    genres: list[str],
-    limit: int,
-) -> list[dict]:
-    if sp is None or not hasattr(sp, "playlist_items"):
+def _spotify_automix_context_tracks(limit: int) -> list[dict]:
+    if sp is None or not hasattr(sp, "current_user_playlists"):
         return []
-    queries = []
-    for genre in genres[:3]:
-        queries.append(f"{genre} mix")
-    for artist_name in seed_artist_names[:2]:
-        queries.append(f"{artist_name} radio")
-    if seed_name:
-        queries.append(f"{seed_name} mix")
-
-    tracks = []
-    for query in queries:
-        if len(tracks) >= limit:
-            break
-        playlists = _spotify_search_items(query, item_type="playlist", limit=5)
-        for playlist in playlists:
-            playlist_id = (playlist or {}).get("id")
-            if not playlist_id:
-                continue
-            try:
-                page = sp.playlist_items(
-                    playlist_id=playlist_id,
-                    limit=max(1, min(limit - len(tracks), 20)),
-                    additional_types=("track",),
-                ) or {}
-            except TypeError:
-                try:
-                    page = sp.playlist_items(
-                        playlist_id=playlist_id,
-                        limit=max(1, min(limit - len(tracks), 20)),
-                    ) or {}
-                except Exception as e:
-                    print(f"  [SPOTIFY] playlist recommendation error: {e}")
-                    page = {}
-            except Exception as e:
-                print(f"  [SPOTIFY] playlist recommendation error: {e}")
-                page = {}
-            for item in page.get("items", []) or []:
-                track = (item or {}).get("track")
-                if isinstance(track, dict):
-                    tracks.append(track)
-                    if len(tracks) >= limit:
-                        break
-            if len(tracks) >= limit:
+    user_id = _spotify_usuario_actual_id()
+    if not user_id:
+        return []
+    try:
+        offset = 0
+        while True:
+            page = sp.current_user_playlists(limit=50, offset=offset) or {}
+            items = page.get("items", []) or []
+            for playlist in items:
+                if not isinstance(playlist, dict):
+                    continue
+                if (
+                    str(playlist.get("name") or "").strip().lower()
+                    != SPOTIFY_AUTOMIX_PLAYLIST_NAME.lower()
+                ):
+                    continue
+                owner_id = (
+                    (playlist.get("owner") or {}).get("id") or ""
+                ).strip()
+                if owner_id != user_id and playlist.get("collaborative") is not True:
+                    continue
+                playlist_id = playlist.get("id")
+                if playlist_id:
+                    return _spotify_obtener_tracks_playlist(
+                        playlist_id,
+                        max_items=max(1, min(int(limit), 100)),
+                    )
+            if not page.get("next") or not items:
                 break
-    return tracks
+            offset += len(items)
+    except Exception as error:
+        _spotify_log_error("automix_context", error)
+    return []
 
 
 def _spotify_dynamic_mix_candidates(track: dict, limit: int) -> list[dict]:
+    limit = max(1, min(int(limit), 30))
     seed_artists = track.get("artists") or []
     seed_artist_names = [a.get("name") for a in seed_artists if a.get("name")]
     seed_artist_ids = [a.get("id") for a in seed_artists if a.get("id")]
     seed_name = str(track.get("name") or "").strip()
+    top_artists = _spotify_current_user_top_artists(limit=min(limit, 10))
 
     candidates = []
     candidates.extend(_spotify_current_user_top_tracks(limit=limit))
     candidates.extend(_spotify_recently_played_tracks(limit=limit))
+    candidates.extend(_spotify_automix_context_tracks(limit=limit))
 
     genres = []
-    for genre in _spotify_artist_genres(seed_artist_ids) + _spotify_user_top_genres():
+    for genre in (
+        _spotify_artist_genres(seed_artist_ids)
+        + _spotify_user_top_genres(top_artists)
+    ):
         if genre and genre not in genres:
             genres.append(genre)
 
-    for genre in genres[:6]:
-        candidates.extend(_spotify_search_tracks(q=f'genre:"{genre}"', limit=min(limit, 10)))
-        if len(candidates) >= limit * 3:
-            break
-
-    for query in _spotify_audio_feature_queries(track.get("id")):
-        candidates.extend(_spotify_search_tracks(q=query, limit=min(limit, 10)))
-
-    candidates.extend(
-        _spotify_related_playlist_tracks(
-            seed_name=seed_name,
-            seed_artist_names=seed_artist_names,
-            genres=genres,
-            limit=max(limit, 10),
-        )
+    queries = [f'genre:"{genre}"' for genre in genres[:4]]
+    queries.extend(f'artist:"{name}"' for name in seed_artist_names[:2])
+    queries.extend(
+        f'artist:"{artist["name"]}"'
+        for artist in top_artists[:3]
+        if artist.get("name")
     )
+    if seed_name:
+        artist_query = (
+            f' artist:"{seed_artist_names[0]}"' if seed_artist_names else ""
+        )
+        queries.append(f'track:"{seed_name}"{artist_query}')
+        queries.append(
+            " ".join([seed_name, *seed_artist_names[:1]]).strip()
+        )
+
+    seen_queries = set()
+    for query in queries:
+        normalized = query.strip().lower()
+        if not normalized or normalized in seen_queries:
+            continue
+        seen_queries.add(normalized)
+        candidates.extend(
+            _spotify_search_tracks(q=query, limit=min(limit, 10))
+        )
+        if len(candidates) >= limit * 4:
+            break
+    return candidates
+
+
+def _spotify_extended_quota_candidates(track: dict, limit: int) -> list[dict]:
+    if not SPOTIFY_EXTENDED_QUOTA_MODE or sp is None:
+        return []
+
+    limit = max(1, min(int(limit), 30))
+    track_id = track.get("id")
+    artist_ids = [
+        artist.get("id")
+        for artist in track.get("artists") or []
+        if artist.get("id")
+    ]
+    candidates = []
+
+    if hasattr(sp, "recommendations") and (track_id or artist_ids):
+        kwargs = {"limit": limit}
+        if track_id:
+            kwargs["seed_tracks"] = [track_id]
+        if artist_ids:
+            kwargs["seed_artists"] = artist_ids[:2]
+        try:
+            candidates.extend((sp.recommendations(**kwargs) or {}).get("tracks", []))
+        except Exception as error:
+            _spotify_log_error("recommendations", error)
+
+    for query in _spotify_audio_feature_queries(track_id):
+        candidates.extend(
+            _spotify_search_tracks(q=query, limit=min(limit, 10))
+        )
+
+    def _artist_top_tracks(artist_id: str) -> list[dict]:
+        if not hasattr(sp, "artist_top_tracks"):
+            return []
+        market = _spotify_market_objetivo()
+        try:
+            if market:
+                return (sp.artist_top_tracks(artist_id, country=market) or {}).get(
+                    "tracks", []
+                )
+            return (sp.artist_top_tracks(artist_id) or {}).get("tracks", [])
+        except TypeError:
+            try:
+                return (sp.artist_top_tracks(artist_id) or {}).get("tracks", [])
+            except Exception as error:
+                _spotify_log_error("artist_top_tracks", error)
+                return []
+        except Exception as error:
+            _spotify_log_error("artist_top_tracks", error)
+            return []
+
+    for artist_id in artist_ids[:2]:
+        candidates.extend(_artist_top_tracks(artist_id))
+
+    if hasattr(sp, "artist_related_artists"):
+        for artist_id in artist_ids[:2]:
+            try:
+                related = sp.artist_related_artists(artist_id) or {}
+                for artist in (related.get("artists", []) or [])[:4]:
+                    related_id = artist.get("id")
+                    if related_id:
+                        candidates.extend(_artist_top_tracks(related_id))
+            except Exception as error:
+                _spotify_log_error("artist_related_artists", error)
+
     return candidates
 
 
@@ -759,7 +856,6 @@ def _spotify_obtener_similares(track: dict, limite: int = SPOTIFY_RADIO_QUEUE_SI
     seed_name = (track.get("name") or "").lower()
     seed_artists = track.get("artists") or []
     seed_artist_names = [a.get("name") for a in seed_artists if a.get("name")]
-    seed_artist_ids = [a.get("id") for a in seed_artists if a.get("id")]
 
     print(
         f"  [SIMILARES] Construyendo mix contextual para: '{seed_name}' | Artistas: {seed_artist_names}"
@@ -807,47 +903,12 @@ def _spotify_obtener_similares(track: dict, limite: int = SPOTIFY_RADIO_QUEUE_SI
         dynamic_candidates = _spotify_dynamic_mix_candidates(track, limit=limite)
         _agregar_candidatos(dynamic_candidates, max_items=limite - len(similares))
 
-    def _artist_top_tracks(artist_id: str) -> list[dict]:
-        market = _spotify_market_objetivo()
-        try:
-            if market:
-                return (sp.artist_top_tracks(artist_id, country=market) or {}).get(
-                    "tracks", []
-                )
-            return (sp.artist_top_tracks(artist_id) or {}).get("tracks", [])
-        except TypeError:
-            try:
-                return (sp.artist_top_tracks(artist_id) or {}).get("tracks", [])
-            except Exception as e:
-                print(f"  [SIMILARES] artist_top_tracks error: {e}")
-                return []
-        except Exception as e:
-            print(f"  [SIMILARES] artist_top_tracks error: {e}")
-            return []
-
-    if len(similares) < limite:
-        for artist_id in seed_artist_ids:
-            _agregar_candidatos(_artist_top_tracks(artist_id), max_items=4)
-            if len(similares) >= limite:
-                break
-
-    if len(similares) < limite:
-        try:
-            for artist_id in seed_artist_ids[:2]:
-                related = sp.artist_related_artists(artist_id) or {}
-                for ra in (related.get("artists", []) or [])[:6]:
-                    if len(similares) >= limite:
-                        break
-                    related_id = ra.get("id")
-                    if related_id:
-                        _agregar_candidatos(
-                            _artist_top_tracks(related_id),
-                            max_items=2,
-                        )
-                if len(similares) >= limite:
-                    break
-        except Exception as e:
-            print(f"  [SIMILARES] Error en fallback de artistas similares: {e}")
+    if len(similares) < limite and SPOTIFY_EXTENDED_QUOTA_MODE:
+        extended_candidates = _spotify_extended_quota_candidates(track, limit=limite)
+        _agregar_candidatos(
+            extended_candidates,
+            max_items=limite - len(similares),
+        )
 
     if len(similares) < limite:
         for artist_name in seed_artist_names[:2]:
@@ -886,8 +947,8 @@ def _spotify_start_playlist_like(uris: list[str], device_id: str | None) -> bool
             sp.start_playback(uris=uris)
         _time.sleep(0.5)
         return True
-    except Exception as e:
-        print(f"  [SPOTIFY] start playlist-like error: {e}")
+    except Exception as error:
+        _spotify_log_error("start_playlist_like", error)
         return False
 
 
@@ -968,8 +1029,8 @@ def _spotify_set_shuffle(activar: bool, device_id: str | None) -> bool:
         else:
             sp.shuffle(state=activar)
         return True
-    except Exception as e:
-        print(f"  [SPOTIFY] shuffle error: {e}")
+    except Exception as error:
+        _spotify_log_error("shuffle", error)
         return False
 
 
@@ -980,14 +1041,17 @@ def _spotify_get_all_devices() -> list[dict]:
         return []
     try:
         return sp.devices().get("devices", []) or []
-    except Exception as e:
-        print(f"  [SPOTIFY] get_devices error: {e}")
+    except Exception as error:
+        _spotify_log_error("get_devices", error)
         return []
 
 
 def _spotify_classify_error(err: Exception | str) -> str:
     """Clasifica el error para dar mensaje específico."""
     txt = str(err or "")
+    normalized = txt.strip().lower()
+    if normalized in {"auth", "network", "no_device", "premium", "quota"}:
+        return normalized
 
     if err.__class__.__name__ in ("SpotifyException", "HTTPError"):
         status = getattr(err, "status", None) or getattr(err, "code", None)
@@ -1015,22 +1079,18 @@ def _spotify_transfer_and_play(track_uri: str, device_id: str) -> tuple[bool, st
     try:
         sp.transfer_playback(device_id=device_id, force_play=True)
         _time.sleep(0.8)
-    except Exception as e:
-        orig_exc = e
+    except Exception as error:
+        orig_exc = error
     if orig_exc:
-        err_str = str(orig_exc).lower()
-        if any(p in err_str for p in ["no active device", "not found", "no devices"]):
-            return False, "no_device"
-        return False, str(orig_exc)
+        _spotify_log_error("transfer_playback", orig_exc)
+        return False, _spotify_classify_error(orig_exc)
     try:
         sp.start_playback(device_id=device_id, uris=[track_uri])
         _time.sleep(0.5)
         return True, None
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(p in err_str for p in ["no active device", "not found", "no devices", "404"]):
-            return False, "no_device"
-        return False, str(e)
+    except Exception as error:
+        _spotify_log_error("start_playback_after_transfer", error)
+        return False, _spotify_classify_error(error)
 
 
 def _spotify_activar_cliente() -> bool:
@@ -1040,10 +1100,8 @@ def _spotify_activar_cliente() -> bool:
     try:
         _open_url_or_app("spotify:")
         return True
-    except Exception as e:
-        print(
-            f"  [SPOTIFY] I could not open the Spotify client para activar dispositivo: {e}"
-        )
+    except Exception as error:
+        _spotify_log_error("open_spotify_client", error)
         return False
 
 
@@ -1063,8 +1121,8 @@ def _spotify_queue_tracks(uris: list[str], device_id: str | None) -> int:
             else:
                 sp.add_to_queue(uri)
             encoladas += 1
-        except Exception as e:
-            print(f"  [SPOTIFY] queue error ({uri}): {e}")
+        except Exception as error:
+            _spotify_log_error("add_to_queue", error)
     return encoladas
 
 
@@ -1213,8 +1271,12 @@ def reproducir_en_spotify(cancion: str) -> str:
         _ULTIMA_CANCION_SOLICITADA = _spotify_track_plain_label(track_name, artist)
         print(f"  [SPOTIFY] Track: '{track_name}' de {artist} | URI: {track_uri}")
 
-    except Exception as e:
-        return _spotify_text(f"Error searching for the song: {e}", f"Error buscando la canción: {e}")
+    except Exception as error:
+        _spotify_log_error("prepare_playback", error)
+        return _spotify_text(
+            "Spotify could not complete the song search.",
+            "Spotify no pudo completar la búsqueda de la canción.",
+        )
 
     # ── 2. Obtener dispositivos availables ────────────────────────────
     devices = _spotify_get_all_devices()
@@ -1229,17 +1291,17 @@ def reproducir_en_spotify(cancion: str) -> str:
             _time.sleep(0.5)
             print(f"  [SPOTIFY] Estrategia A: play en activo '{activo['name']}'")
             _ULTIMA_CANCION_SOLICITADA = _spotify_track_plain_label(track_name, artist)
-        except Exception as e:
-            err_type = _spotify_classify_error(e)
-            print(f"  [SPOTIFY] Estrategia A falló: {err_type} → {e}")
+        except Exception as error:
+            err_type = _spotify_classify_error(error)
+            _spotify_log_error(f"active_device_playback_{err_type}", error)
             if err_type == "no_device":
                 pass  # sigue a estrategia B
             elif err_type in ("premium", "auth", "quota"):
                 return _mensaje_error_spotify(err_type, track_name, artist)
             else:
                 return _spotify_text(
-                    f"I could not play '{track_name}' on Spotify. Details: {e}",
-                    f"No pude reproducir '{track_name}' en Spotify. Detalle: {e}",
+                    f"I could not play '{track_name}' on Spotify right now.",
+                    f"No pude reproducir '{track_name}' en Spotify en este momento.",
                 )
         else:
             return _post_playback_ok(track_name, artist, track_uri, track_id, track=track)
@@ -1255,7 +1317,7 @@ def reproducir_en_spotify(cancion: str) -> str:
             print("  [SPOTIFY] Estrategia B: OK")
             return _post_playback_ok(track_name, artist, track_uri, track_id, track=track)
         err_type = _spotify_classify_error(err)
-        print(f"  [SPOTIFY] Estrategia B falló: {err_type} → {err}")
+        print(f"  [SPOTIFY] Estrategia B failed ({err_type}).")
         if err_type in ("premium", "auth", "quota"):
             return _mensaje_error_spotify(err_type, track_name, artist)
 
@@ -1272,9 +1334,9 @@ def reproducir_en_spotify(cancion: str) -> str:
             _time.sleep(0.5)
             print(f"  [SPOTIFY] Estrategia C: OK en '{activo_new['name']}'")
             return _post_playback_ok(track_name, artist, track_uri, track_id, track=track)
-        except Exception as e:
-            err_type = _spotify_classify_error(e)
-            print(f"  [SPOTIFY] Estrategia C falló: {err_type} → {e}")
+        except Exception as error:
+            err_type = _spotify_classify_error(error)
+            _spotify_log_error(f"reopened_device_playback_{err_type}", error)
             if err_type in ("premium", "auth", "quota"):
                 return _mensaje_error_spotify(err_type, track_name, artist)
     elif availables:
@@ -1299,9 +1361,9 @@ def reproducir_en_spotify(cancion: str) -> str:
             f"{label} could not be started automatically because there is no active device, but it was added to the Spotify queue. Open Spotify on your device and press play.",
             f"{label} no pudo reproducirse automáticamente (no hay dispositivo activo), pero fue agregada a la cola de Spotify. Abrí Spotify en tu dispositivo y dale play.",
         )
-    except Exception as e:
-        err_type = _spotify_classify_error(e)
-        print(f"  [SPOTIFY] Estrategia D falló: {err_type} → {e}")
+    except Exception as error:
+        err_type = _spotify_classify_error(error)
+        _spotify_log_error(f"fallback_queue_{err_type}", error)
         if err_type in ("premium", "auth", "quota"):
             return _mensaje_error_spotify(err_type, track_name, artist)
 
@@ -1455,13 +1517,20 @@ def controlar_reproduccion(accion: str) -> str:
                 return errores[-1]
 
         def _resolver_error_player(err: Exception, accion_humana: str) -> str:
-            if _es_error_sin_dispositivo(err):
+            error_type = _spotify_classify_error(err)
+            _spotify_log_error(f"player_control_{error_type}", err)
+            if error_type == "no_device":
                 _spotify_activar_cliente()
                 return _spotify_text(
                     f"No active Spotify device is available for {accion_humana}. Open Spotify, play any song once, and repeat the command.",
                     f"No hay dispositivo activo de Spotify para {accion_humana}. Abra Spotify, reproduzca cualquier canción una vez y repita el comando.",
                 )
-            return _spotify_text(f"I could not {accion_humana}. Details: {err}", f"No pude {accion_humana}. Detalle: {err}")
+            if error_type in {"auth", "premium", "quota"}:
+                return _mensaje_error_spotify(error_type, "playback", "Spotify")
+            return _spotify_text(
+                f"I could not {accion_humana} right now.",
+                f"No pude {accion_humana} en este momento.",
+            )
 
         if accion in ["pausar", "pausa", "detener", "detén"]:
             err = _try_player_action(
@@ -1522,8 +1591,12 @@ def controlar_reproduccion(accion: str) -> str:
                 )
             return _spotify_text("I could not disable shuffle right now.", "No pude desactivar shuffle en este momento.")
         return _spotify_text(f"Action '{accion}' not recognized.", f"Acción '{accion}' no reconocida.")
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        _spotify_log_error("control_playback", error)
+        return _spotify_text(
+            "Spotify could not complete that playback action.",
+            "Spotify no pudo completar esa acción de reproducción.",
+        )
 
 
 

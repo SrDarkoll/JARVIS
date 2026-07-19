@@ -2,7 +2,11 @@
 
 J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend and a vanilla browser frontend. The main target is Windows, although the backend and most web/API features can run on macOS and Linux when optional desktop/audio integrations are available.
 
-This project is still alpha software. Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, and voice biometrics.
+## Project Status
+
+J.A.R.V.I.S. is currently a technical beta for local development and power users. A clean clone should install and start when Git LFS model files are present. A Groq key is required for AI-generated replies, but setup diagnostics and local-only features remain available without it. This is not yet a one-click consumer installer.
+
+Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, WebView2, and voice biometrics. Windows is the primary supported desktop target.
 
 ## What Jarvis Can Do
 
@@ -33,9 +37,9 @@ This project is still alpha software. Expect hardware-specific behavior around m
 
 Recommended:
 
-- Python 3.11 or 3.12.
+- Python 3.11 or 3.12. The setup scripts reject newer Python versions for now because several ML dependencies still need a validated compatibility window. Python 3.13 remains unsupported even though `pydub` is no longer a direct dependency.
 - Git LFS before cloning, because `.onnx` voice models are stored through LFS.
-- FFmpeg on `PATH` for audio conversion.
+- FFmpeg on `PATH` for browser voice, voice identity, and Telegram OGG/Opus conversion.
 - Windows: eSpeak NG for Piper phonemization, usually installed at `C:\Program Files\eSpeak NG`.
 - Windows desktop shell: Microsoft Edge WebView2 runtime, normally already present on Windows 10/11.
 
@@ -59,6 +63,8 @@ cd J.A.R.V.I.S
 git lfs pull
 ```
 
+`git lfs pull` must download the real `.onnx` voice models. If those files are only tiny pointer files, TTS and setup validation will fail.
+
 Windows:
 
 ```powershell
@@ -69,6 +75,18 @@ Windows with test tools:
 
 ```powershell
 .\setup.ps1 -Dev
+```
+
+Windows with every optional integration:
+
+```powershell
+.\setup.ps1 -Full
+```
+
+Windows full development environment:
+
+```powershell
+.\setup.ps1 -Dev -Full
 ```
 
 Linux/macOS:
@@ -84,16 +102,38 @@ Linux/macOS with test tools:
 ./setup.sh --dev
 ```
 
+Linux/macOS with every optional integration:
+
+```bash
+./setup.sh --full
+```
+
+Linux/macOS full development environment:
+
+```bash
+./setup.sh --dev --full
+```
+
 Manual setup:
 
 ```bash
 python -m venv venv
-# Windows: .\venv\Scripts\Activate.ps1
-# Linux/macOS: source venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+# Windows:
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+# Linux/macOS:
+venv/bin/python -m pip install --upgrade pip
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements-dev.txt
+# Only for full mode:
+.\venv\Scripts\python.exe -m pip install -r requirements-optional.txt
+# Linux/macOS: venv/bin/python -m pip install -r requirements-optional.txt
 ```
+
+Run `setup.ps1` or `setup.sh` before the launcher. When the project `venv`
+exists, `start_app.py` automatically relaunches itself through that interpreter
+to avoid conflicts with packages installed in the user's global Python.
 
 ## Environment
 
@@ -103,9 +143,45 @@ Copy `.env.example` to `.env`:
 Copy-Item .env.example .env
 ```
 
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+The complete list of supported environment variables lives in `.env.example`. Keep real secrets only in `.env`.
+
 Minimum for real LLM responses:
 
-- `GROQ_API_KEY` or `MINIMAX_API_KEY`
+- `GROQ_API_KEY`
+
+Without `GROQ_API_KEY`, status and setup diagnostics, Piper TTS, and local
+preflight tools continue to work. Chat requests that need an AI provider return
+the controlled `llm_unconfigured` error with HTTP 503.
+
+## Stable Core Mode
+
+`JARVIS_CORE_MODE=true` is the default and the recommended starting point for
+new installations. It keeps Groq chat, local voice input, Piper TTS, basic
+memory, Spotify, base tools, and the web UI active.
+
+Core mode skips the subsystems most likely to make startup slow or fragile:
+
+- SpeechBrain voice biometrics
+- Hugging Face/FAISS RAG
+- Groq vision model initialization
+- Dynamic plugins
+- Startup news briefing
+- Telegram and proactive background behavior
+
+To enable the complete feature set, set `JARVIS_CORE_MODE=false`. Individual
+features can also be enabled with `JARVIS_VOICE_ID_ENABLED`,
+`JARVIS_RAG_ENABLED`, `JARVIS_VISION_ENABLED`, `JARVIS_PLUGINS_ENABLED`,
+`JARVIS_BRIEFING_ENABLED`, `JARVIS_TELEGRAM_ENABLED`, and
+`JARVIS_MONITORING_ENABLED`.
+
+`JARVIS_MONITORING_ENABLED` defaults to `false` in core mode and `true` in full
+mode. Installing APScheduler does not enable background jobs by itself.
 
 Strongly recommended before LAN access or shared-machine use:
 
@@ -116,8 +192,31 @@ Optional integrations:
 - Spotify: `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`
 - Telegram: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`
 - Search/news providers: `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`
+- Hugging Face/RAG: `HF_TOKEN`, `EMBEDDING_MODEL`, `JARVIS_HF_CACHE`
+- Optional RVC voice conversion: `JARVIS_USE_RVC`, `RVC_MODEL_PATH`, `RVC_INDEX_PATH`
+
+Environment groups:
+
+| Group | Required? | Variables |
+| --- | --- | --- |
+| LLM core | Required for real chat | `GROQ_API_KEY` |
+| Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS` |
+| Spotify | Optional | `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
+| Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
+| Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
+| Voice/audio | Optional tuning | `ESPEAK_ROOT`, `JARVIS_WHISPER_*`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
+| Runtime paths | Optional relocation | `JARVIS_RUNTIME_DIR`, `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR` |
 
 Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
+
+Useful safety checks before publishing:
+
+```powershell
+git ls-files -- .env
+git check-ignore -v .env
+```
+
+The first command should print nothing. The second should show that `.env` is ignored by `.gitignore`.
 
 ## Running
 
@@ -126,6 +225,10 @@ Recommended desktop app:
 ```powershell
 python start_app.py
 ```
+
+The launcher uses the project `venv` automatically. If it is missing, the
+launcher exits with the exact setup command instead of importing from global
+site-packages.
 
 Backend only:
 
@@ -153,29 +256,47 @@ Run all tests:
 pytest -q
 ```
 
+Release checks:
+
+```powershell
+python -m pip check
+python -m pip_audit -r requirements.txt
+python -m ruff check src/backend tests --select F
+python -m compileall -q start_app.py src/backend
+node --check src/frontend/static/js/main.js
+node --check src/frontend/static/js/modules/api.js
+git diff --check
+```
+
 `pytest.ini` restricts collection to `tests/` and ignores local runtime/cache folders. This prevents old W&B/temp directories from breaking collection on Windows.
 
 Ruff is useful for future cleanup, but it is not currently enforced as a release gate because the codebase still has legacy style debt.
 
 ## Spotify Notes
 
-Jarvis uses Spotify playback APIs and builds an AutoMix playlist/queue after a seed song or mix request. The mix strategy is:
+Jarvis uses Spotify playback APIs and builds an AutoMix playlist/queue after a seed song or mix request. Register exactly `http://127.0.0.1:8888/callback` in the Spotify developer dashboard and use the same value in `.env`; Spotify no longer accepts `localhost` redirect aliases. Delete `src/backend/.cache-jarvis` and authenticate again after changing the redirect URI or scopes.
+
+The development-mode mix strategy uses endpoints available to current apps:
 
 - start from the requested song/artist/genre seed;
 - add user top tracks when `user-top-read` is granted;
 - add recently played tracks when `user-read-recently-played` is granted;
 - add genre-based search results from seed artist genres and user top artist genres;
-- add playlist tracks from related playlist searches when the Spotify account and playlist visibility allow it;
-- fall back to album/artist context when personalization is unavailable.
+- add tracks from the seed album;
+- add artist, genre, and text-search matches, with search pages capped at Spotify's current limit;
+- use playlist contents only for playlists the current user owns or collaborates on.
 
-If you already authenticated Spotify before these scopes existed, delete `src/backend/.cache-jarvis` and authenticate again.
+Set `SPOTIFY_EXTENDED_QUOTA_MODE=true` only for an app that Spotify has actually approved for extended quota mode. In that mode Jarvis may also try Recommendations, Audio Features, Related Artists, and artist top tracks, while still degrading to the development-mode strategy if an endpoint fails.
 
 Spotify API limitations:
 
-- Spotify does not expose a general "users also listen to" endpoint for arbitrary users.
-- Some recommendation/audio-analysis style endpoints are not available to all apps or have changed over time. Jarvis treats audio features as optional and falls back when unavailable.
-- Playlist content access may be limited by Spotify app mode, ownership, collaboration, and privacy.
+- Spotify does not expose a general "users also listen to" endpoint for arbitrary users. Jarvis approximates it with the user's top/recent history, genres, album context, and catalog search.
+- Development-mode apps cannot rely on Recommendations, Audio Features, Related Artists, Spotify editorial playlists, or artist top tracks. Extended-quota apps are not affected by those development-mode restrictions.
+- Development-mode apps require the app owner to have Premium; new apps are limited to five authorized users.
+- Playlist contents are available only for playlists the current user owns or collaborates on.
 - Direct playback control requires Spotify Premium and an active device.
+
+See Spotify's official [Web API endpoint changes](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), [February 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), and [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
 
 ## GitHub-Ready Checklist
 
@@ -184,8 +305,10 @@ Before publishing or tagging a release:
 - `git lfs ls-files` shows the `.onnx` models.
 - `.env` is not tracked.
 - `.env.example` is up to date.
+- `python -m pip check` reports no broken requirements.
+- `python -m pip_audit -r requirements.txt` reports no known vulnerable runtime dependency.
 - `pytest -q` passes.
-- `python -m compileall -q src/backend` passes.
+- `python -m compileall -q start_app.py src/backend` passes.
 - `node --check src/frontend/static/js/main.js` passes.
 - `node --check src/frontend/static/js/modules/api.js` passes.
 - A clean clone can import `jarvis_backend` and answer `/api/status`.
@@ -193,8 +316,8 @@ Before publishing or tagging a release:
 ## Troubleshooting
 
 - Missing model files: run `git lfs pull`.
-- Spotify says auth expired or scopes missing: delete `src/backend/.cache-jarvis`, restart, and authenticate again.
+- Spotify says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `src/backend/.cache-jarvis`, restart, and authenticate again.
 - No Spotify device: open Spotify on a device and play one song once.
 - TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.
-- Audio conversion fails: verify FFmpeg is on `PATH`.
+- Audio conversion fails: verify FFmpeg is on `PATH`. Browser voice, voice identity, and Telegram OGG/Opus output all use FFmpeg; `pydub` is not required.
 - Missing API keys: Jarvis should still start, but provider-specific tools will return setup/configuration messages instead of crashing.

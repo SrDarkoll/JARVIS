@@ -1,11 +1,11 @@
-import time as _time
-import threading
 import logging
+import threading
+import time as _time
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
 from core import jarvis_state
 from core.brain import brain_state
+from langchain_core.messages import AIMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +41,12 @@ def _extraer_accion_pendiente_auth(
     Extrae o lee la acción pendiente de autorización, descartándola si ha expirado.
     """
     pid = str(profile_id or DEFAULT_PROFILE_ID).strip().lower() or DEFAULT_PROFILE_ID
-    
+
     with _PENDING_AUTH_LOCK:
         action = _PENDING_AUTH_ACTIONS.get(pid)
         if not action:
             return None
-        
+
         # Validar expiración (limpieza automática si pasó el tiempo)
         if _time.time() - action["created_at"] > PENDING_ACTION_TIMEOUT:
             logger.debug(f"Acción pendiente para {pid} expiró y fue descartada.")
@@ -56,7 +56,7 @@ def _extraer_accion_pendiente_auth(
         if pop:
             logger.debug(f"Acción pendiente extraída (pop) para {pid}.")
             return _PENDING_AUTH_ACTIONS.pop(pid, None)
-            
+
         return action
 
 
@@ -80,7 +80,7 @@ def _append_to_profile_history(
         perfil = jarvis_state._perfiles_memoria.setdefault(pid, {"history": [], "facts": ""})
         h = perfil.setdefault("history", [])
         h.append(human_msg)
-        
+
         if tool_results:
             # Casteo seguro a str por si el LLM devuelve un dict/list en el content
             combined = (
@@ -92,11 +92,11 @@ def _append_to_profile_history(
             h.append(AIMessage(content=combined))
         else:
             h.append(ai_msg)
-            
+
         # Truncamiento de historial a MAX_HISTORY_LENGTH
         if len(h) > MAX_HISTORY_LENGTH:
             h[:] = h[-MAX_HISTORY_LENGTH:]
-            
+
     # Mantener sincronizado el fallback global
     if pid == jarvis_state.DEFAULT_PROFILE_ID and jarvis_state._perfiles_memoria.get(pid):
         jarvis_state.chat_history[:] = jarvis_state._perfiles_memoria[pid]["history"]

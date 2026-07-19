@@ -2,25 +2,50 @@ import hashlib
 import json
 import os
 import threading
-from typing import Optional
 
+from core.jarvis_config import RAG_ENABLED
 from core.jarvis_state import DEFAULT_PROFILE_ID as _OWNER_PID
 
 # It will be attempted to import FAISS in a secure way
-try:
-    from langchain_community.vectorstores import FAISS
-    from langchain_core.documents import Document
+if RAG_ENABLED:
+    try:
+        from langchain_community.vectorstores import FAISS
+        from langchain_core.documents import Document
 
-    FAISS_DISPONIBLE = True
-except ImportError:
+        FAISS_DISPONIBLE = True
+    except Exception:
+        FAISS_DISPONIBLE = False
+else:
+    FAISS = None
+    Document = None
     FAISS_DISPONIBLE = False
 
-try:
-    # New package recommended by LangChain (avoids deprecation)
-    from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
-except ImportError:
-    # Fallback for compatibility
-    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+_HUGGINGFACE_EMBEDDINGS_CLASS = None
+_EMBEDDINGS_IMPORT_ERROR = None
+
+
+def _load_huggingface_embeddings_class():
+    global _HUGGINGFACE_EMBEDDINGS_CLASS, _EMBEDDINGS_IMPORT_ERROR
+
+    if _HUGGINGFACE_EMBEDDINGS_CLASS is not None:
+        return _HUGGINGFACE_EMBEDDINGS_CLASS
+    if _EMBEDDINGS_IMPORT_ERROR is not None:
+        return None
+
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings as embeddings_class  # type: ignore
+    except Exception as exc:
+        _EMBEDDINGS_IMPORT_ERROR = exc
+        return None
+
+    _HUGGINGFACE_EMBEDDINGS_CLASS = embeddings_class
+    return _HUGGINGFACE_EMBEDDINGS_CLASS
+
+
+def _format_embeddings_import_error() -> str:
+    if _EMBEDDINGS_IMPORT_ERROR is None:
+        return "UnknownError"
+    return type(_EMBEDDINGS_IMPORT_ERROR).__name__
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
@@ -36,8 +61,18 @@ _HF_CACHE = os.getenv("JARVIS_HF_CACHE") or os.path.join(
     "huggingface",
 )
 FAISS_MANIFEST_FILE = "index.sha256.json"
-MAX_FAISS_FILE_BYTES = int(
-    (os.getenv("JARVIS_MAX_FAISS_FILE_BYTES") or str(256 * 1024 * 1024)).strip()
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int((os.getenv(name) or str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+MAX_FAISS_FILE_BYTES = _read_positive_int_env(
+    "JARVIS_MAX_FAISS_FILE_BYTES", 256 * 1024 * 1024
 )
 
 
@@ -77,8 +112,11 @@ def _validate_faiss_index(index_dir: str) -> tuple[bool, str]:
     try:
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f) or {}
-    except Exception as e:
-        return False, f"FAISS manifest is not valid JSON: {e}"
+    except Exception as exc:
+        return False, (
+            "FAISS manifest is not valid JSON "
+            f"({type(exc).__name__})."
+        )
 
     files = _faiss_required_files(index_dir)
     expected = manifest.get("files") or {}
@@ -118,6 +156,10 @@ class MemoryRAG:
         self._lock = threading.Lock()
         self.lista = FAISS_DISPONIBLE
 
+        if not RAG_ENABLED:
+            self.lista = False
+            return
+
         if os.getenv("JARVIS_TEST_MODE") == "1":
             self.lista = False
             return
@@ -133,19 +175,31 @@ class MemoryRAG:
         from utils.jarvis_i18n import get_bt
         bt = get_bt()
         print(bt["log_rag_loading"].format(model=EMBEDDING_MODEL))
+
+        embeddings_class = _load_huggingface_embeddings_class()
+        if embeddings_class is None:
+            from core.jarvis_observability import obs_event
+
+            reason = _format_embeddings_import_error()
+            obs_event("rag_embedding_provider_unavailable", error=reason)
+            print(f"[RAG] Embedding provider unavailable ({reason}). RAG disabled.")
+            self.lista = False
+            return
+
         try:
             os.makedirs(_HF_CACHE, exist_ok=True)
             if not (os.environ.get("HF_HOME") or "").strip():
                 os.environ["HF_HOME"] = os.path.abspath(_HF_CACHE)
-            self.embeddings = HuggingFaceEmbeddings(
+            self.embeddings = embeddings_class(
                 model_name=EMBEDDING_MODEL,
                 cache_folder=os.path.join(_HF_CACHE, "embeddings"),
             )
-        except Exception as e:
+        except Exception as exc:
             from core.jarvis_observability import obs_event
 
-            obs_event("rag_init_huggingface_error", error=str(e)[:300])
-            print(f"[RAG] Failed to download/load HF model: {e}")
+            error_type = type(exc).__name__
+            obs_event("rag_init_huggingface_error", error=error_type)
+            print(f"[RAG] Failed to download/load HF model ({error_type}).")
             self.lista = False
             return
 
@@ -165,15 +219,15 @@ class MemoryRAG:
                     print(
                         bt["log_rag_ready"].format(size=self.db.index.ntotal)
                     )
-                except Exception as e:
+                except Exception as exc:
                     from core.jarvis_observability import obs_event
 
-                    obs_event(
-                        "rag_index_load_error",
-                        directory=VECTOR_DB_DIR,
-                        error=str(e)[:250],
+                    error_type = type(exc).__name__
+                    obs_event("rag_index_load_error", error=error_type)
+                    print(
+                        "[RAG] FAISS index was not readable and will be ignored "
+                        f"({error_type})."
                     )
-                    print(f"[RAG] FAISS index was not readable, it will be ignored: {e}")
                     self.db = None
 
     def agregar_interaccion(
@@ -205,15 +259,16 @@ class MemoryRAG:
                         with self._lock:
                             self.db.save_local(VECTOR_DB_DIR)
                             _write_faiss_manifest(VECTOR_DB_DIR)
-                    except Exception as ex:
-                        print(f"[RAG BG SAVE] {ex}")
+                    except Exception as exc:
+                        print(f"[RAG BG SAVE] Failed ({type(exc).__name__}).")
 
                 threading.Thread(target=_save_task, daemon=True).start()
-            except Exception as e:
+            except Exception as exc:
                 from core.jarvis_observability import obs_event
 
-                obs_event("rag_indexing_error", error=str(e)[:300])
-                print(f"[RAG] Error scheduling memory: {e}")
+                error_type = type(exc).__name__
+                obs_event("rag_indexing_error", error=error_type)
+                print(f"[RAG] Error scheduling memory ({error_type}).")
 
     def buscar_contexto(
         self, query: str, top_k: int = 3, profile_id: str = ""
@@ -264,11 +319,12 @@ class MemoryRAG:
                 texto += f"[{i}] {doc.page_content}\n"
             texto += "------------------------------------------------\n"
             return texto
-        except Exception as e:
+        except Exception as exc:
             from core.jarvis_observability import obs_event
 
-            obs_event("rag_search_error", query=(query or "")[:200], error=str(e)[:250])
-            print(f"[RAG] Error searching FAISS memory: {e}")
+            error_type = type(exc).__name__
+            obs_event("rag_search_error", error=error_type)
+            print(f"[RAG] Error searching FAISS memory ({error_type}).")
             return ""
 
 

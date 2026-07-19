@@ -1,17 +1,25 @@
 """Memoria persistente: perfiles, serialización, facts, SQLite, memoria entrelazada."""
 
-import os, re, json, threading
+import json
+import os
+import re
+import threading
+
 from langchain_core.messages import AIMessage, HumanMessage
+from services.memory_manager import memory_manager
 
 from tools._common import (
-    _texto_limpio_memoria, _normalizar_ascii, _normalizar_profile_id,
-    _profile_scope,
-    jarvis_state, memoria_lock, _perfiles_memoria, _msg_counter_by_profile,
-    DEFAULT_PROFILE_ID, SHARED_PROFILE_ID,
     BASE_DIR,
+    DEFAULT_PROFILE_ID,
+    SHARED_PROFILE_ID,
+    _normalizar_ascii,
+    _normalizar_profile_id,
+    _perfiles_memoria,
+    _profile_scope,
+    _texto_limpio_memoria,
+    jarvis_state,
+    memoria_lock,
 )
-from core.service_container import services
-from services.memory_manager import memory_manager
 
 
 def _db_path() -> str:

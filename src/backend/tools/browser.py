@@ -1,15 +1,19 @@
 """Herramientas de navegador: Playwright worker, navegador sistema, YouTube."""
 
-import os, re, threading, subprocess, webbrowser
+import os
+import re
+import subprocess
+import threading
 import time as _time
+import webbrowser
 from urllib.parse import quote_plus, urlparse, urlunparse
+
+from core.service_container import services
 from langchain_core.tools import tool
 
 from tools._common import (
-    _normalizar_destino_web,
     _open_url_or_app,
 )
-from core.service_container import services
 
 # ─────────────────────────────────────────
 # Playwright imports
@@ -20,8 +24,10 @@ PlaywrightTimeoutError = Exception
 
 try:
     from playwright.sync_api import (
-        sync_playwright as _sync_playwright,
         TimeoutError as _PlaywrightTimeoutError,
+    )
+    from playwright.sync_api import (
+        sync_playwright as _sync_playwright,
     )
     sync_playwright = _sync_playwright
     PlaywrightTimeoutError = _PlaywrightTimeoutError

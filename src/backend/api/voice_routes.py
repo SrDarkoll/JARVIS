@@ -3,14 +3,14 @@ Voice Routes: voice enrollment, registration, and main voice processing.
 The full implementation extracted from jarvis_backend.py.
 """
 
-from quart import Blueprint, request, jsonify
 import asyncio
+import os
 import sys
 import urllib.parse
 
-from voice.service import VoiceService
+from quart import Blueprint, jsonify, request
 from voice.pipeline import normalizar_confianza_transcript as _norm_conf
-import os
+from voice.service import VoiceService
 
 voice_bp = Blueprint("voice", __name__)
 voice_service = VoiceService(lambda: sys.modules[__name__])

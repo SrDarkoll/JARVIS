@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import struct
 import sys
@@ -44,6 +43,9 @@ class _SyncResponse:
 
     def get_json(self, *args, **kwargs):
         return _run_async(self._response.get_json(*args, **kwargs))
+
+    def get_data(self, *args, **kwargs):
+        return _run_async(self._response.get_data(*args, **kwargs))
 
 
 class _SyncClient:
@@ -140,7 +142,6 @@ def test_heartbeat_state_defaults():
 
 def test_import_jarvis_backend():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     assert jarvis_backend.app is not None
     rules = list(jarvis_backend.app.url_map.iter_rules())
@@ -152,7 +153,6 @@ def test_import_jarvis_backend():
 
 def test_flask_test_client_basic_routes():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
 
@@ -201,9 +201,62 @@ def test_admin_voice_registration_requires_token_off_loopback(monkeypatch):
     assert data.get("error") == "Token required for critical routes."
 
 
+def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/voice/registro/admin/iniciar",
+        headers={"Origin": "https://evil.example"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert r.status_code == 403
+    data = r.get_json() or {}
+    assert data.get("error") == "Untrusted origin for critical route."
+
+
+def test_critical_route_allows_trusted_loopback_origin_without_token(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/voice/registro/admin/iniciar",
+        headers={"Origin": "http://localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert r.status_code in (200, 503)
+
+
+def test_chat_stream_rejects_get():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.get("/api/chat/stream?message=hello")
+    assert r.status_code == 405
+
+
+def test_chat_stream_rate_limits_like_chat(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from core import jarvis_brain  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(
+        jarvis_brain,
+        "stream_procesar_mensaje_events",
+        lambda *args, **kwargs: iter([{"type": "final", "text": "ok"}]),
+    )
+
+    c = _test_client(jarvis_backend.app)
+    remote = {"REMOTE_ADDR": "127.0.0.44"}
+    first = c.post("/api/chat/stream", json={"message": "hello"}, environ_base=remote)
+    second = c.post("/api/chat/stream", json={"message": "hello"}, environ_base=remote)
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
 def test_status_endpoint_returns_telemetry():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/status/full")
@@ -213,9 +266,24 @@ def test_status_endpoint_returns_telemetry():
     assert any(k in data for k in ["cpu", "ram", "weather", "uptime"])
 
 
+def test_status_endpoint_reports_runtime_mode():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.get("/api/status")
+    assert r.status_code == 200
+    data = r.get_json() or {}
+    assert data["mode"] == "core"
+    assert data["features"]["voice_id"] is False
+    assert data["features"]["rag"] is False
+    assert data["features"]["vision"] is False
+    assert data["features"]["monitoring"] is False
+    assert isinstance(data["features"]["monitoring_available"], bool)
+    assert data["features"]["monitoring_running"] is False
+
+
 def test_noticias_endpoint_returns_202_when_not_ready():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/noticias")
@@ -227,7 +295,6 @@ def test_noticias_endpoint_returns_202_when_not_ready():
 
 def test_auth_status_endpoint():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/auth_status")
@@ -243,7 +310,6 @@ def test_auth_status_endpoint():
 
 def test_voice_registration_start_route():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/voice/registro/iniciar")
@@ -335,7 +401,6 @@ def test_owner_alias_not_registered_as_guest(monkeypatch):
 
 def test_owner_enroll_capture_requires_session():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     jarvis_backend._PENDING_VOICE_REGISTRATION.pop("127.0.0.1", None)
     c = _test_client(jarvis_backend.app)
@@ -504,7 +569,6 @@ def test_unknown_voice_registration_retry_on_failed_embedding(monkeypatch):
 
 def test_invalid_audio_returns_400_in_awaiting_name():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     ip = "__test_bad_audio__"
     jarvis_backend._PENDING_VOICE_REGISTRATION[ip] = {
@@ -530,7 +594,6 @@ def test_invalid_audio_returns_400_in_awaiting_name():
 
 def test_transcribir_audio_prefers_whisper_for_dubious_hint(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=2.6)
     calls = []
@@ -554,7 +617,6 @@ def test_transcribir_audio_prefers_whisper_for_dubious_hint(monkeypatch):
 
 def test_transcribir_audio_keeps_clear_browser_hint(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=1.0)
     calls = []
@@ -578,7 +640,6 @@ def test_transcribir_audio_keeps_clear_browser_hint(monkeypatch):
 
 def test_transcribir_audio_keeps_confident_short_question(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav_bytes = _make_test_wav(duration_s=1.1)
     calls = []
@@ -602,7 +663,6 @@ def test_transcribir_audio_keeps_confident_short_question(monkeypatch):
 
 def test_normalizar_a_wav_rejects_garbage():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Random bytes should be rejected (returns False or raises)
     _, ok = jarvis_backend._normalizar_a_wav(b"\x00\x01\x02\x03")
@@ -611,7 +671,6 @@ def test_normalizar_a_wav_rejects_garbage():
 
 def test_normalizar_a_wav_accepts_wav():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     wav = _make_test_wav(duration_s=0.5)
     _, ok = jarvis_backend._normalizar_a_wav(wav)
@@ -620,7 +679,6 @@ def test_normalizar_a_wav_accepts_wav():
 
 def test_normalizar_a_wav_accepts_ogg():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Minimal OGG header: "OggS"
     ogg = b"OggS" + b"\x00" * 20
@@ -639,7 +697,6 @@ def test_normalizar_a_wav_accepts_ogg():
 
 def test_chat_accepts_profile_id_payload():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/chat", json={"message": "hola", "profile_id": "web_test_profile"})
@@ -648,18 +705,299 @@ def test_chat_accepts_profile_id_payload():
     assert "response" in data
 
 
+def test_chat_returns_503_when_llm_is_unconfigured(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+    from core.errors import LLMUnavailableError
+
+    def unavailable(*_args, **_kwargs):
+        raise LLMUnavailableError
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", unavailable)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "explain quantum computing"},
+        environ_base={"REMOTE_ADDR": "127.0.0.177"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": "llm_unconfigured",
+        "message": "Configure GROQ_API_KEY to enable AI responses.",
+    }
+
+
+def test_chat_internal_failure_is_sanitized(monkeypatch, capsys):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("proxy-token-private-detail")
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", broken)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.178"},
+    )
+
+    captured = capsys.readouterr()
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": "chat_unavailable",
+        "message": "The AI service is temporarily unavailable.",
+    }
+    assert "proxy-token-private-detail" not in response.get_data(as_text=True)
+    assert "proxy-token-private-detail" not in captured.out + captured.err
+
+
+def test_chat_failure_does_not_retry_llm_directly(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    class FailIfInvoked:
+        calls = 0
+
+        def invoke(self, _messages):
+            self.calls += 1
+            raise AssertionError("duplicate llm invocation")
+
+    direct_llm = FailIfInvoked()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("provider failed")
+
+    monkeypatch.setattr(chat_routes.jarvis_brain, "procesar_mensaje", broken)
+    monkeypatch.setattr(chat_routes.jarvis_brain, "llm", direct_llm)
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat",
+        json={"message": "hello again"},
+        environ_base={"REMOTE_ADDR": "127.0.0.179"},
+    )
+
+    assert response.status_code == 503
+    assert direct_llm.calls == 0
+
+
+def test_chat_stream_reports_unconfigured_llm(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+    from core.errors import LLMUnavailableError
+
+    def unavailable(*_args, **_kwargs):
+        raise LLMUnavailableError
+
+    monkeypatch.setattr(
+        chat_routes.jarvis_brain,
+        "stream_procesar_mensaje_events",
+        unavailable,
+    )
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat/stream",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.180"},
+    )
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert '"code": "llm_unconfigured"' in body
+    assert "Configure GROQ_API_KEY to enable AI responses." in body
+
+
+def test_chat_stream_hides_internal_exception_text(monkeypatch, capsys):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import chat_routes
+
+    def broken_stream(*_args, **_kwargs):
+        raise RuntimeError("proxy-token-private-detail")
+
+    monkeypatch.setattr(
+        chat_routes.jarvis_brain,
+        "stream_procesar_mensaje_events",
+        broken_stream,
+    )
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/chat/stream",
+        json={"message": "hello"},
+        environ_base={"REMOTE_ADDR": "127.0.0.181"},
+    )
+    body = response.get_data(as_text=True)
+    captured = capsys.readouterr()
+
+    assert response.status_code == 200
+    assert '"code": "chat_unavailable"' in body
+    assert "proxy-token-private-detail" not in body
+    assert "proxy-token-private-detail" not in captured.out + captured.err
+
+
+def test_tool_mode_falls_back_to_plain_llm(monkeypatch):
+    from core.brain import brain_state, processor
+
+    class PlainLLM:
+        calls = 0
+
+        def invoke(self, _messages):
+            self.calls += 1
+            return type("Reply", (), {"content": "plain fallback response"})()
+
+    plain_llm = PlainLLM()
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: True)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor,
+        "_finalize_reply",
+        lambda reply, *_a, **_k: (reply, False),
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", plain_llm)
+    monkeypatch.setattr(brain_state, "llm_with_tools", None)
+    monkeypatch.setattr(brain_state, "llm_fallback", None)
+
+    reply, should_listen = processor._ejecutar_cerebro_llm("use a tool", "admin")
+
+    assert reply == "plain fallback response"
+    assert should_listen is False
+    assert plain_llm.calls == 1
+
+
+def test_processor_raises_when_llm_is_unconfigured(monkeypatch):
+    from core.brain import brain_state, processor
+    from core.errors import LLMUnavailableError
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", None)
+
+    with pytest.raises(LLMUnavailableError):
+        processor._ejecutar_cerebro_llm("needs reasoning", "admin")
+
+
+def test_processor_direct_failure_raises_sanitized_service_error(monkeypatch, capsys):
+    from core.brain import brain_state, processor
+    from core.errors import LLMServiceError
+
+    class BrokenLLM:
+        def invoke(self, _messages):
+            raise RuntimeError("provider-secret-response")
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: False)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(
+        processor.core_tools,
+        "extraer_datos_criticos",
+        lambda _text, current: current,
+    )
+    monkeypatch.setattr(brain_state, "llm", BrokenLLM())
+
+    with pytest.raises(LLMServiceError) as exc_info:
+        processor._ejecutar_cerebro_llm("needs reasoning", "admin")
+
+    captured = capsys.readouterr()
+    assert "provider-secret-response" not in str(exc_info.value)
+    assert "provider-secret-response" not in captured.out + captured.err
+
+def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
+    from core.brain import brain_state, processor
+
+    class BrokenStreamingLLM:
+        def stream(self, _messages):
+            raise RuntimeError("upstream-secret-response")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(processor, "_preflight", lambda *_a, **_k: (None, False))
+    monkeypatch.setattr(processor, "necesita_tools", lambda _text: False)
+    monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda pid: pid)
+    monkeypatch.setattr(processor.prompts, "get_system_msg", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        processor.history_manager,
+        "_get_history_for_profile",
+        lambda _pid: [],
+    )
+    monkeypatch.setattr(brain_state, "llm", BrokenStreamingLLM())
+
+    events = list(processor.stream_procesar_mensaje_events("hello", "admin"))
+    captured = capsys.readouterr()
+
+    assert events[-1] == {
+        "type": "error",
+        "code": "chat_unavailable",
+        "message": "The AI service is temporarily unavailable.",
+    }
+    assert "upstream-secret-response" not in captured.out + captured.err
+
 def test_chat_rejects_empty_message():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/chat", json={"message": ""})
     assert r.status_code == 400
 
 
+def test_chat_rejects_invalid_json_payload():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post("/api/chat", data="{bad json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    assert (r.get_json() or {}).get("error") == "Invalid JSON payload"
+
+
+def test_chat_rejects_oversized_message():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post(
+        "/api/chat",
+        json={"message": "x" * 4001},
+        environ_base={"REMOTE_ADDR": "127.0.0.145"},
+    )
+    assert r.status_code == 413
+    assert (r.get_json() or {}).get("error") == "Message too large"
+
+
+def test_chat_stream_rejects_invalid_json_payload():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    c = _test_client(jarvis_backend.app)
+    r = c.post("/api/chat/stream", data="{bad json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    assert (r.get_json() or {}).get("error") == "Invalid JSON payload"
+
+
 def test_chat_stream_endpoint_exists():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     # Should accept POST (may return 200, 400, or 503 depending on LLM state)
@@ -673,8 +1011,6 @@ def test_chat_stream_endpoint_exists():
 
 
 def test_guest_cannot_authorize_high_level_actions():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
     from utils.jarvis_auth import revocar_autorizacion  # pyright: ignore[reportMissingImports]
 
@@ -690,8 +1026,6 @@ def test_guest_cannot_authorize_high_level_actions():
 
 
 def test_owner_biometric_authorization_works():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from utils.jarvis_auth import (  # pyright: ignore[reportMissingImports]
         revocar_autorizacion,
         verificar_autorizacion,
@@ -713,12 +1047,10 @@ def test_jarvis_brain_needs_tools():
 
 
 def test_dynamic_queries_force_web_tools():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
 
     assert jarvis_brain._debe_buscar_en_web("precio actual del bitcoin") is True
-    assert jarvis_brain._debe_buscar_en_web("que sabes de minimax 2.7") is True
+    assert jarvis_brain._debe_buscar_en_web("que es groq") is True
     r, _ = jarvis_brain.procesar_mensaje(
         "precio actual del bitcoin",
         profile_id="guest_demo",
@@ -758,8 +1090,6 @@ def test_brain_handles_unknown_input():
 
 
 def test_tts_engine_pronunciation():
-    import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
     from jarvis_backend import _aplicar_pronunciacion_tts
 
     res_yt = _aplicar_pronunciacion_tts("YouTube").lower()
@@ -771,7 +1101,6 @@ def test_tts_engine_pronunciation():
 
 def test_tts_endpoint_exists():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/tts", json={"text": "hola"})
@@ -795,7 +1124,6 @@ def test_tts_returns_503_when_engine_not_loaded(monkeypatch):
 
 def test_tts_rejects_too_short_text():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/tts", json={"text": "..."})
@@ -897,7 +1225,11 @@ def test_memory_rag_store():
 def test_voice_id_preprocess_helper_from_bytes():
     import wave
     import struct
+    from core.jarvis_config import VOICE_ID_ENABLED
     from engines import voice_id  # pyright: ignore[reportMissingImports]
+
+    if not VOICE_ID_ENABLED:
+        pytest.skip("Voice biometrics are disabled in core mode.")
 
     sr = 16000
     samples = [int(32767 * 0.1)] * int(sr * 0.5)
@@ -947,10 +1279,12 @@ def test_monitoring_service_imports():
 
 
 def test_monitoring_service_scheduler():
+    from core.jarvis_config import MONITORING_ENABLED
     from services import monitoring_service  # pyright: ignore[reportMissingImports]
 
     ms = monitoring_service.monitoring_service
-    assert ms._scheduler is not None
+    expected = MONITORING_ENABLED and monitoring_service.SCHEDULER_AVAILABLE
+    assert (ms._scheduler is not None) is expected
 
 
 # =============================================================================
@@ -988,13 +1322,16 @@ def test_widget_stripping_logic():
 
 def test_briefing_once_per_day_logic():
     """Verify the briefing date guard logic works correctly."""
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     hoy = datetime.now().strftime("%Y-%m-%d")
-    ayer = datetime.now().strftime("%Y-%m-%d")  # simplified check
+    ayer = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Same day = should skip
     assert hoy == hoy
+
+    # A previous day must not be treated as today's completed briefing.
+    assert ayer != hoy
 
     # Different format should still match as string
     assert hoy == datetime.now().strftime("%Y-%m-%d")
@@ -1052,7 +1389,6 @@ def test_low_similarity_does_not_trigger_session_continuity(monkeypatch):
 def test_voice_cancel_registration():
     """POST /api/voice/cancelar should clear pending registrations."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     # Set up a fake pending registration
     jarvis_backend._PENDING_VOICE_REGISTRATION["127.0.0.1"] = {
@@ -1077,7 +1413,6 @@ def test_voice_cancel_registration():
 def test_voice_cancel_all_registrations():
     """POST /api/voice/cancelar should clear ALL if no pending for that IP."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     jarvis_backend._PENDING_VOICE_REGISTRATION.clear()
     jarvis_backend._PENDING_VOICE_REGISTRATION["10.0.0.1"] = {
@@ -1155,7 +1490,7 @@ def test_voice_route_emits_identity_debug_and_observability(monkeypatch):
     def _capture(event_type, **payload):
         events.append((event_type, payload))
 
-    from api import voice_routes; monkeypatch.setattr(voice_routes, "_obs_event", _capture)
+    monkeypatch.setattr(voice_routes, "_obs_event", _capture)
     monkeypatch.setattr(voice_routes, "_norm_a_wav", lambda b: (b"wav-ok", True))
     monkeypatch.setattr(voice_routes, "_bytes_es_wav_valido", lambda _b: True)
     monkeypatch.setattr(
@@ -1559,17 +1894,15 @@ def test_profiles_memory_detail_can_update_and_clear_facts(monkeypatch):
     assert data["history"] == []
 
 
-def test_desktop_session_uses_stable_localhost_origin(monkeypatch):
-    import os
-
+def test_desktop_session_uses_stable_localhost_origin(monkeypatch, tmp_path):
     from core.desktop_session import load_desktop_session
 
-    desktop_home = os.path.join(os.getcwd(), "scratch", "desktop_session_test")
-    monkeypatch.setenv("LOCALAPPDATA", desktop_home)
+    desktop_home = tmp_path / "desktop-home"
+    monkeypatch.setenv("JARVIS_DESKTOP_HOME", str(desktop_home))
     session = load_desktop_session(port=5002)
 
     assert session.origin == "http://localhost:5002"
-    assert desktop_home in session.webview_storage_dir
+    assert str(desktop_home) in session.webview_storage_dir
     assert session.persist_permissions is True
 
 
@@ -1657,7 +1990,6 @@ def test_healthcheck_cpu_ram_thresholds():
 def test_voice_endpoint_rejects_get():
     """POST-only endpoints should reject GET requests."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/voice")
@@ -1667,7 +1999,6 @@ def test_voice_endpoint_rejects_get():
 def test_tts_endpoint_rejects_get():
     """TTS endpoint should reject GET requests."""
     import jarvis_backend  # pyright: ignore[reportMissingImports]
-    from api import voice_routes
 
     c = _test_client(jarvis_backend.app)
     r = c.get("/api/tts")

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from langchain_core.tools import tool
-
 from core.action_plans import (
     create_action_plan,
     finish_action_plan,
@@ -16,6 +14,7 @@ from core.action_plans import (
     record_step_result,
 )
 from core.service_container import services
+from langchain_core.tools import tool
 
 
 def _loads_steps(pasos_json: str) -> list[dict[str, Any]]:

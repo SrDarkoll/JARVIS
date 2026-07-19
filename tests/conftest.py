@@ -13,22 +13,19 @@ ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / "src" / "backend"
 TEST_RUNTIME_PARENT = ROOT / "scratch" / "pytest_runtime"
 TEST_RUNTIME_PARENT.mkdir(parents=True, exist_ok=True)
-TEST_RUNTIME_DIR = TEST_RUNTIME_PARENT / f"jarvis_tests_{os.getpid()}"
-shutil.rmtree(TEST_RUNTIME_DIR, ignore_errors=True)
-TEST_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+TEST_RUNTIME_DIR = Path(
+    tempfile.mkdtemp(prefix="jarvis_tests_", dir=TEST_RUNTIME_PARENT)
+)
 TEST_TMP_DIR = TEST_RUNTIME_DIR / "tmp"
 TEST_TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-os.environ["TMP"] = str(TEST_TMP_DIR)
-os.environ["TEMP"] = str(TEST_TMP_DIR)
-os.environ["TMPDIR"] = str(TEST_TMP_DIR)
+for temp_name in ("TEMP", "TMP", "TMPDIR"):
+    os.environ[temp_name] = str(TEST_TMP_DIR)
 tempfile.tempdir = str(TEST_TMP_DIR)
 
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 os.environ.setdefault("GROQ_API_KEY", "test-key-smoke")
-os.environ.setdefault("MINIMAX_API_KEY", "test-key-smoke")
 os.environ["JARVIS_TEST_MODE"] = "1"
 os.environ["JARVIS_AUTOCURACION"] = "false"
 os.environ["JARVIS_RUNTIME_DIR"] = str(TEST_RUNTIME_DIR)

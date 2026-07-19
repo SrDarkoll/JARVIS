@@ -1,7 +1,7 @@
 import json
 import os
-import threading
 import queue
+import threading
 from datetime import datetime
 
 from core.jarvis_config import OBS_DIR, OBS_LOG_FILE
@@ -40,6 +40,8 @@ class LogWorker(threading.Thread):
                 if item is None: break
 
                 filepath, line = item
+                if not filepath:
+                    continue
                 try:
                     with open(filepath, "a", encoding="utf-8") as f:
                         f.write(line + "\n")
@@ -124,7 +126,7 @@ def obs_tail(limit: int = 80) -> list[dict]:
     if not os.path.exists(OBS_LOG_FILE):
         return []
     try:
-        with open(OBS_LOG_FILE, "r", encoding="utf-8") as f:
+        with open(OBS_LOG_FILE, encoding="utf-8") as f:
             lines = f.readlines()[-max(1, int(limit)) :]
         out = []
         for line in lines:

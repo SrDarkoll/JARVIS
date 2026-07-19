@@ -2,7 +2,7 @@
 name = "jarvis"
 version = "0.1.0"
 description = "J.A.R.V.I.S. - Local desktop AI assistant"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 
 [tool.ruff]
 target-version = "py311"
