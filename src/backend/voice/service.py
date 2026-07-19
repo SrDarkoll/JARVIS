@@ -734,6 +734,7 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
             _to_float_safe(voice_debug.get("transcript_confidence"), -1.0), 3
         ),
         "transcription_source": transcription_source,
+        "transcript": str(voice_debug.get("transcript") or "")[:500],
         "identify_decision": voice_debug.get("identify_decision") or "",
         "top_profile_id": voice_debug.get("top_profile_id") or "",
         "top_nombre": voice_debug.get("top_nombre") or "",

@@ -109,3 +109,52 @@ def test_main_uses_microphone_block_state_to_stop_automatic_retries():
     assert "microphonePermissionBlocked" in source
     assert "markMicrophonePermissionBlocked" in source
     assert "shouldRestartPassiveRecognition" in source
+
+
+def test_main_submits_audio_when_browser_transcript_is_empty():
+    source = (ROOT / "src/frontend/static/js/main.js").read_text(encoding="utf-8")
+
+    assert "detectVoiceCapabilities" in source
+    assert "classifyVoiceError" in source
+    assert "browserRecognitionDegraded" in source
+    assert "const audioBlob = await stopBiometricRecording();" in source
+    assert source.index(
+        "const audioBlob = await stopBiometricRecording();"
+    ) < source.index("if (!transcript && !hasAudio)")
+    assert "if (audioBlob && audioBlob.size > 1000)" in source
+    assert "'X-Transcript': encodeURIComponent(transcript)" in source
+    assert "recordedAudioMimeType" in source
+    assert "e.data.type" in source
+
+
+def test_voice_diagnostics_have_english_and_spanish_translations():
+    source = (ROOT / "src/frontend/static/js/i18n.js").read_text(encoding="utf-8")
+    keys = {
+        "voice_permission_denied",
+        "voice_device_missing",
+        "voice_device_busy",
+        "voice_insecure_context",
+        "voice_capture_unsupported",
+        "voice_recognition_backend_fallback",
+        "voice_recognition_network",
+        "voice_transcribing_backend",
+        "voice_no_input",
+        "voice_transcription_unavailable",
+    }
+
+    for key in keys:
+        assert source.count(f'"{key}"') == 2
+
+
+def test_main_does_not_add_a_new_push_to_talk_mode():
+    source = (ROOT / "src/frontend/static/js/main.js").read_text(
+        encoding="utf-8"
+    ).lower()
+    template = (ROOT / "src/frontend/templates/index.html").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "push-to-talk" not in source
+    assert "push-to-talk" not in template
+    assert 'id="ptt"' not in template
+    assert 'data-mode="push-to-talk"' not in template

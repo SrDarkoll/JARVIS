@@ -9,6 +9,10 @@ import {
     isMicrophonePermissionError,
     shouldRestartPassiveRecognition,
 } from './modules/recognition-policy.js';
+import {
+    classifyVoiceError,
+    detectVoiceCapabilities,
+} from './modules/voice-capabilities.js';
 import { t, setLanguage, currentLang, updateUI } from './i18n.js';
 
 // --- CONSTANTES GLOBALES ---
@@ -153,6 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let wakeWordTriggered = false;
     let mediaRecorder = null;
     let audioChunks = [];
+    let recordedAudioMimeType = '';
     let lastIdentifiedProfileId = null;
     let lastIdentifiedName = t('label_admin');
     let lastVoiceObsSignature = '';
@@ -493,7 +498,12 @@ document.addEventListener('DOMContentLoaded', () => {
             rec.onstop = async () => {
                 try {
                     stream.getTracks().forEach(t => t.stop());
-                    resolve(await convertBlobToWav(new Blob(chunks), getGlobalAudioContext(), { enhanceSpeech: false }));
+                    const chunkType = chunks.find(chunk => chunk?.type)?.type || '';
+                    resolve(await convertBlobToWav(
+                        new Blob(chunks, { type: chunkType }),
+                        getGlobalAudioContext(),
+                        { enhanceSpeech: false }
+                    ));
                 } catch { resolve(null); }
             };
             rec.start();
@@ -550,6 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
     dom.activateBtn?.addEventListener('click', () => {
         dom.activateBtn.blur();
         resetMicrophonePermissionBlock();
+        const capabilities = refreshVoiceCapabilities(true);
         if (isSpeaking) {
             interrumpirAudio();
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -562,6 +573,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentMode === 'active') {
             finishActiveListening();
         } else {
+            if (!capabilities.secureContext) {
+                ui.addLogEntry(t('voice_insecure_context'));
+                setCurrentMode('idle', 'voice_insecure_context');
+                updateButtonUI('idle');
+                return;
+            }
+            if (!capabilities.hasGetUserMedia) {
+                ui.addLogEntry(t('voice_capture_unsupported'));
+                setCurrentMode('idle', 'voice_capture_unsupported');
+                updateButtonUI('idle');
+                return;
+            }
+            if (!capabilities.hasMediaRecorder) {
+                ui.addLogEntry(t('voice_capture_unsupported'));
+            }
+            if (!capabilities.hasBrowserRecognition) {
+                browserRecognitionDegraded = true;
+                logBrowserRecognitionFallback('unsupported');
+            }
             const inactiveMode = ['passive', 'idle', 'transition'].includes(currentMode);
             if (inactiveMode) {
                 setCurrentMode('transition', 'activate_btn_handoff');
@@ -589,6 +619,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- RECONOCIMIENTO DE VOZ Y CEREBRO ---
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let voiceCapabilities = detectVoiceCapabilities(window);
     let passiveRecognition = null;
     let activeRecognition = null;
     let passiveRecognitionRunning = false;
@@ -598,6 +629,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let passiveErrorRestartPending = false;
     let microphonePermissionBlocked = false;
     let microphoneBlockLogged = false;
+    let browserRecognitionDegraded = false;
+    let browserRecognitionFallbackLogged = false;
 
     function isExpectedRecognitionStartError(err) {
         const name = String(err?.name || '').toLowerCase();
@@ -616,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: start(${kind}) skipped (admin enrollment)`);
             return false;
         }
-        if (microphonePermissionBlocked) {
+        if (microphonePermissionBlocked || browserRecognitionDegraded) {
             return false;
         }
         const recognition = kind === 'passive' ? passiveRecognition : activeRecognition;
@@ -697,7 +730,52 @@ document.addEventListener('DOMContentLoaded', () => {
         microphoneBlockLogged = false;
     }
 
-    function markMicrophonePermissionBlocked() {
+    function refreshVoiceCapabilities(explicitRetry = false) {
+        voiceCapabilities = detectVoiceCapabilities(window);
+        if (explicitRetry) {
+            browserRecognitionDegraded = false;
+            browserRecognitionFallbackLogged = false;
+        }
+        return voiceCapabilities;
+    }
+
+    function voiceErrorTranslationKey(errorType) {
+        const kind = classifyVoiceError(errorType);
+        return {
+            permission_denied: 'voice_permission_denied',
+            device_missing: 'voice_device_missing',
+            device_busy: 'voice_device_busy',
+            insecure_context: 'voice_insecure_context',
+            recognition_network: 'voice_recognition_network',
+        }[kind] || 'bio_mic_blocked';
+    }
+
+    function logBrowserRecognitionFallback(reason = 'network') {
+        if (browserRecognitionFallbackLogged) return;
+        browserRecognitionFallbackLogged = true;
+        const key = reason === 'network'
+            ? 'voice_recognition_network'
+            : 'voice_recognition_backend_fallback';
+        ui.addLogEntry(t(key));
+    }
+
+    function markBrowserRecognitionHealthy() {
+        browserRecognitionDegraded = false;
+        browserRecognitionFallbackLogged = false;
+    }
+
+    function markBrowserRecognitionDegraded(errorType = 'network') {
+        browserRecognitionDegraded = true;
+        passiveErrorRestartPending = false;
+        activeRestartPending = false;
+        clearPassiveRestartTimer();
+        clearActiveStartTimer();
+        logBrowserRecognitionFallback(
+            classifyVoiceError(errorType) === 'recognition_network' ? 'network' : 'unsupported'
+        );
+    }
+
+    function markMicrophonePermissionBlocked(errorType = '') {
         microphonePermissionBlocked = true;
         passiveErrorRestartPending = false;
         activeRestartPending = false;
@@ -720,7 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateButtonUI('idle');
         if (!microphoneBlockLogged) {
             microphoneBlockLogged = true;
-            ui.addLogEntry(t('bio_mic_blocked'));
+            ui.addLogEntry(t(voiceErrorTranslationKey(errorType)));
         }
     }
 
@@ -728,7 +806,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!shouldRestartPassiveRecognition(
             currentMode,
             adminEnrollmentActive,
-            microphonePermissionBlocked
+            microphonePermissionBlocked,
+            browserRecognitionDegraded
         )) {
             clearPassiveRestartTimer();
             return;
@@ -739,7 +818,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (shouldRestartPassiveRecognition(
                 currentMode,
                 adminEnrollmentActive,
-                microphonePermissionBlocked
+                microphonePermissionBlocked,
+                browserRecognitionDegraded
             )) {
                 safeStartRecognition('passive');
             }
@@ -748,7 +828,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function scheduleActiveRecognitionStart(delayMs = 100) {
-        if (adminEnrollmentActive) {
+        if (adminEnrollmentActive || browserRecognitionDegraded) {
             clearActiveStartTimer();
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG TIMER: active start skipped (admin enrollment)');
             return;
@@ -771,10 +851,12 @@ document.addEventListener('DOMContentLoaded', () => {
         passiveRecognition.maxAlternatives = 5;
         passiveRecognition.onstart = () => {
             passiveRecognitionRunning = true;
+            markBrowserRecognitionHealthy();
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG REC: passive onstart');
         };
 
         passiveRecognition.onresult = (event) => {
+            markBrowserRecognitionHealthy();
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 if (Date.now() < wakeWordCooldownUntil) continue;
                 if (currentMode !== 'passive') continue;
@@ -822,8 +904,12 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         passiveRecognition.onerror = (err) => {
             passiveRecognitionRunning = false;
+            if (classifyVoiceError(err.error) === 'recognition_network') {
+                markBrowserRecognitionDegraded(err.error);
+                return;
+            }
             if (isMicrophonePermissionError(err.error)) {
-                markMicrophonePermissionBlocked();
+                markMicrophonePermissionBlocked(err.error);
                 return;
             }
             if (err.error === 'no-speech' || err.error === 'aborted') {
@@ -868,11 +954,13 @@ document.addEventListener('DOMContentLoaded', () => {
         activeRecognition.onstart = () => {
             activeRecognitionRunning = true;
             activeRestartPending = false;
+            markBrowserRecognitionHealthy();
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG REC: active onstart');
         };
 
         activeRecognition.onresult = (event) => {
             if (currentMode !== 'active') return;
+            markBrowserRecognitionHealthy();
             let interimTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
@@ -900,11 +988,15 @@ document.addEventListener('DOMContentLoaded', () => {
             activeRecognitionRunning = false;
             const errType = String(event?.error || '').toLowerCase();
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: active onerror (${errType || 'unknown'})`);
-            if (isMicrophonePermissionError(errType)) {
-                markMicrophonePermissionBlocked();
+            if (classifyVoiceError(errType) === 'recognition_network') {
+                markBrowserRecognitionDegraded(errType);
                 return;
             }
-            if (errType === 'network' || errType === 'no-speech' || errType === 'aborted') {
+            if (isMicrophonePermissionError(errType)) {
+                markMicrophonePermissionBlocked(errType);
+                return;
+            }
+            if (errType === 'no-speech' || errType === 'aborted') {
                 activeRestartPending = true;
                 if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: active retry scheduled (${errType})`);
                 scheduleActiveRecognitionStart(220);
@@ -920,6 +1012,10 @@ document.addEventListener('DOMContentLoaded', () => {
             activeRecognitionRunning = false;
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG REC: active onend');
             if (currentMode === 'active') {
+                if (browserRecognitionDegraded) {
+                    if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: backend STT waiting for captured audio');
+                    return;
+                }
                 if (activeRestartPending) {
                     if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: active onend con retry pendiente');
                     return;
@@ -976,21 +1072,52 @@ document.addEventListener('DOMContentLoaded', () => {
         latestTranscriptConfidence = null;
         updateButtonUI('active');
 
+        const capabilities = refreshVoiceCapabilities();
+        if (!capabilities.secureContext) {
+            ui.addLogEntry(t('voice_insecure_context'));
+            setCurrentMode('idle', 'voice_insecure_context');
+            updateButtonUI('idle');
+            return;
+        }
+        if (!capabilities.hasGetUserMedia) {
+            ui.addLogEntry(t('voice_capture_unsupported'));
+            setCurrentMode('idle', 'voice_capture_unsupported');
+            updateButtonUI('idle');
+            return;
+        }
+        if (!capabilities.hasBrowserRecognition) {
+            browserRecognitionDegraded = true;
+            logBrowserRecognitionFallback('unsupported');
+        }
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CAPTURE_CONSTRAINTS);
             resetMicrophonePermissionBlock();
             activeAudioStream = stream;
             window._activeStartTime = Date.now();
 
-            if (withBiometry) {
+            if (withBiometry && capabilities.hasMediaRecorder) {
                 audioChunks = [];
-                mediaRecorder = createMediaRecorder(stream);
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data && e.data.size > 0) {
-                        audioChunks.push(e.data);
-                    }
-                };
-                mediaRecorder.start(100);
+                recordedAudioMimeType = '';
+                try {
+                    mediaRecorder = createMediaRecorder(stream);
+                    recordedAudioMimeType = mediaRecorder.mimeType || '';
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data && e.data.size > 0) {
+                            recordedAudioMimeType = e.data.type || recordedAudioMimeType;
+                            audioChunks.push(e.data);
+                        }
+                    };
+                    mediaRecorder.start(100);
+                } catch (_) {
+                    mediaRecorder = null;
+                    recordedAudioMimeType = '';
+                    ui.addLogEntry(t('voice_capture_unsupported'));
+                }
+            } else if (withBiometry) {
+                mediaRecorder = null;
+                recordedAudioMimeType = '';
+                ui.addLogEntry(t('voice_capture_unsupported'));
             }
 
             voice.startSilenceDetector(stream, () => {
@@ -1004,7 +1131,7 @@ document.addEventListener('DOMContentLoaded', () => {
             armActiveTimeout(9000);
         } catch (e) {
             if (isMicrophonePermissionError(e?.name)) {
-                markMicrophonePermissionBlocked();
+                markMicrophonePermissionBlocked(e?.name);
                 return;
             }
             logError('Micro', e, startPassiveListening);
@@ -1016,10 +1143,17 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     async function stopBiometricRecording() {
         const flushChunksToWav = async () => {
-            if (!audioChunks.length) return null;
-            const raw = new Blob(audioChunks, { type: 'audio/webm' });
+            if (!audioChunks.length) {
+                recordedAudioMimeType = '';
+                return null;
+            }
+            const chunkType = audioChunks.find(chunk => chunk?.type)?.type || '';
+            const raw = new Blob(audioChunks, {
+                type: chunkType || recordedAudioMimeType || 'application/octet-stream'
+            });
             const wav = await convertBlobToWav(raw, getGlobalAudioContext(), { enhanceSpeech: false });
             audioChunks = [];
+            recordedAudioMimeType = '';
             return wav || raw;
         };
 
@@ -1274,26 +1408,36 @@ document.addEventListener('DOMContentLoaded', () => {
             window._transcriptHint = null;
         }
 
-        if (!transcript) { startPassiveListening(); return; }
-        const _tl = transcript.toLowerCase();
-        ui.addLogEntry(t('log_user').replace('{text}', transcript));
-        ui.addConversationSegment('user', transcript);
-
-        // Detectar comando de registro de voz directamente
-        if (
-            _tl.includes('registra mi voz')
-            || _tl.includes('registrar mi voz')
-            || _tl.includes('register my voice')
-            || _tl.includes('enroll my voice')
-            || _tl.includes('register admin voice')
-            || _tl.includes('admin voice enrollment')
-        ) {
-            ui.addLogEntry('> BIO: Registro de voz detectado por comando.');
-            return runAdminEnrollmentWizard();
-        }
-
         try {
             const audioBlob = await stopBiometricRecording();
+            const hasAudio = !!(audioBlob && audioBlob.size > 1000);
+
+            if (!transcript && !hasAudio) {
+                ui.addLogEntry(t('voice_no_input'));
+                startPassiveListening();
+                return;
+            }
+
+            if (transcript) {
+                ui.addLogEntry(t('log_user').replace('{text}', transcript));
+                ui.addConversationSegment('user', transcript);
+            } else {
+                ui.addLogEntry(t('voice_transcribing_backend'));
+            }
+
+            const _tl = transcript.toLowerCase();
+            if (
+                _tl.includes('registra mi voz')
+                || _tl.includes('registrar mi voz')
+                || _tl.includes('register my voice')
+                || _tl.includes('enroll my voice')
+                || _tl.includes('register admin voice')
+                || _tl.includes('admin voice enrollment')
+            ) {
+                ui.addLogEntry('> BIO: Registro de voz detectado por comando.');
+                return runAdminEnrollmentWizard();
+            }
+
             let data;
             if (audioBlob && audioBlob.size > 1000) {
                 try {
@@ -1308,8 +1452,29 @@ document.addEventListener('DOMContentLoaded', () => {
                         },
                         body: audioBlob
                     });
+                    const responseType = String(res.headers.get('content-type') || '').toLowerCase();
+                    if (!responseType.includes('application/json')) {
+                        throw new Error('voice_invalid_response');
+                    }
                     data = await res.json();
+                    if (!res.ok) {
+                        throw new Error(`voice_http_${res.status}`);
+                    }
                     const dbg = data.identity_debug || {};
+                    const transcriptionSource = String(
+                        data.transcription_source || dbg.transcription_source || 'unavailable'
+                    );
+                    ui.addLogEntry(`> STT: ${transcriptionSource}`);
+                    if (!transcript) {
+                        const backendTranscript = String(dbg.transcript || '').trim();
+                        if (backendTranscript) {
+                            transcript = backendTranscript;
+                            ui.addLogEntry(t('log_user').replace('{text}', transcript));
+                            ui.addConversationSegment('user', transcript);
+                        } else if (transcriptionSource === 'unavailable') {
+                            ui.addLogEntry(t('voice_transcription_unavailable'));
+                        }
+                    }
                     const simRaw = Number(dbg.similarity ?? NaN);
                     const sim = Number.isFinite(simRaw) ? simRaw.toFixed(3) : 'N/A';
                     const topRaw = Number(dbg.top_similarity ?? NaN);
@@ -1318,9 +1483,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const reqId = dbg.request_id || 'N/A';
                     ui.addLogEntry(`> BIO: Fuente=${data.identity_source || 'desconocida'}, Perfil=${data.profile_id || 'N/A'}, Nombre=${data.nombre || 'N/A'}, Sim=${sim}, Top=${topName}(${topSim}), Req=${reqId}`);
                 } catch (bioErr) {
-                    // Fallback a modo texto si la biometría falla
-                    ui.addLogEntry(t('bio_fallback').replace('{detail}', bioErr.message));
-                    data = await getLlamaResponses(transcript);
+                    // A failed voice request returns to passive mode without retrying.
+                    console.warn('[VOICE API]', bioErr);
+                    ui.addLogEntry(t('voice_transcription_unavailable'));
+                    startPassiveListening();
+                    return;
                 }
             } else {
                 data = await getLlamaResponses(transcript);
@@ -1347,7 +1514,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         } catch (e) {
-            logError('Cerebro', e, startPassiveListening);
+            console.warn('[VOICE PROCESSING]', e);
+            ui.addLogEntry(t('voice_transcription_unavailable'));
+            startPassiveListening();
         }
     }
 

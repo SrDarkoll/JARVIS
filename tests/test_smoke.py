@@ -1547,6 +1547,8 @@ def test_voice_route_emits_identity_debug_and_observability(monkeypatch):
     assert data.get("identity_source") == "biometric_match"
     dbg = data.get("identity_debug") or {}
     assert dbg.get("request_id")
+    assert dbg.get("transcript") == "abre spotify"
+    assert dbg.get("transcription_source") == "browser"
     assert dbg.get("top_profile_id") == "admin"
     assert float(dbg.get("similarity", 0.0)) >= 0.88
 
