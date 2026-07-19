@@ -91,6 +91,25 @@ def _focus_window(handle: int) -> bool:
     return bool(user32.SetForegroundWindow(wintypes.HWND(handle)))
 
 
+def _activate_process_window(pid: int) -> bool:
+    if not IS_WINDOWS:
+        return False
+    try:
+        import pythoncom
+        from win32com.client import Dispatch
+
+        pythoncom.CoInitialize()
+        try:
+            shell = Dispatch("WScript.Shell")
+            activated = bool(shell.AppActivate(int(pid)))
+            del shell
+            return activated
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception:
+        return False
+
+
 def _foreground_window() -> int:
     if not IS_WINDOWS:
         return 0
@@ -101,11 +120,17 @@ def _window_bounds(handle: int) -> tuple[int, int, int, int]:
     if not IS_WINDOWS:
         raise OSError("spotify_desktop_windows_only")
     rectangle = wintypes.RECT()
-    if not ctypes.windll.user32.GetWindowRect(
-        wintypes.HWND(handle), ctypes.byref(rectangle)
-    ):
+    if not ctypes.windll.user32.GetWindowRect(wintypes.HWND(handle), ctypes.byref(rectangle)):
         raise OSError("spotify_window_bounds_unavailable")
     return rectangle.left, rectangle.top, rectangle.right, rectangle.bottom
+
+
+def _is_usable_spotify_window(window: SpotifyWindow) -> bool:
+    try:
+        left, top, right, bottom = _window_bounds(window.handle)
+    except OSError:
+        return False
+    return right - left >= 320 and bottom - top >= 200
 
 
 class WindowsSpotifyWindowAdapter:
@@ -116,8 +141,10 @@ class WindowsSpotifyWindowAdapter:
         windows: Callable[[], list[SpotifyWindow]] = _visible_windows,
         start_client: Callable[[], None] = _start_spotify_client,
         focus_window: Callable[[int], bool] = _focus_window,
+        activate_process_window: Callable[[int], bool] = _activate_process_window,
         foreground_window: Callable[[], int] = _foreground_window,
         window_bounds: Callable[[int], tuple[int, int, int, int]] = _window_bounds,
+        window_validator: Callable[[SpotifyWindow], bool] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval: float = 0.25,
@@ -126,8 +153,12 @@ class WindowsSpotifyWindowAdapter:
         self._windows = windows
         self._start_client = start_client
         self._focus_window = focus_window
+        self._activate_process_window = activate_process_window
         self._foreground_window = foreground_window
         self._window_bounds = window_bounds
+        self._window_validator = window_validator or (
+            _is_usable_spotify_window if windows is _visible_windows else lambda _window: True
+        )
         self._monotonic = monotonic
         self._sleep = sleep
         self._poll_interval = max(0.01, poll_interval)
@@ -135,7 +166,7 @@ class WindowsSpotifyWindowAdapter:
     def discover_window(self) -> SpotifyWindow | None:
         process_ids = self._process_ids()
         candidates = [
-            window for window in self._windows() if window.pid in process_ids
+            window for window in self._windows() if window.pid in process_ids and self._window_validator(window)
         ]
         return max(candidates, key=lambda item: len(item.title), default=None)
 
@@ -156,7 +187,10 @@ class WindowsSpotifyWindowAdapter:
                 return window
 
     def focus(self, window: SpotifyWindow) -> bool:
-        return self._focus_window(window.handle) and self.is_foreground(window)
+        focused = self._focus_window(window.handle)
+        if not focused or not self.is_foreground(window):
+            focused = self._activate_process_window(window.pid)
+        return focused and self.is_foreground(window)
 
     def is_foreground(self, window: SpotifyWindow) -> bool:
         return self._foreground_window() == window.handle
@@ -206,8 +240,8 @@ _PLAY_PATTERNS = (
     re.compile(r"^Abspielen\s+(?P<title>.+),\s+von\s+(?P<artist>.+)$", re.I),
 )
 _NOW_PLAYING_PATTERNS = (
-    re.compile(r"^Est[a\u00e1]s escuchando:\s*(?P<title>.+?)\s+de\s+(?P<artist>.+)$", re.I),
-    re.compile(r"^Now playing:\s*(?P<title>.+?)\s+by\s+(?P<artist>.+)$", re.I),
+    re.compile(r"^Est[a\u00e1]s escuchando:\s*(?P<title>.+)\s+de\s+(?P<artist>.+)$", re.I),
+    re.compile(r"^Now playing:\s*(?P<title>.+)\s+by\s+(?P<artist>.+)$", re.I),
 )
 
 
@@ -258,6 +292,46 @@ def _invoke_control(control: Any) -> bool:
             return True
         except Exception:
             return False
+
+
+def _click_control(control: Any) -> bool:
+    try:
+        control.click_input()
+        return True
+    except Exception:
+        return False
+
+
+def _is_player_control(control: Any) -> bool:
+    parent_method = getattr(control, "parent", None)
+    if not callable(parent_method):
+        return True
+    try:
+        parent = parent_method()
+    except Exception:
+        return True
+    labels = (
+        "controles del reproductor",
+        "player controls",
+        "commandes du lecteur",
+        "controlli del lettore",
+        "controles do player",
+        "wiedergabesteuerung",
+    )
+    for _depth in range(4):
+        if parent is None:
+            break
+        observed = normalize_text(_control_name(parent))
+        if any(label in observed for label in labels):
+            return True
+        next_parent = getattr(parent, "parent", None)
+        if not callable(next_parent):
+            break
+        try:
+            parent = next_parent()
+        except Exception:
+            break
+    return False
 
 
 def _parse_play_button(name: str) -> tuple[str, str] | None:
@@ -312,11 +386,12 @@ class SpotifyUIAutomationAdapter:
                 if any(label in name for label in _SEARCH_NAMES):
                     return control
                 fallback = fallback or control
-            elif control_type == "edit" and (
-                not name or any(label in name for label in _SEARCH_NAMES)
-            ):
+            elif control_type == "edit" and (not name or any(label in name for label in _SEARCH_NAMES)):
                 fallback = fallback or control
         return fallback
+
+    def search_available(self, handle: int) -> bool:
+        return self._search_control(handle) is not None
 
     def search(self, handle: int, query: str) -> None:
         clean_query = re.sub(r"\s+", " ", str(query or "")).strip()
@@ -342,6 +417,7 @@ class SpotifyUIAutomationAdapter:
             value_pattern = getattr(control, "iface_value", None)
             if value_pattern is not None:
                 value_pattern.SetValue(clean_query)
+                self._send_shortcut("{END}x{BACKSPACE}")
             else:
                 self._send_shortcut("^a{BACKSPACE}")
                 self._send_text(clean_query)
@@ -378,6 +454,10 @@ class SpotifyUIAutomationAdapter:
 
     def activate(self, candidate: SpotifyCandidate) -> bool:
         control = self._elements.get(candidate.element_id)
+        return bool(control is not None and (_click_control(control) or _invoke_control(control)))
+
+    def activate_fallback(self, candidate: SpotifyCandidate) -> bool:
+        control = self._elements.get(candidate.element_id)
         return bool(control is not None and _invoke_control(control))
 
     def control(self, handle: int, action: str) -> bool:
@@ -387,10 +467,49 @@ class SpotifyUIAutomationAdapter:
         for control in self._controls(handle):
             if _control_type(control).lower() not in {"button", "checkbox"}:
                 continue
+            if not _is_player_control(control):
+                continue
             observed = normalize_text(_control_name(control))
             if any(name in observed for name in names) and _invoke_control(control):
                 return True
         return False
+
+    def playback_state(self, handle: int) -> str | None:
+        button_names = {
+            normalize_text(_control_name(control))
+            for control in self._controls(handle)
+            if _control_type(control).lower() == "button" and _is_player_control(control)
+        }
+        if button_names & {"pause", "pausar"}:
+            return "playing"
+        if button_names & {"play", "reanudar", "reproducir", "resume"}:
+            return "paused"
+        return None
+
+    def shuffle_state(self, handle: int) -> bool | None:
+        for control in self._controls(handle):
+            if _control_type(control).lower() not in {"button", "checkbox"}:
+                continue
+            if not _is_player_control(control):
+                continue
+            observed = normalize_text(_control_name(control))
+            if any(
+                label in observed
+                for label in (
+                    "deshabilitar el modo aleatorio",
+                    "disable shuffle",
+                )
+            ):
+                return True
+            if any(
+                label in observed
+                for label in (
+                    "habilitar el modo aleatorio",
+                    "enable shuffle",
+                )
+            ):
+                return False
+        return None
 
     def now_playing(self, handle: int) -> tuple[str, str] | None:
         document_name = ""

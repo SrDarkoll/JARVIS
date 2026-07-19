@@ -1825,6 +1825,11 @@ def _spotify_control_desktop(action: str) -> str:
             "That control is not available in the current Spotify state.",
             "Ese control no esta disponible en el estado actual de Spotify.",
         )
+    if result.message_key == "spotify_control_not_verified":
+        return _spotify_text(
+            "Spotify received the control, but I could not verify the state change.",
+            "Spotify recibio el control, pero no pude verificar el cambio de estado.",
+        )
     return _spotify_text(
         "Spotify Desktop could not complete that playback action.",
         "Spotify Desktop no pudo completar esa accion de reproduccion.",

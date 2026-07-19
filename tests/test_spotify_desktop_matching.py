@@ -77,3 +77,31 @@ def test_requested_live_variant_is_not_penalized():
 def test_empty_candidates_return_not_found():
     request = SpotifyRequest(raw="missing", query="missing", title="missing")
     assert choose_candidate(request, []).status is MatchStatus.NOT_FOUND
+
+
+def test_canonical_collaboration_beats_unrequested_quarantine_variant():
+    request = SpotifyRequest(
+        raw="No te apartes de mi de Vicentico",
+        query="No te apartes de mi Vicentico",
+        title="No te apartes de mi",
+        artist="Vicentico",
+    )
+    decision = choose_candidate(
+        request,
+        [
+            candidate(
+                "No Te Apartes de M\u00ed (feat. Valeria Bertuccelli)",
+                "Vicentico, Valeria Bertuccelli",
+                "canonical",
+            ),
+            candidate(
+                "No Te Apartes de M\u00ed - Mayo 2020 Cuarentena",
+                "Vicentico",
+                "quarantine",
+            ),
+        ],
+    )
+
+    assert decision.status is MatchStatus.SELECTED
+    assert decision.selected is not None
+    assert decision.selected.element_id == "canonical"

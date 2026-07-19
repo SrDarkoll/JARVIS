@@ -659,3 +659,19 @@ def test_desktop_mode_routes_playback_controls_to_uia(monkeypatch):
 
     assert calls == ["pause"]
     assert "paused" in response.lower() or "pausada" in response.lower()
+
+
+def test_desktop_control_reports_unverified_state_change(monkeypatch):
+    class Controller:
+        def control(self, _action):
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                message_key="spotify_control_not_verified",
+            )
+
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    monkeypatch.setattr(spotify, "_get_desktop_controller", lambda: Controller())
+
+    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+
+    assert "verify" in response.lower() or "verificar" in response.lower()

@@ -1,5 +1,4 @@
 import pytest
-
 from tools.spotify_desktop.models import SpotifyCandidate
 from tools.spotify_desktop.windows import (
     SpotifyUIAutomationAdapter,
@@ -32,6 +31,25 @@ def test_existing_spotify_window_is_reused_without_starting():
 
     assert window.handle == 900
     assert starts == []
+
+
+def test_window_discovery_ignores_auxiliary_spotify_windows():
+    adapter = WindowsSpotifyWindowAdapter(
+        process_ids=lambda: {42},
+        windows=lambda: [
+            SpotifyWindow(handle=800, pid=42, title="Artist - Track"),
+            SpotifyWindow(handle=801, pid=42, title="Spotify Free"),
+        ],
+        start_client=lambda: None,
+        focus_window=lambda _handle: True,
+        window_validator=lambda window: window.handle == 801,
+    )
+
+    assert adapter.discover_window() == SpotifyWindow(
+        handle=801,
+        pid=42,
+        title="Spotify Free",
+    )
 
 
 def test_closed_spotify_is_started_and_polled_until_ready():
@@ -104,8 +122,7 @@ def test_current_title_requires_same_process_and_handle():
     )
 
     assert (
-        adapter.current_title(SpotifyWindow(handle=905, pid=42, title="Spotify"))
-        == "Expected Artist - Expected Track"
+        adapter.current_title(SpotifyWindow(handle=905, pid=42, title="Spotify")) == "Expected Artist - Expected Track"
     )
     assert adapter.current_title(SpotifyWindow(handle=904, pid=42, title="Spotify")) == ""
 
@@ -123,6 +140,29 @@ def test_bounds_are_read_for_the_verified_spotify_handle():
 
     assert adapter.bounds(window) == (10, 20, 810, 620)
     assert observed == [906]
+
+
+def test_focus_uses_app_activate_when_set_foreground_is_denied():
+    foreground = {"handle": 100}
+    activated = []
+
+    def app_activate(pid):
+        activated.append(pid)
+        foreground["handle"] = 907
+        return True
+
+    adapter = WindowsSpotifyWindowAdapter(
+        process_ids=lambda: {42},
+        windows=lambda: [SpotifyWindow(handle=907, pid=42, title="Spotify")],
+        start_client=lambda: None,
+        focus_window=lambda _handle: False,
+        activate_process_window=app_activate,
+        foreground_window=lambda: foreground["handle"],
+    )
+    window = adapter.ensure_window(timeout=1)
+
+    assert adapter.focus(window)
+    assert activated == [42]
 
 
 class FakeControl:
@@ -191,17 +231,36 @@ def test_search_uses_documented_ctrl_k_when_control_is_initially_missing():
     assert text_inputs == []
 
 
+def test_value_pattern_search_pulses_input_event_before_submit():
+    class ValuePattern:
+        def __init__(self):
+            self.value = ""
+
+        def SetValue(self, value):
+            self.value = value
+
+    search = FakeControl(name="Search", control_type="ComboBox")
+    search.set_edit_text = None
+    search.iface_value = ValuePattern()
+    shortcuts = []
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[search]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+    )
+
+    adapter.search(502, "Dreams")
+
+    assert search.iface_value.value == "Dreams"
+    assert shortcuts == ["{END}x{BACKSPACE}", "{ENTER}"]
+
+
 def test_result_play_buttons_are_mapped_to_candidates_and_deduplicated():
-    first = FakeControl(
-        name="Reproducir Killer Queen, de Queen", control_type="Button"
-    )
-    duplicate = FakeControl(
-        name="Reproducir Killer Queen, de Queen", control_type="Button"
-    )
+    first = FakeControl(name="Reproducir Killer Queen, de Queen", control_type="Button")
+    duplicate = FakeControl(name="Reproducir Killer Queen, de Queen", control_type="Button")
     root = FakeControl(children=[first, duplicate])
     adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: root)
 
-    candidates = adapter.read_candidates(502)
+    candidates = adapter.read_candidates(503)
 
     assert candidates == [
         SpotifyCandidate(
@@ -217,13 +276,32 @@ def test_result_play_buttons_are_mapped_to_candidates_and_deduplicated():
     assert not duplicate.invoked
 
 
+def test_real_input_click_is_preferred_when_the_control_supports_it():
+    class ClickableControl(FakeControl):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.clicked = False
+
+        def click_input(self):
+            self.clicked = True
+
+    play = ClickableControl(
+        name="Reproducir Killer Queen, de Queen",
+        control_type="Button",
+    )
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
+    candidate = adapter.read_candidates(503)[0]
+
+    assert adapter.activate(candidate)
+    assert play.clicked
+    assert not play.invoked
+
+
 def test_english_result_accessible_name_is_supported():
     play = FakeControl(name="Play Dreams by Fleetwood Mac", control_type="Button")
-    adapter = SpotifyUIAutomationAdapter(
-        root_factory=lambda _handle: FakeControl(children=[play])
-    )
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
 
-    assert adapter.read_candidates(503)[0].artist == "Fleetwood Mac"
+    assert adapter.read_candidates(504)[0].artist == "Fleetwood Mac"
 
 
 def test_control_uses_accessible_button_name():
@@ -231,7 +309,7 @@ def test_control_uses_accessible_button_name():
     root = FakeControl(children=[next_button])
     adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: root)
 
-    assert adapter.control(504, "next")
+    assert adapter.control(505, "next")
     assert next_button.invoked
 
 
@@ -240,8 +318,49 @@ def test_now_playing_reads_localized_accessible_metadata():
         name="Est\u00e1s escuchando: Killer Queen de Queen",
         control_type="Group",
     )
-    adapter = SpotifyUIAutomationAdapter(
-        root_factory=lambda _handle: FakeControl(children=[metadata])
-    )
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[metadata]))
 
     assert adapter.now_playing(505) == ("Killer Queen", "Queen")
+
+
+def test_now_playing_uses_last_artist_separator_when_title_contains_de():
+    metadata = FakeControl(
+        name=(
+            "Est\u00e1s escuchando: No Te Apartes de M\u00ed "
+            "(feat. Valeria Bertuccelli) de Vicentico, Valeria Bertuccelli"
+        ),
+        control_type="Group",
+    )
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[metadata]))
+
+    assert adapter.now_playing(506) == (
+        "No Te Apartes de M\u00ed (feat. Valeria Bertuccelli)",
+        "Vicentico, Valeria Bertuccelli",
+    )
+
+
+def test_playback_state_ignores_search_result_play_buttons():
+    result_button = FakeControl(
+        name="Reproducir Killer Queen, de Queen",
+        control_type="Button",
+    )
+    pause_button = FakeControl(name="Pausar", control_type="Button")
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[result_button, pause_button])
+    )
+
+    assert adapter.playback_state(507) == "playing"
+
+
+def test_playback_and_shuffle_states_use_exact_accessible_controls():
+    play_button = FakeControl(name="Reproducir", control_type="Button")
+    shuffle_button = FakeControl(
+        name="Deshabilitar el Modo aleatorio para Killer Queen",
+        control_type="Button",
+    )
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[play_button, shuffle_button])
+    )
+
+    assert adapter.playback_state(508) == "paused"
+    assert adapter.shuffle_state(508) is True
