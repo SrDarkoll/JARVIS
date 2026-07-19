@@ -2,8 +2,24 @@
 
 from pathlib import Path
 
+import pytest
+
 from core import jarvis_config
 from tools import spotify
+from tools.spotify_desktop.models import (
+    DesktopResultStatus,
+    SpotifyCandidate,
+    SpotifyDesktopResult,
+)
+
+
+@pytest.fixture(autouse=True)
+def _disable_real_spotify_client(monkeypatch):
+    """Keep unit tests independent from local credentials and OAuth state."""
+    monkeypatch.setattr(spotify, "sp", None)
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "api")
+    monkeypatch.setattr(spotify, "_spotify_api_capability_failed", False)
+    monkeypatch.setattr(spotify, "_desktop_controller", None)
 
 
 def _track(track_id: str, artist: str = "Artist") -> dict:
@@ -512,3 +528,134 @@ def test_spotify_control_rejects_stop_and_para_aliases(monkeypatch):
     for accion in ("stop", "para"):
         response = spotify.controlar_reproduccion.invoke({"accion": accion})
         assert "not recognized" in response or "no reconocida" in response
+
+
+def test_auto_mode_uses_desktop_without_cached_api_token(monkeypatch):
+    calls = []
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "auto")
+    monkeypatch.setattr(spotify, "_spotify_has_valid_cached_token", lambda: False)
+    monkeypatch.setattr(
+        spotify,
+        "_spotify_play_desktop",
+        lambda song: calls.append(song) or "desktop-ok",
+    )
+
+    assert (
+        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        == "desktop-ok"
+    )
+    assert calls == ["Killer Queen"]
+
+
+def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "api")
+    monkeypatch.setattr(
+        spotify,
+        "_spotify_play_api",
+        lambda song: spotify.SpotifyAPIPlaybackResult(
+            ok=True,
+            message=f"api:{song}",
+        ),
+    )
+    monkeypatch.setattr(
+        spotify,
+        "_spotify_play_desktop",
+        lambda _song: (_ for _ in ()).throw(
+            AssertionError("desktop must not run")
+        ),
+    )
+
+    assert (
+        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        == "api:Killer Queen"
+    )
+
+
+def test_auto_mode_falls_back_after_permanent_api_capability_failure(monkeypatch):
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "auto")
+    monkeypatch.setattr(spotify, "_spotify_has_valid_cached_token", lambda: True)
+    monkeypatch.setattr(
+        spotify,
+        "_spotify_play_api",
+        lambda _song: spotify.SpotifyAPIPlaybackResult(
+            ok=False,
+            message="blocked",
+            capability_failure=True,
+        ),
+    )
+    monkeypatch.setattr(spotify, "_spotify_play_desktop", lambda _song: "desktop-ok")
+
+    assert (
+        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        == "desktop-ok"
+    )
+    assert spotify._spotify_api_capability_failed
+
+
+def test_desktop_ambiguity_is_localized(monkeypatch):
+    result = SpotifyDesktopResult(
+        status=DesktopResultStatus.AMBIGUOUS,
+        message_key="spotify_ambiguous_results",
+        choices=(
+            SpotifyCandidate("one", "No Te Apartes de M\u00ed", "Vicentico"),
+            SpotifyCandidate("two", "No Te Apartes de M\u00ed", "Roberto Carlos"),
+        ),
+    )
+    monkeypatch.setattr(spotify, "_spotify_desktop_result", lambda _song: result)
+
+    message = spotify._spotify_play_desktop("No te apartes de mi")
+
+    assert "Vicentico" in message
+    assert "Roberto Carlos" in message
+
+
+def test_desktop_search_uses_a_natural_query_not_web_api_syntax():
+    request_data = spotify._spotify_desktop_request(
+        "No te apartes de mi de Vicentico"
+    )
+
+    assert request_data.query == "no te apartes de mi vicentico"
+    assert "track:" not in request_data.query
+    assert request_data.artist == "vicentico"
+
+
+def test_cached_token_probe_never_starts_oauth(monkeypatch):
+    class CacheHandler:
+        def get_cached_token(self):
+            return {"access_token": "cached"}
+
+    class AuthManager:
+        cache_handler = CacheHandler()
+
+        def validate_token(self, token):
+            return token
+
+        def get_access_token(self, **_kwargs):
+            raise AssertionError("cache probe must not start OAuth")
+
+    class FakeSpotify:
+        auth_manager = AuthManager()
+
+    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+
+    assert spotify._spotify_has_valid_cached_token()
+
+
+def test_desktop_mode_routes_playback_controls_to_uia(monkeypatch):
+    calls = []
+
+    class Controller:
+        def control(self, action):
+            calls.append(action)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.SUCCESS,
+                message_key="spotify_control_complete",
+            )
+
+    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    monkeypatch.setattr(spotify, "_get_desktop_controller", lambda: Controller())
+
+    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+
+    assert calls == ["pause"]
+    assert "paused" in response.lower() or "pausada" in response.lower()

@@ -3,7 +3,9 @@
 import ipaddress
 import os
 import re
+import threading
 import time as _time
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import spotipy
@@ -15,6 +17,13 @@ from langchain_core.tools import tool
 from utils.jarvis_i18n import get_current_language
 
 from tools._common import _open_url_or_app
+from tools.spotify_desktop import (
+    DesktopResultStatus,
+    SpotifyDesktopResult,
+    SpotifyRequest,
+    build_windows_controller,
+)
+from tools.spotify_desktop.matching import normalize_text
 
 # ─────────────────────────────────────────
 # Configuración y autenticación
@@ -91,8 +100,19 @@ SPOTIFY_MODO_SIMILARES = jarvis_config.SPOTIFY_MODO_SIMILARES
 SPOTIFY_AUTO_SHUFFLE = jarvis_config.SPOTIFY_AUTO_SHUFFLE
 SPOTIFY_EXTENDED_QUOTA_MODE = jarvis_config.SPOTIFY_EXTENDED_QUOTA_MODE
 SPOTIFY_AUTOMIX_PLAYLIST_NAME = jarvis_config.SPOTIFY_AUTOMIX_PLAYLIST_NAME or "JARVIS AutoMix"
+SPOTIFY_PLAYBACK_MODE = jarvis_config.SPOTIFY_PLAYBACK_MODE
 _ULTIMA_CANCION_SOLICITADA = ""
 _SPOTIFY_USER_COUNTRY = ""
+_desktop_controller = None
+_desktop_controller_lock = threading.Lock()
+_spotify_api_capability_failed = False
+
+
+@dataclass(frozen=True)
+class SpotifyAPIPlaybackResult:
+    ok: bool
+    message: str
+    capability_failure: bool = False
 
 
 def _spotify_is_english() -> bool:
@@ -104,11 +124,15 @@ def _spotify_text(en: str, es: str) -> str:
 
 
 def _spotify_track_label(track_name: str, artist: str) -> str:
+    if not artist:
+        return f"'{track_name}'"
     connector = "by" if _spotify_is_english() else "de"
     return f"'{track_name}' {connector} {artist}"
 
 
 def _spotify_track_plain_label(track_name: str, artist: str) -> str:
+    if not artist:
+        return track_name
     connector = "by" if _spotify_is_english() else "de"
     return f"{track_name} {connector} {artist}"
 
@@ -326,6 +350,22 @@ def _spotify_access_token() -> str | None:
         _spotify_log_error("get_access_token", error)
 
     return None
+
+
+def _spotify_has_valid_cached_token() -> bool:
+    """Check cached OAuth state without starting an authorization flow."""
+    if sp is None:
+        return False
+    manager = getattr(sp, "auth_manager", None)
+    handler = getattr(manager, "cache_handler", None)
+    if manager is None or handler is None:
+        return False
+    try:
+        token = handler.get_cached_token()
+        return bool(token and manager.validate_token(token))
+    except Exception as error:
+        _spotify_log_error("cached_token_probe", error)
+        return False
 
 
 def _spotify_dispositivo_objetivo():
@@ -1215,8 +1255,7 @@ def _inferir_query_track_artist_tail(raw: str) -> tuple[str, str, str] | None:
 # ─────────────────────────────────────────
 # Tools
 # ─────────────────────────────────────────
-@tool
-def reproducir_en_spotify(cancion: str) -> str:
+def _spotify_play_api_message(cancion: str) -> str:
     """Reproduce una canción con estrategia en cascada: dispositivo activo, transferencia, apertura, cola.
 
     Nunca retorna error genérico. Cada fallo tiene mensaje específico.
@@ -1381,6 +1420,191 @@ def reproducir_en_spotify(cancion: str) -> str:
     )
 
 
+_API_CAPABILITY_MARKERS = (
+    "blocked",
+    "developer access",
+    "forbidden",
+    "invalid grant",
+    "no active spotify device",
+    "no hay dispositivo activo",
+    "not configured",
+    "no esta configurado",
+    "premium",
+    "redirect",
+    "redireccion",
+    "session expired",
+    "sesion de spotify vencio",
+)
+
+
+def _spotify_api_message_is_success(message: str) -> bool:
+    normalized = normalize_text(message)
+    return normalized.startswith(("playing ", "reproduciendo "))
+
+
+def _spotify_play_api(song: str) -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no esta configurada.",
+            ),
+            capability_failure=True,
+        )
+
+    message = _spotify_play_api_message(song)
+    normalized = normalize_text(message)
+    ok = _spotify_api_message_is_success(message)
+    capability_failure = not ok or any(
+        normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS
+    )
+    return SpotifyAPIPlaybackResult(
+        ok=ok,
+        message=message,
+        capability_failure=capability_failure,
+    )
+
+
+def _get_desktop_controller():
+    global _desktop_controller
+    if _desktop_controller is None:
+        with _desktop_controller_lock:
+            if _desktop_controller is None:
+                _desktop_controller = build_windows_controller(
+                    start_timeout=jarvis_config.SPOTIFY_DESKTOP_START_TIMEOUT,
+                    action_timeout=jarvis_config.SPOTIFY_DESKTOP_ACTION_TIMEOUT,
+                )
+    return _desktop_controller
+
+
+def _parse_spotify_desktop_query(song: str) -> tuple[str, str]:
+    clean_song = _PREFIJOS_SPOTIFY.sub("", str(song or "")).strip()
+    connectors = list(
+        re.finditer(r"\s+(de|by|of|del|por)\s+", clean_song, flags=re.IGNORECASE)
+    )
+    if not connectors:
+        return clean_song.lower(), ""
+
+    separator = connectors[-1]
+    connector = separator.group(1).lower()
+    title = clean_song[: separator.start()].strip()
+    artist = clean_song[separator.end() :].strip()
+    artist_words = normalize_text(artist).split()
+    ambiguous_tail = bool(
+        not artist_words
+        or artist_words[0]
+        in {"a", "al", "el", "la", "las", "los", "me", "mi", "mis", "my", "the", "ti"}
+    )
+    single_weak_connector = len(connectors) == 1 and connector in {"de", "del", "of"}
+    if not title or not artist or (single_weak_connector and ambiguous_tail):
+        return clean_song.lower(), ""
+    return title.lower(), artist.lower()
+
+
+def _spotify_desktop_request(song: str) -> SpotifyRequest:
+    title, artist = _parse_spotify_desktop_query(song)
+    natural_query = " ".join(part for part in (title, artist) if part).strip()
+    if not natural_query:
+        natural_query = _PREFIJOS_SPOTIFY.sub("", song).strip()
+    return SpotifyRequest(
+        raw=song,
+        query=natural_query,
+        title=title or natural_query,
+        artist=artist,
+    )
+
+
+def _spotify_desktop_result(song: str) -> SpotifyDesktopResult:
+    return _get_desktop_controller().play(_spotify_desktop_request(song))
+
+
+def _spotify_play_desktop(song: str) -> str:
+    global _ULTIMA_CANCION_SOLICITADA
+    result = _spotify_desktop_result(song)
+    if result.status is DesktopResultStatus.SUCCESS:
+        _ULTIMA_CANCION_SOLICITADA = _spotify_track_plain_label(
+            result.title,
+            result.artist,
+        )
+        return _spotify_text(
+            f"Playing {_spotify_track_label(result.title, result.artist)} through Spotify Desktop.",
+            f"Reproduciendo {_spotify_track_label(result.title, result.artist)} mediante Spotify Desktop.",
+        )
+    if result.status is DesktopResultStatus.AMBIGUOUS:
+        choices = "; ".join(
+            _spotify_track_plain_label(item.title, item.artist)
+            for item in result.choices
+        )
+        return _spotify_text(
+            f"I found several close matches: {choices}. Which one should I play?",
+            f"Encontre varias coincidencias: {choices}. Cual debo reproducir?",
+        )
+
+    messages = {
+        "spotify_no_results": _spotify_text(
+            "I could not find that item in Spotify Desktop.",
+            "No encontre ese contenido en Spotify Desktop.",
+        ),
+        "spotify_focus_lost": _spotify_text(
+            "Spotify lost focus before I could safely complete the search.",
+            "Spotify perdio el foco antes de completar la busqueda de forma segura.",
+        ),
+        "spotify_start_timeout": _spotify_text(
+            "Spotify Desktop did not become ready in time.",
+            "Spotify Desktop no estuvo listo a tiempo.",
+        ),
+        "spotify_playback_not_verified": _spotify_text(
+            "Spotify received the command, but I could not verify the requested track.",
+            "Spotify recibio el comando, pero no pude verificar la cancion solicitada.",
+        ),
+        "spotify_search_unavailable": _spotify_text(
+            "Spotify Desktop search is not accessible in the current layout.",
+            "La busqueda de Spotify Desktop no es accesible en el diseno actual.",
+        ),
+        "spotify_cancelled": _spotify_text(
+            "The previous Spotify request was replaced by a newer command.",
+            "La solicitud anterior de Spotify fue reemplazada por un comando nuevo.",
+        ),
+        "spotify_automation_busy": _spotify_text(
+            "Spotify Desktop is still processing another command.",
+            "Spotify Desktop todavia esta procesando otro comando.",
+        ),
+    }
+    return messages.get(
+        result.message_key,
+        _spotify_text(
+            "Spotify Desktop automation is unavailable.",
+            "La automatizacion de Spotify Desktop no esta disponible.",
+        ),
+    )
+
+
+@tool
+def reproducir_en_spotify(cancion: str) -> str:
+    """Play music using a cached Spotify API session or Spotify Desktop on Windows."""
+    global _spotify_api_capability_failed
+    song = str(cancion or "").strip()
+    if not song:
+        return _spotify_text("Tell me what to play.", "Dime que deseas reproducir.")
+    if SPOTIFY_PLAYBACK_MODE == "desktop":
+        return _spotify_play_desktop(song)
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (
+        _spotify_api_capability_failed or not _spotify_has_valid_cached_token()
+    ):
+        return _spotify_play_desktop(song)
+
+    api_result = _spotify_play_api(song)
+    if api_result.ok or SPOTIFY_PLAYBACK_MODE == "api":
+        return api_result.message
+    if api_result.capability_failure:
+        _spotify_api_capability_failed = True
+        return _spotify_play_desktop(song)
+    return api_result.message
+
+
 def _play_spotify_seed(seed: str) -> str:
     return reproducir_en_spotify.invoke({"cancion": seed})
 
@@ -1394,7 +1618,15 @@ def reproducir_mix_spotify(semilla: str) -> str:
             "Tell me an artist, genre, playlist, or song to build the mix.",
             "Dime un artista, genero, playlist o cancion para construir el mix.",
         )
-    return _play_spotify_seed(seed)
+    response = _play_spotify_seed(seed)
+    if "Spotify Desktop" in response and (
+        "Playing " in response or "Reproduciendo " in response
+    ):
+        return response + " " + _spotify_text(
+            "Spotify Desktop will continue the mix using its own autoplay and recommendations.",
+            "Spotify Desktop continuara el mix con su reproduccion automatica y recomendaciones.",
+        )
+    return response
 
 
 def _mensaje_error_spotify(tipo: str, track_name: str, artist: str) -> str:
@@ -1491,8 +1723,141 @@ def _post_playback_ok(
     )
 
 
+def _spotify_control_api(action: str) -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no esta configurada.",
+            ),
+            capability_failure=True,
+        )
+    message = _spotify_control_api_message(action)
+    normalized = normalize_text(message)
+    success_prefixes = (
+        "playback paused",
+        "playback resumed",
+        "reproduccion pausada",
+        "reproduccion reanudada",
+        "next track",
+        "siguiente cancion",
+        "previous track",
+        "cancion anterior",
+        "shuffle enabled",
+        "shuffle activado",
+        "shuffle disabled",
+        "shuffle desactivado",
+    )
+    ok = normalized.startswith(success_prefixes)
+    unrecognized = "not recognized" in normalized or "no reconocida" in normalized
+    capability_failure = (not ok and not unrecognized) or any(
+        normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS
+    )
+    return SpotifyAPIPlaybackResult(
+        ok=ok,
+        message=message,
+        capability_failure=capability_failure,
+    )
+
+
+_DESKTOP_CONTROL_ALIASES = {
+    "pausar": "pause",
+    "pausa": "pause",
+    "detener": "pause",
+    "deten": "pause",
+    "reanudar": "resume",
+    "continuar": "resume",
+    "play": "resume",
+    "resume": "resume",
+    "siguiente": "next",
+    "next": "next",
+    "skip": "next",
+    "anterior": "previous",
+    "prev": "previous",
+    "atras": "previous",
+    "shuffle on": "shuffle_on",
+    "activar shuffle": "shuffle_on",
+    "activa shuffle": "shuffle_on",
+    "mezcla on": "shuffle_on",
+    "aleatorio on": "shuffle_on",
+    "aleatorio": "shuffle_on",
+    "shuffle off": "shuffle_off",
+    "desactivar shuffle": "shuffle_off",
+    "desactiva shuffle": "shuffle_off",
+    "mezcla off": "shuffle_off",
+    "aleatorio off": "shuffle_off",
+}
+
+
+def _spotify_desktop_control_action(action: str) -> str | None:
+    return _DESKTOP_CONTROL_ALIASES.get(normalize_text(action))
+
+
+def _spotify_control_desktop(action: str) -> str:
+    canonical = _spotify_desktop_control_action(action)
+    if canonical is None:
+        return _spotify_text(
+            f"Action '{action}' not recognized.",
+            f"Accion '{action}' no reconocida.",
+        )
+
+    result = _get_desktop_controller().control(canonical)
+    if result.status is DesktopResultStatus.SUCCESS:
+        messages = {
+            "pause": _spotify_text("Playback paused.", "Reproduccion pausada."),
+            "resume": _spotify_text("Playback resumed.", "Reproduccion reanudada."),
+            "next": _spotify_text("Next track.", "Siguiente cancion."),
+            "previous": _spotify_text("Previous track.", "Cancion anterior."),
+            "shuffle_on": _spotify_text("Shuffle enabled.", "Shuffle activado."),
+            "shuffle_off": _spotify_text("Shuffle disabled.", "Shuffle desactivado."),
+        }
+        return messages[canonical]
+    if result.message_key == "spotify_focus_lost":
+        return _spotify_text(
+            "Spotify lost focus before I could safely complete that action.",
+            "Spotify perdio el foco antes de completar la accion de forma segura.",
+        )
+    if result.message_key == "spotify_action_restricted":
+        return _spotify_text(
+            "That control is not available in the current Spotify state.",
+            "Ese control no esta disponible en el estado actual de Spotify.",
+        )
+    return _spotify_text(
+        "Spotify Desktop could not complete that playback action.",
+        "Spotify Desktop no pudo completar esa accion de reproduccion.",
+    )
+
+
 @tool
 def controlar_reproduccion(accion: str) -> str:
+    """Control Spotify through a cached API session or Spotify Desktop."""
+    global _spotify_api_capability_failed
+    action = str(accion or "").strip()
+    if not action:
+        return _spotify_text(
+            "Tell me which playback action to perform.",
+            "Dime que accion de reproduccion debo realizar.",
+        )
+    if SPOTIFY_PLAYBACK_MODE == "desktop":
+        return _spotify_control_desktop(action)
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (
+        _spotify_api_capability_failed or not _spotify_has_valid_cached_token()
+    ):
+        return _spotify_control_desktop(action)
+
+    api_result = _spotify_control_api(action)
+    if api_result.ok or SPOTIFY_PLAYBACK_MODE == "api":
+        return api_result.message
+    if api_result.capability_failure:
+        _spotify_api_capability_failed = True
+        return _spotify_control_desktop(action)
+    return api_result.message
+
+
+def _spotify_control_api_message(accion: str) -> str:
     """Controla Spotify: pausar, reanudar, siguiente, anterior, shuffle on/off."""
     ready, err = _spotify_ready()
     if not ready:
