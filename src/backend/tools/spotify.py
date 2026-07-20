@@ -9,11 +9,10 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import spotipy
+from core import jarvis_config, jarvis_state
+from langchain_core.tools import tool
 from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyOAuth
-
-from core import jarvis_config
-from langchain_core.tools import tool
 from utils.jarvis_i18n import get_current_language
 
 from tools._common import _open_url_or_app
@@ -23,7 +22,9 @@ from tools.spotify_desktop import (
     SpotifyRequest,
     build_windows_controller,
 )
+from tools.spotify_desktop.followup import pending_spotify_selections
 from tools.spotify_desktop.matching import normalize_text
+
 
 # ─────────────────────────────────────────
 # Configuración y autenticación
@@ -1524,7 +1525,9 @@ def _spotify_desktop_result(song: str) -> SpotifyDesktopResult:
 def _spotify_play_desktop(song: str) -> str:
     global _ULTIMA_CANCION_SOLICITADA
     result = _spotify_desktop_result(song)
+    profile_id = jarvis_state.get_active_profile_id()
     if result.status is DesktopResultStatus.SUCCESS:
+        pending_spotify_selections.clear(profile_id)
         _ULTIMA_CANCION_SOLICITADA = _spotify_track_plain_label(
             result.title,
             result.artist,
@@ -1534,6 +1537,7 @@ def _spotify_play_desktop(song: str) -> str:
             f"Reproduciendo {_spotify_track_label(result.title, result.artist)} mediante Spotify Desktop.",
         )
     if result.status is DesktopResultStatus.AMBIGUOUS:
+        pending_spotify_selections.remember(profile_id, result.choices)
         choices = "; ".join(
             _spotify_track_plain_label(item.title, item.artist)
             for item in result.choices
@@ -1543,6 +1547,7 @@ def _spotify_play_desktop(song: str) -> str:
             f"Encontre varias coincidencias: {choices}. Cual debo reproducir?",
         )
 
+    pending_spotify_selections.clear(profile_id)
     messages = {
         "spotify_no_results": _spotify_text(
             "I could not find that item in Spotify Desktop.",
@@ -1589,6 +1594,7 @@ def reproducir_en_spotify(cancion: str) -> str:
     song = str(cancion or "").strip()
     if not song:
         return _spotify_text("Tell me what to play.", "Dime que deseas reproducir.")
+    pending_spotify_selections.clear(jarvis_state.get_active_profile_id())
     if SPOTIFY_PLAYBACK_MODE == "desktop":
         return _spotify_play_desktop(song)
     if SPOTIFY_PLAYBACK_MODE == "auto" and (

@@ -607,6 +607,7 @@ def test_desktop_ambiguity_is_localized(monkeypatch):
 
     assert "Vicentico" in message
     assert "Roberto Carlos" in message
+    spotify.pending_spotify_selections.clear("admin")
 
 
 def test_desktop_search_uses_a_natural_query_not_web_api_syntax():

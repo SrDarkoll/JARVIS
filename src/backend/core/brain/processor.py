@@ -29,6 +29,11 @@ from core.jarvis_state import DEFAULT_PROFILE_ID
 from core.service_container import services
 from engines.memory_rag import rag_motor
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from tools.spotify_desktop.followup import (
+    SpotifySelectionStatus,
+    pending_spotify_selections,
+)
+from utils.jarvis_i18n import get_current_language
 from utils.jarvis_text import reparar_unicode
 
 
@@ -164,6 +169,53 @@ def _preflight_compuesto(user_input: str, profile_id: str) -> tuple[str | None, 
     return router._format_compound_results(results), should_listen
 
 
+def _resolve_pending_spotify_selection(
+    user_input: str,
+    profile_id: str,
+) -> tuple[str | None, bool]:
+    resolution = pending_spotify_selections.resolve(profile_id, user_input)
+    if resolution is None or resolution.status is SpotifySelectionStatus.UNRELATED:
+        return None, False
+
+    english = get_current_language().startswith("en")
+    if resolution.status is SpotifySelectionStatus.CANCELLED:
+        return (
+            "Spotify selection cancelled."
+            if english
+            else "Selección de Spotify cancelada."
+        ), False
+    if resolution.status is SpotifySelectionStatus.CLARIFY:
+        choices = "; ".join(
+            f"{index + 1}: {item.title} de {item.artist}"
+            for index, item in enumerate(resolution.choices)
+        )
+        return (
+            f"I could not identify the selection. Say first, second, or the title: {choices}. Which one?"
+            if english
+            else f"No pude identificar la selección. Di primera, segunda o el título: {choices}. ¿Cuál?"
+        ), True
+
+    candidate = resolution.candidate
+    if candidate is None:
+        return None, False
+    query = " ".join(
+        part
+        for part in (
+            candidate.title,
+            f"de {candidate.artist}" if candidate.artist else "",
+        )
+        if part
+    )
+    result = tool_manager._invocar_tool_entry(
+        "reproducir_en_spotify",
+        {"cancion": query},
+        user_input,
+        "spotify_clarification",
+        profile_id,
+    )
+    return str(result), False
+
+
 def _preflight(
     user_input: str,
     profile_id: str,
@@ -185,6 +237,13 @@ def _preflight(
         )
         if compound_reply is not None:
             return compound_reply, compound_should_listen
+
+    spotify_reply, spotify_should_listen = _resolve_pending_spotify_selection(
+        user_input_norm,
+        pid,
+    )
+    if spotify_reply is not None:
+        return spotify_reply, spotify_should_listen
 
     # 2. Cached briefing
     if any(k in user_input_norm.lower() for k in ["daily news", "news briefing", "briefing", "news"]):
