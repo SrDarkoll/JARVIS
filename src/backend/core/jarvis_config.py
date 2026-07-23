@@ -8,6 +8,7 @@ from typing import Mapping
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
+from core.command_pipeline.reasoning import resolve_reasoning_mode
 from core.runtime_paths import ensure_runtime_paths, resolve_runtime_paths
 
 if os.getenv("JARVIS_TEST_MODE") == "1":
@@ -168,6 +169,7 @@ for _runtime_directory in (MEMORY_DIR, CACHE_DIR, OBS_DIR):
     os.makedirs(_runtime_directory, exist_ok=True)
 
 SPEECH_TO_TEXT = resolve_speech_to_text_config()
+REASONING_MODE = resolve_reasoning_mode()
 MODEL_PATH = os.path.join(ROOT_DIR, "models", "en_GB-northern_english_male-medium.onnx")
 SPOTIFY_CACHE = os.path.join(CACHE_DIR, "spotify-oauth-cache")
 MEMORIA_FILE = os.path.join(MEMORY_DIR, "memoria_jarvis.json")
