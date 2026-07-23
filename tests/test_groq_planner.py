@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 from core.command_pipeline.groq_planner import GroqPlanner
-from core.command_pipeline.models import CommandRequest, PlanSource
+from core.command_pipeline.models import (
+    ActionPlan,
+    ActionStep,
+    CommandRequest,
+    PlanSource,
+)
 
 
 class FakeModel:
@@ -179,3 +184,39 @@ def test_groq_rejects_non_positive_step_limit():
             allowed_tools=set(),
             max_steps=0,
         )
+
+
+def test_groq_receives_deterministic_candidate_as_trusted_context():
+    model = FakeModel(_response(content="Respuesta validada."))
+    planner = GroqPlanner(model, allowed_tools={"buscar_en_internet"})
+    candidate = ActionPlan(
+        request_id="groq-1",
+        source=PlanSource.DETERMINISTIC,
+        steps=(
+            ActionStep(
+                "candidate-step",
+                "buscar_en_internet",
+                {"query": "capacidad de razonar"},
+            ),
+        ),
+    )
+
+    planner.plan(_request(), ["original"], candidate_plan=candidate)
+
+    assert len(model.messages) == 2
+    context = str(model.messages[0].content)
+    assert "advisory deterministic candidate" in context.lower()
+    assert "buscar_en_internet" in context
+    assert model.messages[1] == "original"
+
+
+def test_groq_direct_question_requests_follow_up():
+    planner = GroqPlanner(
+        FakeModel(_response(content="¿En qué ciudad de África?")),
+        allowed_tools=set(),
+    )
+
+    plan = planner.plan(_request(), [])
+
+    assert plan.requires_follow_up is True
+    assert plan.confidence < 1.0

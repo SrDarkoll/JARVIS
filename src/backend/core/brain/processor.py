@@ -26,6 +26,7 @@ from core.errors import (
     LLMUnavailableError,
 )
 from core.jarvis_observability import obs_event, obs_inc
+from core.jarvis_config import REASONING_MODE
 from core.jarvis_state import DEFAULT_PROFILE_ID
 from core.service_container import services
 from core.unified_log import write_conversation
@@ -688,6 +689,8 @@ class _RuntimeGroqPlanner:
         self,
         request: CommandRequest,
         messages: list,
+        *,
+        candidate_plan: ActionPlan | None = None,
     ) -> ActionPlan:
         if _llm_calls_disabled_for_tests():
             return ActionPlan(
@@ -712,7 +715,11 @@ class _RuntimeGroqPlanner:
             return GroqPlanner(
                 model,
                 allowed_tools=allowed_tools,
-            ).plan(request, messages)
+            ).plan(
+                request,
+                messages,
+                candidate_plan=candidate_plan,
+            )
         except (LLMUnavailableError, LLMServiceError):
             raise
         except Exception as exc:
@@ -768,6 +775,7 @@ def _get_command_orchestrator() -> CommandOrchestrator:
                 responses=ResponseComposer(),
                 history=memory_manager,
                 message_factory=_build_planner_messages,
+                reasoning_mode=REASONING_MODE,
             )
         return _COMMAND_ORCHESTRATOR
 

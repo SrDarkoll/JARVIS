@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from core.errors import LLMServiceError, LLMUnavailableError
 from core.command_pipeline.models import (
     ActionPlan,
     ActionStep,
@@ -12,6 +13,7 @@ from core.command_pipeline.models import (
     ReceiptStatus,
 )
 from core.command_pipeline.orchestrator import CommandOrchestrator
+from core.command_pipeline.reasoning import ReasoningMode
 from core.command_pipeline.responses import ResponseComposer
 
 
@@ -44,14 +46,42 @@ class FakeGroqPlanner:
         self,
         command_request: CommandRequest,
         history: list,
+        *,
+        candidate_plan: ActionPlan | None = None,
     ) -> ActionPlan:
-        self.calls.append((command_request.request_id, list(history)))
+        self.calls.append(
+            (
+                command_request.request_id,
+                list(history),
+                candidate_plan,
+            )
+        )
         return self.plan_value
 
 
 class FailingGroqPlanner:
-    def plan(self, _request: CommandRequest, _history: list) -> ActionPlan:
+    def plan(
+        self,
+        _request: CommandRequest,
+        _history: list,
+        *,
+        candidate_plan: ActionPlan | None = None,
+    ) -> ActionPlan:
         raise AssertionError("Groq must not run")
+
+
+class ErrorGroqPlanner:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def plan(
+        self,
+        _request: CommandRequest,
+        _history: list,
+        *,
+        candidate_plan: ActionPlan | None = None,
+    ) -> ActionPlan:
+        raise self.error
 
 
 class RecordingExecutor:
@@ -108,6 +138,7 @@ def _orchestrator(
     executor,
     history: FakeHistory | None = None,
     message_factory=None,
+    reasoning_mode: ReasoningMode = ReasoningMode.HYBRID,
 ) -> CommandOrchestrator:
     return CommandOrchestrator(
         deterministic=deterministic,
@@ -116,6 +147,7 @@ def _orchestrator(
         responses=ResponseComposer(),
         history=history or FakeHistory(),
         message_factory=message_factory,
+        reasoning_mode=reasoning_mode,
     )
 
 
@@ -184,7 +216,7 @@ def test_unresolved_command_calls_groq_once_with_profile_history() -> None:
 
     response = orchestrator.process(_request())
 
-    assert groq.calls == [("request-1", ["previous"])]
+    assert groq.calls == [("request-1", ["previous"], None)]
     assert response.text == "Respuesta conversacional."
     assert len(history.interactions) == 1
 
@@ -218,7 +250,7 @@ def test_unresolved_command_uses_message_factory_without_changing_history() -> N
 
     assert factory_calls == [("request-1", ["previous"])]
     assert groq.calls == [
-        ("request-1", ["system", "previous", "current"])
+        ("request-1", ["system", "previous", "current"], None)
     ]
     assert history.history == ["previous"]
 
@@ -319,3 +351,118 @@ def test_plan_for_another_request_is_rejected_before_execution() -> None:
         orchestrator.process(_request())
 
     assert executor.calls == []
+
+
+def test_always_mode_asks_groq_to_validate_deterministic_candidate() -> None:
+    candidate = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.DETERMINISTIC,
+        steps=(
+            ActionStep(
+                "candidate-step",
+                "buscar_en_internet",
+                {"query": "capacidad de razonar"},
+            ),
+        ),
+    )
+    groq_plan = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.GROQ,
+        direct_response="Si. Puedo analizar y planificar solicitudes.",
+    )
+    groq = FakeGroqPlanner(groq_plan)
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(candidate),
+        groq=groq,
+        executor=executor,
+        reasoning_mode=ReasoningMode.ALWAYS,
+    )
+
+    response = orchestrator.process(_request())
+
+    assert groq.calls == [("request-1", ["previous"], candidate)]
+    assert response.text == groq_plan.direct_response
+    assert executor.calls == []
+
+
+def test_always_mode_executes_groq_plan_instead_of_candidate() -> None:
+    candidate = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.DETERMINISTIC,
+        steps=(ActionStep("candidate-step", "buscar_en_internet"),),
+    )
+    groq_plan = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.GROQ,
+        steps=(
+            ActionStep(
+                "groq-step",
+                "obtener_clima",
+                {"ciudad": "Matamoros"},
+            ),
+        ),
+    )
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(candidate),
+        groq=FakeGroqPlanner(groq_plan),
+        executor=executor,
+        reasoning_mode=ReasoningMode.ALWAYS,
+    )
+
+    orchestrator.process(_request())
+
+    assert executor.calls == [
+        ("request-1", "groq-step", "obtener_clima")
+    ]
+
+
+def test_offline_mode_returns_controlled_reply_when_router_is_unresolved() -> None:
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(None),
+        groq=FailingGroqPlanner(),
+        executor=RecordingExecutor(),
+        reasoning_mode=ReasoningMode.OFFLINE,
+    )
+
+    response = orchestrator.process(_request())
+
+    assert response.should_listen is True
+    assert "sin conexion" in response.text.lower()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [LLMUnavailableError(), LLMServiceError()],
+)
+def test_always_mode_falls_back_to_candidate_on_provider_error(error) -> None:
+    candidate = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.DETERMINISTIC,
+        direct_response="Respuesta local.",
+    )
+    events = []
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(candidate),
+        groq=ErrorGroqPlanner(error),
+        executor=RecordingExecutor(),
+        reasoning_mode=ReasoningMode.ALWAYS,
+    )
+
+    response = orchestrator.process(_request(), emit=events.append)
+
+    assert response.text == "Respuesta local."
+    assert any(event.get("text") == "reasoning degraded" for event in events)
+
+
+def test_always_mode_propagates_provider_error_without_candidate() -> None:
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(None),
+        groq=ErrorGroqPlanner(LLMUnavailableError()),
+        executor=RecordingExecutor(),
+        reasoning_mode=ReasoningMode.ALWAYS,
+    )
+
+    with pytest.raises(LLMUnavailableError):
+        orchestrator.process(_request())
