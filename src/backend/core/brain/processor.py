@@ -27,6 +27,7 @@ from core.errors import (
 from core.jarvis_observability import obs_event, obs_inc
 from core.jarvis_state import DEFAULT_PROFILE_ID
 from core.service_container import services
+from core.unified_log import write_conversation
 from engines.memory_rag import rag_motor
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from modules.spotify.followup import (
@@ -134,6 +135,7 @@ def _finalize_reply(
     obs_event(
         "reply_sent", path=path, should_listen=bool(should_listen), reply=reply[:220]
     )
+    write_conversation("JARVIS", reply, profile_id=pid, channel=path)
     print(f"[JARVIS] {reply}")
 
     rag_motor.agregar_interaccion(user_msg=user_input, ai_msg=reply, profile_id=pid)
@@ -346,6 +348,7 @@ def procesar_mensaje(
     if count_inbound:
         obs_inc("messages_total", 1)
     pid = _cargar_contexto_perfil(profile_id)
+    write_conversation("USUARIO", user_input, profile_id=pid, channel="brain")
     with jarvis_state.active_profile(pid):
         reply, sl = _preflight(user_input, pid)
         if reply is not None:
@@ -511,6 +514,7 @@ def stream_procesar_mensaje_events(
     try:
         pid = _cargar_contexto_perfil(profile_id)
         context_token = jarvis_state.set_active_profile_id(pid)
+        write_conversation("USUARIO", user_input, profile_id=pid, channel="stream")
 
         reply, sl = _preflight(user_input, pid)
         if reply is not None:

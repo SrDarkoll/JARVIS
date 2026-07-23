@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from core.unified_log import write_log
+
 LOGGER_NAME = "JARVIS"
 
 
@@ -20,25 +22,43 @@ def get_runtime_logger() -> logging.Logger:
     return logger
 
 
-def log_info(message: str, **ctx) -> None:
+def _log(
+    level: int,
+    message: str,
+    *,
+    journal_category: str,
+    context: dict,
+) -> None:
     logger = get_runtime_logger()
-    if ctx:
-        logger.info("%s | %s", message, ctx)
+    if context:
+        logger.log(level, "%s | %s", message, context)
     else:
-        logger.info("%s", message)
+        logger.log(level, "%s", message)
+    write_log(journal_category, message, **context)
 
 
-def log_warning(message: str, **ctx) -> None:
-    logger = get_runtime_logger()
-    if ctx:
-        logger.warning("%s | %s", message, ctx)
-    else:
-        logger.warning("%s", message)
+def log_info(message: str, *, journal_category: str = "INFO", **ctx) -> None:
+    _log(
+        logging.INFO,
+        message,
+        journal_category=journal_category,
+        context=ctx,
+    )
 
 
-def log_error(message: str, **ctx) -> None:
-    logger = get_runtime_logger()
-    if ctx:
-        logger.error("%s | %s", message, ctx)
-    else:
-        logger.error("%s", message)
+def log_warning(message: str, *, journal_category: str = "WARNING", **ctx) -> None:
+    _log(
+        logging.WARNING,
+        message,
+        journal_category=journal_category,
+        context=ctx,
+    )
+
+
+def log_error(message: str, *, journal_category: str = "ERROR", **ctx) -> None:
+    _log(
+        logging.ERROR,
+        message,
+        journal_category=journal_category,
+        context=ctx,
+    )

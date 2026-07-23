@@ -208,6 +208,7 @@ Environment groups:
 | Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
 | Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
 | Runtime paths | Optional relocation | `JARVIS_RUNTIME_DIR`, `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR` |
+| Readable logging | Optional tuning | `JARVIS_UNIFIED_LOG_ENABLED`, `JARVIS_UNIFIED_LOG_MAX_BYTES`, `JARVIS_UNIFIED_LOG_BACKUP_COUNT` |
 
 Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
 
@@ -329,6 +330,28 @@ git diff --check
 `pytest.ini` restricts collection to `tests/` and ignores local runtime/cache folders. This prevents old W&B/temp directories from breaking collection on Windows.
 
 Ruff is useful for future cleanup, but it is not currently enforced as a release gate because the codebase still has legacy style debt.
+
+## Unified Readable Log
+
+Jarvis writes a chronological UTF-8 diagnostic journal to
+`src/backend/logs/log.txt`. Every line includes a local timestamp with
+milliseconds and a category. The journal combines:
+
+- user and Jarvis conversation turns from voice, classic chat, and streaming;
+- tool starts, results, duration, source, and blocked/error states;
+- every event sent to the frontend `SYSTEM LOG` panel;
+- structured observability, runtime warnings/errors, and legacy backend console
+  output.
+
+The default file rotates at 5 MiB and keeps `log.txt.1` through `log.txt.3`.
+Change those limits with `JARVIS_UNIFIED_LOG_MAX_BYTES` and
+`JARVIS_UNIFIED_LOG_BACKUP_COUNT`, or disable the journal with
+`JARVIS_UNIFIED_LOG_ENABLED=false`.
+
+The log intentionally contains conversation text in plaintext. Known API keys,
+tokens, authorization headers, passwords, client secrets, and sensitive URL
+parameters are redacted, but the file must still be treated as private runtime
+data. `src/backend/logs/` is ignored by Git and must never be committed.
 
 ## Spotify Notes
 

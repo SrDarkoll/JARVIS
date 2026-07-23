@@ -61,6 +61,20 @@ def _read_float(
     return max(minimum, min(value, maximum))
 
 
+def _read_int(
+    env: Mapping[str, str],
+    name: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        value = int(str(env.get(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 def _read_choice(
     env: Mapping[str, str],
     name: str,
@@ -145,6 +159,22 @@ SPOTIFY_CACHE = os.path.join(BASE_DIR, ".cache-jarvis")
 MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_jarvis.json")
 MEMORIA_PROFILES_FILE = os.path.join(BASE_DIR, "memoria_jarvis_profiles.json")
 OBS_DIR = os.path.join(BASE_DIR, "logs")
+UNIFIED_LOG_FILE = os.path.join(OBS_DIR, "log.txt")
+UNIFIED_LOG_ENABLED = _read_bool(os.environ, "JARVIS_UNIFIED_LOG_ENABLED", True)
+UNIFIED_LOG_MAX_BYTES = _read_int(
+    os.environ,
+    "JARVIS_UNIFIED_LOG_MAX_BYTES",
+    5 * 1024 * 1024,
+    64 * 1024,
+    100 * 1024 * 1024,
+)
+UNIFIED_LOG_BACKUP_COUNT = _read_int(
+    os.environ,
+    "JARVIS_UNIFIED_LOG_BACKUP_COUNT",
+    3,
+    0,
+    20,
+)
 BRIEFING_TELEGRAM_SENT_FILE = os.path.join(OBS_DIR, "briefing_telegram_sent.json")
 OBS_LOG_FILE = os.path.join(OBS_DIR, "jarvis_events.jsonl")
 SECURITY_AUDIT_FILE = os.path.join(OBS_DIR, "security_audit.jsonl")

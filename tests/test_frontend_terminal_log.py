@@ -26,6 +26,7 @@ class FrontendTerminalLogTests(unittest.TestCase):
         self.assertIn("frontend_log", source)
         self.assertIn("log_info", source)
         self.assertIn("JARVIS UI", source)
+        self.assertIn('journal_category="FRONTEND"', source)
         self.assertIn("ui_message=", source)
         self.assertNotIn("\n        message=message", source)
 

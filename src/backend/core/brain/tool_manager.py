@@ -10,6 +10,7 @@ from core import jarvis_state
 from core.brain import brain_state, brain_utils
 from core.jarvis_config import AUTOCURACION_ACTIVA, BASE_DIR, PLUGINS_DIR, ROOT_DIR, SRC_DIR
 from core.jarvis_observability import obs_event, obs_inc, obs_tool
+from core.unified_log import write_log
 from langchain_core.tools import tool
 from services import security_manager
 from tools._common import _open_url_or_app
@@ -222,19 +223,38 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
     args = tc.get("args") or {}
     user_input = context.get("user_input", "")
     source = context.get("source", "unknown")
+    profile_id = jarvis_state.normalize_profile_id(
+        context.get("profile_id") or jarvis_state.get_active_profile_id()
+    )
 
     inicio = _time.perf_counter()
     obs_inc("tool_calls_total", 1)
+    outcome = "error"
+    result_preview = ""
+
+    def _finish(value: Any, status: str) -> Any:
+        nonlocal outcome, result_preview
+        outcome = status
+        result_preview = str(value or "")[:2000]
+        return value
+
+    write_log(
+        "TOOL",
+        f"START {tool_name}",
+        source=source,
+        profile_id=profile_id,
+        args=args,
+    )
 
     try:
         # Anti-hallucination guard by context
         if not _tool_permitida_por_contexto(tool_name, user_input, source):
-            return f"ACCESS_DENIED: Tool {tool_name} does not match the current context."
+            return _finish(
+                f"ACCESS_DENIED: Tool {tool_name} does not match the current context.",
+                "blocked",
+            )
 
         # Security guard: profile_id travels explicitly or via ContextVar.
-        profile_id = jarvis_state.normalize_profile_id(
-            context.get("profile_id") or jarvis_state.get_active_profile_id()
-        )
         guard_fn = getattr(security_manager, "_security_guard", None)
         if callable(guard_fn):
             try:
@@ -249,14 +269,14 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
                 reason = f"Security guard failure: {e}"
                 elapsed = (_time.perf_counter() - inicio) * 1000.0
                 obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=reason)
-                return f"ACCESS_DENIED: {reason}"
+                return _finish(f"ACCESS_DENIED: {reason}", "blocked")
             if not allowed:
                 msg = str(reason or "Action blocked by security policy.").strip()
                 if not msg.lower().startswith("access_denied"):
                     msg = f"ACCESS_DENIED: {msg}"
                 elapsed = (_time.perf_counter() - inicio) * 1000.0
                 obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=msg)
-                return msg
+                return _finish(msg, "blocked")
 
         from core.brain import security_engine
 
@@ -269,11 +289,14 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
                 _registrar_accion_pendiente_auth(
                     profile_id, tool_name, args, user_input
                 )
-                return "ACCESS_DENIED: Requires Administrator authorization."
+                return _finish(
+                    "ACCESS_DENIED: Requires Administrator authorization.",
+                    "blocked",
+                )
 
         # Actual tool execution
         if tool_name not in tool_map:
-            return f"Tool '{tool_name}' not available."
+            return _finish(f"Tool '{tool_name}' not available.", "unavailable")
         with jarvis_state.active_profile(profile_id):
             result = tool_map[tool_name].invoke(args)
         result_txt = str(result)
@@ -293,18 +316,29 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
         obs_tool(
             tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt
         )
-        return result
+        return _finish(result, "ok" if ok else "error")
     except Exception as e:
         err = str(e)
         if AUTOCURACION_ACTIVA:
             healed = _intentar_autocuracion(tool_name, args, user_input, err)
             if healed:
                 obs_inc("autocure_success", 1)
-                return healed
+                return _finish(healed, "ok")
         security_manager._proactive_register_tool_error(tool_name, err)
         elapsed = (_time.perf_counter() - inicio) * 1000.0
         obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=err)
-        return f"Error executing {tool_name}: {err}"
+        return _finish(f"Error executing {tool_name}: {err}", "error")
+    finally:
+        elapsed = (_time.perf_counter() - inicio) * 1000.0
+        write_log(
+            "TOOL",
+            f"END {tool_name}",
+            status=outcome,
+            source=source,
+            profile_id=profile_id,
+            elapsed_ms=round(elapsed, 2),
+            result=result_preview,
+        )
 
 
 def _intentar_autocuracion(

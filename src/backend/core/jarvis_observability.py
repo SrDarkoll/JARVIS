@@ -5,6 +5,7 @@ import threading
 from datetime import datetime
 
 from core.jarvis_config import OBS_DIR, OBS_LOG_FILE
+from core.unified_log import write_log
 
 os.makedirs(OBS_DIR, exist_ok=True)
 
@@ -84,6 +85,7 @@ def obs_event(event_type: str, **payload) -> None:
 
     # Send to background worker
     _log_worker.log(OBS_LOG_FILE, line)
+    write_log("EVENT", event_type, **(payload or {}))
 
 
 def obs_tool(

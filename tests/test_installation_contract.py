@@ -194,6 +194,21 @@ def test_spotify_playback_mode_rejects_unknown_values():
     assert resolve_spotify_playback_mode({"SPOTIFY_PLAYBACK_MODE": "invalid"}) == "auto"
 
 
+def test_unified_readable_log_distribution_contract():
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    config = (ROOT / "src/backend/core/jarvis_config.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert 'JARVIS_UNIFIED_LOG_ENABLED="true"' in env_example
+    assert 'JARVIS_UNIFIED_LOG_MAX_BYTES="5242880"' in env_example
+    assert 'JARVIS_UNIFIED_LOG_BACKUP_COUNT="3"' in env_example
+    assert 'UNIFIED_LOG_FILE = os.path.join(OBS_DIR, "log.txt")' in config
+    assert "src/backend/logs/log.txt" in readme
+    assert "conversation text in plaintext" in readme
+    assert "src/backend/logs/" in gitignore
+
+
 def test_public_llm_configuration_is_groq_only():
     public_files = (
         ROOT / ".env.example",

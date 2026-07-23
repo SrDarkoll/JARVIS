@@ -9,6 +9,7 @@ __all__ = [
     "jarvis_config",
     "jarvis_observability",
     "service_container",
+    "unified_log",
 ]
 
 

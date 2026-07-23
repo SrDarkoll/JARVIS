@@ -26,6 +26,11 @@ if os.getenv("JARVIS_TEST_MODE") == "1" and os.name == "nt":
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+if os.getenv("JARVIS_TEST_MODE") != "1":
+    from core.unified_log import install_console_capture
+
+    install_console_capture()
+
 import asyncio
 import hmac
 import tempfile

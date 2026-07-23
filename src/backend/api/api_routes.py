@@ -77,6 +77,7 @@ async def frontend_log():
         return jsonify({"ok": False, "error": "empty_message"}), 400
     log_info(
         "JARVIS UI",
+        journal_category="FRONTEND",
         source=source[:80],
         ui_message=message[:2000],
         ip=request.remote_addr,

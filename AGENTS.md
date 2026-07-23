@@ -114,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-438 passed, 1 skipped in 21.39s
+451 passed, 1 skipped in 15.43s
 ```
 
 Python syntax/import compilation:
@@ -200,6 +200,12 @@ Adaptive voice transcription regressions:
 pytest tests\test_voice_transcription.py tests\test_frontend_voice_resilience.py -q
 ```
 
+Unified readable log regressions:
+
+```powershell
+pytest tests\test_unified_log.py tests\test_unified_log_integration.py tests\test_frontend_terminal_log.py -q
+```
+
 Spotify OAuth must use the exact registered redirect
 `http://127.0.0.1:8888/callback`; `localhost` aliases are rejected. Default
 development-mode mixes must avoid restricted recommendation/audio-feature,
@@ -225,6 +231,9 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - Authorization and explicit user confirmation are separate concepts. Do not treat an authorized source as confirmation for destructive or sensitive actions.
 - Network/provider failures should return generic user-facing messages. Do not expose proxy details, local IPs, tokens, stack traces, or raw exception text.
 - Logs may include exception class names for diagnosis, but avoid raw credential-bearing URLs or headers.
+- `src/backend/logs/log.txt` contains plaintext conversation history. Keep it
+  ignored, redact secrets before writing, and never attach it to issues or
+  commits without reviewing its contents.
 
 ## API And Chat Workflow
 
