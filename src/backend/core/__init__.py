@@ -1,16 +1,20 @@
-"""
-Core package - fachada unificada para JARVIS.
-Se mantiene mínimo para evitar dependencias circulares durante el booteo.
-"""
+"""Lazy facade for JARVIS core modules."""
 
-from core import core_tools, jarvis_brain, jarvis_config, jarvis_observability, jarvis_state, service_container
+from importlib import import_module
 
-# No importar core.brain aquí para evitar recursión con processor.py
 __all__ = [
     "jarvis_state",
     "core_tools",
     "jarvis_brain",
     "jarvis_config",
     "jarvis_observability",
-    "service_container"
+    "service_container",
 ]
+
+
+def __getattr__(name: str):
+    if name not in __all__:
+        raise AttributeError(f"module 'core' has no attribute {name!r}")
+    module = import_module(f"core.{name}")
+    globals()[name] = module
+    return module

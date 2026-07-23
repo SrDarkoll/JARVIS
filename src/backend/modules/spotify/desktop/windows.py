@@ -12,8 +12,8 @@ from typing import Any
 
 import psutil
 
-from tools.spotify_desktop.matching import normalize_text
-from tools.spotify_desktop.models import SpotifyCandidate
+from modules.spotify.desktop.matching import normalize_text
+from modules.spotify.desktop.models import SpotifyCandidate
 
 IS_WINDOWS = sys.platform == "win32"
 

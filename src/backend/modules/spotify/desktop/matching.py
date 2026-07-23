@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import replace
 from difflib import SequenceMatcher
 
-from tools.spotify_desktop.models import (
+from modules.spotify.desktop.models import (
     MatchDecision,
     MatchStatus,
     SpotifyCandidate,

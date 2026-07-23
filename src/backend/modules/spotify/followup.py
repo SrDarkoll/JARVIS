@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
 
-from tools.spotify_desktop.matching import normalize_text
-from tools.spotify_desktop.models import SpotifyCandidate
+from modules.spotify.desktop.matching import normalize_text
+from modules.spotify.desktop.models import SpotifyCandidate
 
 _SELECTION_STOP_WORDS = {
     "by",

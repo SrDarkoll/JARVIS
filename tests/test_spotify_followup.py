@@ -1,13 +1,20 @@
 import pytest
 from core import jarvis_state
 from core.brain import processor, router, tool_manager
-from tools import spotify
-from tools.spotify_desktop.followup import (
+from modules.spotify import service as spotify_service
+from modules.spotify import tools as spotify_tools
+from modules.spotify.api.playback import SpotifyAPIPlaybackResult
+from modules.spotify.desktop.models import (
+    DesktopResultStatus,
+    SpotifyCandidate,
+    SpotifyDesktopResult,
+)
+from modules.spotify.followup import (
     PendingSpotifySelections,
     SpotifySelectionStatus,
     pending_spotify_selections,
 )
-from tools.spotify_desktop.models import DesktopResultStatus, SpotifyCandidate, SpotifyDesktopResult
+from modules.spotify.state import set_last_requested_track
 
 
 def _choices():
@@ -27,9 +34,11 @@ def _choices():
 
 @pytest.fixture(autouse=True)
 def _clear_shared_pending_store():
+    set_last_requested_track("")
     for profile_id in ("admin", "guest_unverified"):
         pending_spotify_selections.clear(profile_id)
     yield
+    set_last_requested_track("")
     for profile_id in ("admin", "guest_unverified"):
         pending_spotify_selections.clear(profile_id)
 
@@ -122,10 +131,14 @@ def test_ambiguous_first_turn_is_stored_for_the_active_voice_profile(monkeypatch
         message_key="spotify_ambiguous_results",
         choices=_choices(),
     )
-    monkeypatch.setattr(spotify, "_spotify_desktop_result", lambda _song: result)
+    monkeypatch.setattr(
+        spotify_service,
+        "_spotify_desktop_result",
+        lambda _song: result,
+    )
 
     with jarvis_state.active_profile("guest_unverified"):
-        message = spotify._spotify_play_desktop("No te apartes de mí")
+        message = spotify_service._spotify_play_desktop("No te apartes de mí")
 
     assert "matches" in message.lower() or "coincidencias" in message.lower()
     assert pending_spotify_selections.has_pending("guest_unverified")
@@ -133,14 +146,48 @@ def test_ambiguous_first_turn_is_stored_for_the_active_voice_profile(monkeypatch
 
 def test_new_explicit_play_command_clears_an_old_selection(monkeypatch):
     pending_spotify_selections.remember("admin", _choices())
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "api")
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "api")
     monkeypatch.setattr(
-        spotify,
+        spotify_service,
         "_spotify_play_api",
-        lambda song: spotify.SpotifyAPIPlaybackResult(True, f"api:{song}"),
+        lambda song: SpotifyAPIPlaybackResult(True, f"api:{song}"),
     )
 
-    response = spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+    response = spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
 
     assert response == "api:Killer Queen"
     assert not pending_spotify_selections.has_pending("admin")
+
+
+def test_repeat_command_uses_shared_spotify_state(monkeypatch):
+    calls = []
+    set_last_requested_track("Killer Queen by Queen")
+
+    monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda pid: pid)
+    monkeypatch.setattr(router, "_router_hibrido", lambda _text: None)
+    monkeypatch.setattr(
+        tool_manager,
+        "_invocar_tool_entry",
+        lambda tool_name, args, user_input, source, profile_id: calls.append(
+            (tool_name, args, user_input, source, profile_id)
+        )
+        or "Playing it again.",
+    )
+
+    reply, should_listen = processor._preflight(
+        "otra vez",
+        "guest_unverified",
+        allow_compound=False,
+    )
+
+    assert reply == "Playing it again."
+    assert should_listen is False
+    assert calls == [
+        (
+            "reproducir_en_spotify",
+            {"cancion": "Killer Queen by Queen"},
+            "otra vez",
+            "fast_repeat",
+            "guest_unverified",
+        )
+    ]

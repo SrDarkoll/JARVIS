@@ -27,7 +27,8 @@ Expect hardware-specific behavior around microphones, speakers, Spotify devices,
 - `src/backend/jarvis_backend.py` - Quart/Hypercorn backend entrypoint.
 - `src/backend/api/` - HTTP route modules.
 - `src/backend/core/` - config, state, security, tool routing, and assistant brain.
-- `src/backend/tools/` - built-in tools such as search, Spotify, browser, system, and utilities.
+- `src/backend/modules/` - first-party feature modules with their own service and provider boundaries; Spotify lives here.
+- `src/backend/tools/` - thin LangChain tool adapters plus shared search, browser, system, and utility tools.
 - `src/backend/voice/` - voice registration, transcription, and identity logic.
 - `src/frontend/` - static UI and templates.
 - `tests/` - regression and smoke tests.
@@ -330,6 +331,13 @@ git diff --check
 Ruff is useful for future cleanup, but it is not currently enforced as a release gate because the codebase still has legacy style debt.
 
 ## Spotify Notes
+
+Spotify is organized under `src/backend/modules/spotify/`: `service.py` owns
+provider selection and fallback policy, `api/` contains Spotipy/OAuth playback
+and recommendations, `desktop/` contains Windows UI Automation, and
+`followup.py` resolves conversational result selection. The legacy
+`src/backend/tools/spotify.py` path is only a compatibility facade; new Spotify
+logic belongs in the feature module.
 
 ### Spotify playback modes
 

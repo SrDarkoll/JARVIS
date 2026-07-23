@@ -29,10 +29,11 @@ from core.jarvis_state import DEFAULT_PROFILE_ID
 from core.service_container import services
 from engines.memory_rag import rag_motor
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from tools.spotify_desktop.followup import (
+from modules.spotify.followup import (
     SpotifySelectionStatus,
     pending_spotify_selections,
 )
+from modules.spotify.state import get_last_requested_track
 from utils.jarvis_i18n import get_current_language
 from utils.jarvis_text import reparar_unicode
 
@@ -298,7 +299,7 @@ def _preflight(
         )
 
     # 6. Music fast-path
-    ultima = getattr(core_tools, "_ULTIMA_CANCION_SOLICITADA", "") or ""
+    ultima = get_last_requested_track()
     if music_engine._es_comando_repetir_musica(user_input_norm):
         if ultima:
             res = tool_manager._invocar_tool_entry(

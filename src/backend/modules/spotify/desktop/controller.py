@@ -6,12 +6,12 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 
-from tools.spotify_desktop.matching import (
+from modules.spotify.desktop.matching import (
     choose_candidate,
     normalize_text,
     score_candidate,
 )
-from tools.spotify_desktop.models import (
+from modules.spotify.desktop.models import (
     AutomationState,
     DesktopResultStatus,
     MatchDecision,

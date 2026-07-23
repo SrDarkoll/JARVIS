@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.spotify_desktop.matching import normalize_text
+from modules.spotify.desktop.matching import normalize_text
 
 
 @dataclass(frozen=True)

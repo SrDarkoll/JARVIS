@@ -1,5 +1,5 @@
-from tools.spotify_desktop.controller import SpotifyDesktopController
-from tools.spotify_desktop.models import (
+from modules.spotify.desktop.controller import SpotifyDesktopController
+from modules.spotify.desktop.models import (
     AutomationState,
     DesktopResultStatus,
     MatchDecision,
@@ -15,8 +15,8 @@ def build_windows_controller(*, start_timeout: float, action_timeout: float):
 
     from core import jarvis_config
     from core.service_container import services
-    from tools.spotify_desktop.visual import build_default_visual_recovery
-    from tools.spotify_desktop.windows import (
+    from modules.spotify.desktop.visual import build_default_visual_recovery
+    from modules.spotify.desktop.windows import (
         SpotifyUIAutomationAdapter,
         WindowsSpotifyWindowAdapter,
     )

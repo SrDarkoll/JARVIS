@@ -1,5 +1,5 @@
-from tools.spotify_desktop.matching import choose_candidate, normalize_text
-from tools.spotify_desktop.models import MatchStatus, SpotifyCandidate, SpotifyRequest
+from modules.spotify.desktop.matching import choose_candidate, normalize_text
+from modules.spotify.desktop.models import MatchStatus, SpotifyCandidate, SpotifyRequest
 
 
 def candidate(title: str, artist: str, element_id: str) -> SpotifyCandidate:

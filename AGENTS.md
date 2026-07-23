@@ -114,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-363 passed, 1 skipped in 16.56s
+438 passed, 1 skipped in 21.39s
 ```
 
 Python syntax/import compilation:
@@ -191,7 +191,7 @@ pytest tests\test_smoke.py::test_dynamic_queries_force_web_tools tests\test_comp
 Spotify recommendation regressions:
 
 ```powershell
-pytest tests\test_spotify_desktop_matching.py tests\test_spotify_desktop_windows.py tests\test_spotify_desktop_controller.py tests\test_spotify_recs.py -q
+pytest tests\test_spotify_desktop_matching.py tests\test_spotify_desktop_windows.py tests\test_spotify_desktop_controller.py tests\test_spotify_followup.py tests\test_spotify_recs.py -q
 ```
 
 Adaptive voice transcription regressions:
@@ -210,6 +210,12 @@ an authorization flow during a playback command. Windows desktop automation
 must revalidate the foreground Spotify handle before keyboard or mouse input,
 avoid fixed coordinates on the deterministic path, and delete visual-recovery
 captures after every attempt.
+
+Spotify implementation code belongs under `src/backend/modules/spotify/`.
+Keep `src/backend/tools/spotify.py` as a public compatibility facade only:
+configuration and OAuth in `config.py`/`api/client.py`, API playback and
+recommendations under `api/`, provider fallback in `service.py`, Windows UIA
+under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 
 ## Security Workflow
 

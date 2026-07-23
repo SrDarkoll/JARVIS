@@ -1,6 +1,6 @@
 import pytest
-from tools.spotify_desktop.models import SpotifyCandidate
-from tools.spotify_desktop.windows import (
+from modules.spotify.desktop.models import SpotifyCandidate
+from modules.spotify.desktop.windows import (
     SpotifyUIAutomationAdapter,
     SpotifyWindow,
     WindowsSpotifyWindowAdapter,

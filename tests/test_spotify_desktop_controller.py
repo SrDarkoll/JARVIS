@@ -1,19 +1,19 @@
 import logging
 import threading
 
-from tools.spotify_desktop.controller import SpotifyDesktopController
-from tools.spotify_desktop.models import (
+from modules.spotify.desktop.controller import SpotifyDesktopController
+from modules.spotify.desktop.models import (
     AutomationState,
     DesktopResultStatus,
     SpotifyCandidate,
     SpotifyRequest,
 )
-from tools.spotify_desktop.visual import (
+from modules.spotify.desktop.visual import (
     SpotifyVisualRecovery,
     VisualTarget,
     _visual_target_from_response,
 )
-from tools.spotify_desktop.windows import SpotifyWindow
+from modules.spotify.desktop.windows import SpotifyWindow
 
 
 class FakeClock:

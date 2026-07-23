@@ -248,20 +248,20 @@ def test_voice_name_introduction_is_not_simple_question():
 
 def test_spotify_playback_message_is_localized():
     _ensure_backend_path()
-    from tools import spotify  # pyright: ignore[reportMissingImports]
+    from modules.spotify import messages as spotify_messages
     from utils.jarvis_i18n import get_current_language, set_current_language
 
     prev_lang = get_current_language()
     try:
         set_current_language("en")
         assert (
-            spotify._spotify_playback_success_message("Killer Queen", "Queen")
+            spotify_messages.playback_success_message("Killer Queen", "Queen")
             == "Playing 'Killer Queen' by Queen."
         )
 
         set_current_language("es")
         assert (
-            spotify._spotify_playback_success_message("Killer Queen", "Queen")
+            spotify_messages.playback_success_message("Killer Queen", "Queen")
             == "Reproduciendo 'Killer Queen' de Queen."
         )
     finally:

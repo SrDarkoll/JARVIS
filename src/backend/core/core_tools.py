@@ -39,12 +39,10 @@ from tools.memory import (  # noqa: F401
     init_sqlite_db,
 )
 from tools.search import _buscar_multi_fuente, buscar_en_internet  # noqa: F401
-from tools.spotify import (  # noqa: F401
-    _ULTIMA_CANCION_SOLICITADA,
+from modules.spotify.tools import (  # noqa: F401
     controlar_reproduccion,
     reproducir_en_spotify,
     reproducir_mix_spotify,
-    sp,
 )
 from tools.system import (  # noqa: F401
     _ajustar_volumen_absoluto,

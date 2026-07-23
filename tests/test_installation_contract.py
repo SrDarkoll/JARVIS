@@ -160,6 +160,31 @@ def test_spotify_desktop_mode_and_dependency_contract():
     assert "test_spotify_desktop_controller.py" in agents
 
 
+def test_spotify_implementation_has_a_feature_module_boundary():
+    module_root = ROOT / "src/backend/modules/spotify"
+    expected_files = (
+        "config.py",
+        "followup.py",
+        "service.py",
+        "state.py",
+        "tools.py",
+        "api/client.py",
+        "api/playback.py",
+        "api/recommendations.py",
+        "desktop/controller.py",
+    )
+
+    assert all(
+        (module_root / relative_path).is_file()
+        for relative_path in expected_files
+    )
+
+    facade = (ROOT / "src/backend/tools/spotify.py").read_text(encoding="utf-8")
+    assert "from modules.spotify.tools import" in facade
+    assert "spotipy" not in facade
+    assert "pywinauto" not in facade
+
+
 def test_spotify_playback_mode_rejects_unknown_values():
     from core.jarvis_config import resolve_spotify_playback_mode
 

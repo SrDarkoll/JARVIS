@@ -5,21 +5,27 @@ from pathlib import Path
 import pytest
 
 from core import jarvis_config
-from tools import spotify
-from tools.spotify_desktop.models import (
+from modules.spotify import config as spotify_config
+from modules.spotify import service as spotify_service
+from modules.spotify import tools as spotify_tools
+from modules.spotify.api import client as spotify_client
+from modules.spotify.api import playback as spotify_playback
+from modules.spotify.api import recommendations as spotify_recommendations
+from modules.spotify.desktop.models import (
     DesktopResultStatus,
     SpotifyCandidate,
     SpotifyDesktopResult,
 )
+from modules.spotify.followup import pending_spotify_selections
 
 
 @pytest.fixture(autouse=True)
 def _disable_real_spotify_client(monkeypatch):
     """Keep unit tests independent from local credentials and OAuth state."""
-    monkeypatch.setattr(spotify, "sp", None)
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "api")
-    monkeypatch.setattr(spotify, "_spotify_api_capability_failed", False)
-    monkeypatch.setattr(spotify, "_desktop_controller", None)
+    monkeypatch.setattr(spotify_client, "sp", None)
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "api")
+    monkeypatch.setattr(spotify_service, "_spotify_api_capability_failed", False)
+    monkeypatch.setattr(spotify_service, "_desktop_controller", None)
 
 
 def _track(track_id: str, artist: str = "Artist") -> dict:
@@ -32,37 +38,37 @@ def _track(track_id: str, artist: str = "Artist") -> dict:
 
 
 def test_spotify_ready_contract():
-    ready, reason = spotify._spotify_ready()
+    ready, reason = spotify_client._spotify_ready()
     assert isinstance(ready, bool)
     if not ready:
         assert isinstance(reason, str)
 
 
 def test_spotify_scope_supports_dynamic_mix_inputs():
-    assert "user-top-read" in spotify.SPOTIFY_SCOPE
-    assert "user-read-recently-played" in spotify.SPOTIFY_SCOPE
+    assert "user-top-read" in spotify_config.SPOTIFY_SCOPE
+    assert "user-read-recently-played" in spotify_config.SPOTIFY_SCOPE
 
 
 def test_spotify_uses_single_supported_cache_path():
     expected = Path(jarvis_config.BASE_DIR) / ".cache-jarvis"
 
     assert Path(jarvis_config.SPOTIFY_CACHE) == expected
-    assert Path(spotify.SPOTIFY_CACHE) == expected
+    assert Path(spotify_config.SPOTIFY_CACHE) == expected
 
 
 def test_spotify_redirect_requires_an_explicit_loopback_ip():
-    assert spotify._spotify_redirect_error("http://127.0.0.1:8888/callback") is None
-    assert spotify._spotify_redirect_error("http://[::1]:8888/callback") is None
-    assert spotify._spotify_redirect_error("http://localhost:8888/callback")
-    assert spotify._spotify_redirect_error("https://example.com/callback")
-    assert spotify._spotify_redirect_error("not-a-uri")
+    assert spotify_config.redirect_error("http://127.0.0.1:8888/callback") is None
+    assert spotify_config.redirect_error("http://[::1]:8888/callback") is None
+    assert spotify_config.redirect_error("http://localhost:8888/callback")
+    assert spotify_config.redirect_error("https://example.com/callback")
+    assert spotify_config.redirect_error("not-a-uri")
 
     expected_enabled = bool(
-        spotify.SPOTIFY_CLIENT_ID
-        and spotify.SPOTIFY_CLIENT_SECRET
-        and spotify.SPOTIFY_REDIRECT_ERROR is None
+        spotify_config.SPOTIFY_CLIENT_ID
+        and spotify_config.SPOTIFY_CLIENT_SECRET
+        and spotify_config.SPOTIFY_REDIRECT_ERROR is None
     )
-    assert spotify.SPOTIFY_ENABLED is expected_enabled
+    assert spotify_config.SPOTIFY_ENABLED is expected_enabled
 
 
 def test_spotify_access_token_uses_supported_cache_handler(monkeypatch):
@@ -89,9 +95,9 @@ def test_spotify_access_token_uses_supported_cache_handler(monkeypatch):
             self.auth_manager = AuthManager()
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
+    monkeypatch.setattr(spotify_client, "sp", fake)
 
-    assert spotify._spotify_access_token() == "cached-token"
+    assert spotify_client._spotify_access_token() == "cached-token"
     assert fake.auth_manager.validations == 1
     assert fake.auth_manager.calls == 0
 
@@ -118,9 +124,9 @@ def test_spotify_access_token_requests_the_non_deprecated_string_shape(monkeypat
             self.auth_manager = AuthManager()
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
+    monkeypatch.setattr(spotify_client, "sp", fake)
 
-    assert spotify._spotify_access_token() == "interactive-token"
+    assert spotify_client._spotify_access_token() == "interactive-token"
     assert fake.auth_manager.calls == [
         {"as_dict": False, "check_cache": False}
     ]
@@ -196,8 +202,10 @@ def test_spotify_dynamic_mix_uses_user_taste_and_genre_candidates(monkeypatch):
             return {"artists": []}
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
-    monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
+    monkeypatch.setattr(spotify_client, "sp", fake)
+    monkeypatch.setattr(
+        spotify_recommendations, "_spotify_market_objetivo", lambda: None
+    )
 
     seed = {
         "id": "seed",
@@ -207,7 +215,7 @@ def test_spotify_dynamic_mix_uses_user_taste_and_genre_candidates(monkeypatch):
         "artists": [{"id": "seed_artist", "name": "Seed Artist"}],
     }
 
-    similares = spotify._spotify_obtener_similares(seed, limite=3)
+    similares = spotify_recommendations._spotify_obtener_similares(seed, limite=3)
 
     assert [track["uri"] for track in similares] == [
         "spotify:track:top-user",
@@ -225,6 +233,14 @@ def test_spotify_mix_tool_is_exported_in_base_tools():
     assert "reproducir_mix_spotify" in tool_names
 
 
+def test_tools_package_preserves_legacy_spotify_exports():
+    import tools
+
+    assert tools.reproducir_en_spotify is spotify_tools.reproducir_en_spotify
+    assert tools.reproducir_mix_spotify is spotify_tools.reproducir_mix_spotify
+    assert tools.controlar_reproduccion is spotify_tools.controlar_reproduccion
+
+
 def test_spotify_mix_tool_delegates_to_spotify_playback(monkeypatch):
     calls = []
 
@@ -232,9 +248,9 @@ def test_spotify_mix_tool_delegates_to_spotify_playback(monkeypatch):
         calls.append(seed)
         return "mix-ok"
 
-    monkeypatch.setattr(spotify, "_play_spotify_seed", fake_play)
+    monkeypatch.setattr(spotify_service, "_play_spotify_seed", fake_play)
 
-    assert spotify.reproducir_mix_spotify.invoke({"semilla": "latin pop"}) == "mix-ok"
+    assert spotify_tools.reproducir_mix_spotify.invoke({"semilla": "latin pop"}) == "mix-ok"
     assert calls == ["latin pop"]
 
 
@@ -243,7 +259,7 @@ def test_spotify_obtener_similares_handles_missing_seed_id():
         "name": "Track sin id",
         "artists": [{"name": "Artista"}],
     }
-    similares = spotify._spotify_obtener_similares(seed, limite=3)
+    similares = spotify_recommendations._spotify_obtener_similares(seed, limite=3)
     assert isinstance(similares, list)
 
 
@@ -253,7 +269,7 @@ def test_spotify_obtener_similares_returns_bounded_list_for_minimal_track():
         "name": "Track de prueba",
         "artists": [{"name": "Artista de prueba"}],
     }
-    similares = spotify._spotify_obtener_similares(seed, limite=5)
+    similares = spotify_recommendations._spotify_obtener_similares(seed, limite=5)
     assert isinstance(similares, list)
     assert len(similares) <= 5
 
@@ -309,9 +325,13 @@ def test_spotify_default_mix_never_calls_restricted_endpoints(monkeypatch):
             return {"tracks": {"items": [_track(f"search-{len(self.search_calls)}")]}}
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
-    monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
-    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", False)
+    monkeypatch.setattr(spotify_client, "sp", fake)
+    monkeypatch.setattr(
+        spotify_recommendations, "_spotify_market_objetivo", lambda: None
+    )
+    monkeypatch.setattr(
+        spotify_recommendations, "SPOTIFY_EXTENDED_QUOTA_MODE", False
+    )
 
     seed = {
         "id": "seed",
@@ -321,7 +341,7 @@ def test_spotify_default_mix_never_calls_restricted_endpoints(monkeypatch):
         "artists": [{"id": "artist1", "name": "Artist"}],
     }
 
-    similares = spotify._spotify_obtener_similares(seed, limite=8)
+    similares = spotify_recommendations._spotify_obtener_similares(seed, limite=8)
 
     assert similares
     assert len(similares) <= 8
@@ -354,8 +374,10 @@ def test_spotify_extended_quota_endpoints_are_opt_in(monkeypatch):
             return {"tracks": {"items": [_track("feature-search")]}}
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
-    monkeypatch.setattr(spotify, "_spotify_market_objetivo", lambda: None)
+    monkeypatch.setattr(spotify_client, "sp", fake)
+    monkeypatch.setattr(
+        spotify_recommendations, "_spotify_market_objetivo", lambda: None
+    )
     seed = {
         "id": "seed",
         "uri": "spotify:track:seed",
@@ -363,12 +385,16 @@ def test_spotify_extended_quota_endpoints_are_opt_in(monkeypatch):
         "artists": [{"id": "artist1", "name": "Artist"}],
     }
 
-    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", False)
-    assert spotify._spotify_extended_quota_candidates(seed, limit=8) == []
+    monkeypatch.setattr(
+        spotify_recommendations, "SPOTIFY_EXTENDED_QUOTA_MODE", False
+    )
+    assert spotify_recommendations._spotify_extended_quota_candidates(seed, limit=8) == []
     assert fake.calls == []
 
-    monkeypatch.setattr(spotify, "SPOTIFY_EXTENDED_QUOTA_MODE", True)
-    candidates = spotify._spotify_extended_quota_candidates(seed, limit=8)
+    monkeypatch.setattr(
+        spotify_recommendations, "SPOTIFY_EXTENDED_QUOTA_MODE", True
+    )
+    candidates = spotify_recommendations._spotify_extended_quota_candidates(seed, limit=8)
 
     assert candidates
     assert "recommendations" in fake.calls
@@ -389,9 +415,9 @@ def test_spotify_automix_reads_new_and_legacy_playlist_item_shapes(monkeypatch):
                 "next": None,
             }
 
-    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify_client, "sp", FakeSpotify())
 
-    assert spotify._spotify_obtener_uris_playlist("automix") == [
+    assert spotify_recommendations._spotify_obtener_uris_playlist("automix") == [
         "spotify:track:new-shape",
         "spotify:track:legacy-shape",
     ]
@@ -407,9 +433,9 @@ def test_spotify_creates_automix_with_current_user_playlist_api(monkeypatch):
             return {"id": "automix", **kwargs}
 
     fake = FakeSpotify()
-    monkeypatch.setattr(spotify, "sp", fake)
+    monkeypatch.setattr(spotify_client, "sp", fake)
 
-    result = spotify._spotify_crear_playlist_me(
+    result = spotify_recommendations._spotify_crear_playlist_me(
         name="JARVIS AutoMix",
         public=False,
         collaborative=False,
@@ -432,9 +458,9 @@ def test_spotify_logs_provider_error_types_without_raw_messages(monkeypatch, cap
         def current_user(self):
             raise RuntimeError("provider-body-with-secret-token")
 
-    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify_client, "sp", FakeSpotify())
 
-    assert spotify._spotify_usuario_actual_id() is None
+    assert spotify_client._spotify_usuario_actual_id() is None
     output = capsys.readouterr().out
     assert "RuntimeError" in output
     assert "provider-body-with-secret-token" not in output
@@ -447,11 +473,11 @@ def test_spotify_playback_errors_do_not_expose_provider_details(monkeypatch, cap
         def pause_playback(self, *args, **kwargs):
             raise RuntimeError(secret_error)
 
-    monkeypatch.setattr(spotify, "sp", FakeSpotify())
-    monkeypatch.setattr(spotify, "_spotify_dispositivo_objetivo", lambda: None)
-    monkeypatch.setattr(spotify, "_spotify_activar_cliente", lambda: False)
+    monkeypatch.setattr(spotify_client, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify_playback, "_spotify_dispositivo_objetivo", lambda: None)
+    monkeypatch.setattr(spotify_playback, "_spotify_activar_cliente", lambda: False)
 
-    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+    response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
     output = capsys.readouterr().out
 
     assert secret_error not in response
@@ -463,23 +489,27 @@ def test_post_playback_starts_automix_playlist_context(monkeypatch):
     started = {}
     queued = []
 
-    monkeypatch.setattr(spotify, "_spotify_dispositivo_objetivo", lambda: "device1")
-    monkeypatch.setattr(spotify, "_spotify_set_shuffle", lambda state, device_id: True)
+    monkeypatch.setattr(spotify_playback, "_spotify_dispositivo_objetivo", lambda: "device1")
+    monkeypatch.setattr(spotify_playback, "_spotify_set_shuffle", lambda state, device_id: True)
     monkeypatch.setattr(
-        spotify,
+        spotify_playback,
         "_spotify_obtener_similares",
         lambda track, limite: [
             {"id": "sim1", "uri": "spotify:track:sim1"},
             {"id": "sim2", "uri": "spotify:track:sim2"},
         ],
     )
-    monkeypatch.setattr(spotify, "_spotify_usuario_actual_id", lambda: "user1")
+    monkeypatch.setattr(spotify_playback, "_spotify_usuario_actual_id", lambda: "user1")
     monkeypatch.setattr(
-        spotify,
+        spotify_playback,
         "_spotify_buscar_o_crear_playlist_automix",
         lambda user_id: {"id": "automix1"},
     )
-    monkeypatch.setattr(spotify, "_spotify_reemplazar_playlist_con_uris", lambda playlist_id, uris: True)
+    monkeypatch.setattr(
+        spotify_playback,
+        "_spotify_reemplazar_playlist_con_uris",
+        lambda playlist_id, uris: True,
+    )
 
     def fake_start_context(playlist_id, device_id, offset_uri=None, offset_position=None):
         started.update(
@@ -492,10 +522,14 @@ def test_post_playback_starts_automix_playlist_context(monkeypatch):
         )
         return True
 
-    monkeypatch.setattr(spotify, "_spotify_start_playlist_context", fake_start_context)
-    monkeypatch.setattr(spotify, "_spotify_queue_tracks", lambda uris, device_id: queued.extend(uris) or len(uris))
+    monkeypatch.setattr(spotify_playback, "_spotify_start_playlist_context", fake_start_context)
+    monkeypatch.setattr(
+        spotify_playback,
+        "_spotify_queue_tracks",
+        lambda uris, device_id: queued.extend(uris) or len(uris),
+    )
 
-    spotify._post_playback_ok(
+    spotify_playback._post_playback_ok(
         "Seed",
         "Artist",
         "spotify:track:seed",
@@ -522,43 +556,43 @@ def test_spotify_control_rejects_stop_and_para_aliases(monkeypatch):
         def pause_playback(self, *args, **kwargs):
             raise AssertionError("stop/para aliases must not pause playback")
 
-    monkeypatch.setattr(spotify, "sp", FakeSpotify())
-    monkeypatch.setattr(spotify, "_spotify_dispositivo_objetivo", lambda: None)
+    monkeypatch.setattr(spotify_client, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify_playback, "_spotify_dispositivo_objetivo", lambda: None)
 
     for accion in ("stop", "para"):
-        response = spotify.controlar_reproduccion.invoke({"accion": accion})
+        response = spotify_tools.controlar_reproduccion.invoke({"accion": accion})
         assert "not recognized" in response or "no reconocida" in response
 
 
 def test_auto_mode_uses_desktop_without_cached_api_token(monkeypatch):
     calls = []
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "auto")
-    monkeypatch.setattr(spotify, "_spotify_has_valid_cached_token", lambda: False)
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "auto")
+    monkeypatch.setattr(spotify_service, "_spotify_has_valid_cached_token", lambda: False)
     monkeypatch.setattr(
-        spotify,
+        spotify_service,
         "_spotify_play_desktop",
         lambda song: calls.append(song) or "desktop-ok",
     )
 
     assert (
-        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
         == "desktop-ok"
     )
     assert calls == ["Killer Queen"]
 
 
 def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "api")
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "api")
     monkeypatch.setattr(
-        spotify,
+        spotify_service,
         "_spotify_play_api",
-        lambda song: spotify.SpotifyAPIPlaybackResult(
+        lambda song: spotify_playback.SpotifyAPIPlaybackResult(
             ok=True,
             message=f"api:{song}",
         ),
     )
     monkeypatch.setattr(
-        spotify,
+        spotify_service,
         "_spotify_play_desktop",
         lambda _song: (_ for _ in ()).throw(
             AssertionError("desktop must not run")
@@ -566,30 +600,30 @@ def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
     )
 
     assert (
-        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
         == "api:Killer Queen"
     )
 
 
 def test_auto_mode_falls_back_after_permanent_api_capability_failure(monkeypatch):
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "auto")
-    monkeypatch.setattr(spotify, "_spotify_has_valid_cached_token", lambda: True)
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "auto")
+    monkeypatch.setattr(spotify_service, "_spotify_has_valid_cached_token", lambda: True)
     monkeypatch.setattr(
-        spotify,
+        spotify_service,
         "_spotify_play_api",
-        lambda _song: spotify.SpotifyAPIPlaybackResult(
+        lambda _song: spotify_playback.SpotifyAPIPlaybackResult(
             ok=False,
             message="blocked",
             capability_failure=True,
         ),
     )
-    monkeypatch.setattr(spotify, "_spotify_play_desktop", lambda _song: "desktop-ok")
+    monkeypatch.setattr(spotify_service, "_spotify_play_desktop", lambda _song: "desktop-ok")
 
     assert (
-        spotify.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
         == "desktop-ok"
     )
-    assert spotify._spotify_api_capability_failed
+    assert spotify_service._spotify_api_capability_failed
 
 
 def test_desktop_ambiguity_is_localized(monkeypatch):
@@ -601,17 +635,17 @@ def test_desktop_ambiguity_is_localized(monkeypatch):
             SpotifyCandidate("two", "No Te Apartes de M\u00ed", "Roberto Carlos"),
         ),
     )
-    monkeypatch.setattr(spotify, "_spotify_desktop_result", lambda _song: result)
+    monkeypatch.setattr(spotify_service, "_spotify_desktop_result", lambda _song: result)
 
-    message = spotify._spotify_play_desktop("No te apartes de mi")
+    message = spotify_service._spotify_play_desktop("No te apartes de mi")
 
     assert "Vicentico" in message
     assert "Roberto Carlos" in message
-    spotify.pending_spotify_selections.clear("admin")
+    pending_spotify_selections.clear("admin")
 
 
 def test_desktop_search_uses_a_natural_query_not_web_api_syntax():
-    request_data = spotify._spotify_desktop_request(
+    request_data = spotify_service._spotify_desktop_request(
         "No te apartes de mi de Vicentico"
     )
 
@@ -637,9 +671,9 @@ def test_cached_token_probe_never_starts_oauth(monkeypatch):
     class FakeSpotify:
         auth_manager = AuthManager()
 
-    monkeypatch.setattr(spotify, "sp", FakeSpotify())
+    monkeypatch.setattr(spotify_client, "sp", FakeSpotify())
 
-    assert spotify._spotify_has_valid_cached_token()
+    assert spotify_client._spotify_has_valid_cached_token()
 
 
 def test_desktop_mode_routes_playback_controls_to_uia(monkeypatch):
@@ -653,10 +687,10 @@ def test_desktop_mode_routes_playback_controls_to_uia(monkeypatch):
                 message_key="spotify_control_complete",
             )
 
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "desktop")
-    monkeypatch.setattr(spotify, "_get_desktop_controller", lambda: Controller())
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    monkeypatch.setattr(spotify_service, "_get_desktop_controller", lambda: Controller())
 
-    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+    response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
 
     assert calls == ["pause"]
     assert "paused" in response.lower() or "pausada" in response.lower()
@@ -670,9 +704,9 @@ def test_desktop_control_reports_unverified_state_change(monkeypatch):
                 message_key="spotify_control_not_verified",
             )
 
-    monkeypatch.setattr(spotify, "SPOTIFY_PLAYBACK_MODE", "desktop")
-    monkeypatch.setattr(spotify, "_get_desktop_controller", lambda: Controller())
+    monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    monkeypatch.setattr(spotify_service, "_get_desktop_controller", lambda: Controller())
 
-    response = spotify.controlar_reproduccion.invoke({"accion": "pausar"})
+    response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
 
     assert "verify" in response.lower() or "verificar" in response.lower()
