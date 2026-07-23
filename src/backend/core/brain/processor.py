@@ -46,6 +46,7 @@ from core.command_pipeline.models import (
 )
 from core.command_pipeline.orchestrator import CommandOrchestrator
 from core.command_pipeline.responses import ResponseComposer
+from core.command_pipeline.synthesis import GroqResponseSynthesizer
 from modules.spotify.state import get_last_requested_track
 from services.memory_manager import memory_manager
 from utils.jarvis_i18n import get_current_language
@@ -731,6 +732,41 @@ class _RuntimeGroqPlanner:
             raise LLMServiceError from None
 
 
+class _RuntimeResponseSynthesizer:
+    """Use the latest plain Groq model without exposing execution tools."""
+
+    def synthesize(
+        self,
+        request: CommandRequest,
+        plan: ActionPlan,
+        receipts,
+        fallback_text: str,
+    ) -> str:
+        if _llm_calls_disabled_for_tests():
+            return fallback_text
+
+        _bound_model, plain_model, _registry = (
+            brain_state.get_tooling_snapshot()
+        )
+        if plain_model is None:
+            return fallback_text
+
+        try:
+            return GroqResponseSynthesizer(plain_model).synthesize(
+                request,
+                plan,
+                receipts,
+                fallback_text,
+            )
+        except Exception as exc:
+            obs_event(
+                "response_synthesis_failed",
+                error=type(exc).__name__,
+                request_id=request.request_id,
+            )
+            raise
+
+
 def _build_planner_messages(
     request: CommandRequest,
     history: list,
@@ -772,7 +808,9 @@ def _get_command_orchestrator() -> CommandOrchestrator:
                 deterministic=DeterministicPlanner(),
                 groq=_RuntimeGroqPlanner(),
                 executor=executor,
-                responses=ResponseComposer(),
+                responses=ResponseComposer(
+                    synthesizer=_RuntimeResponseSynthesizer()
+                ),
                 history=memory_manager,
                 message_factory=_build_planner_messages,
                 reasoning_mode=REASONING_MODE,

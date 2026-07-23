@@ -20,6 +20,9 @@ _FAILED_STATUSES = {
 class ResponseComposer:
     """Build a channel-neutral response without invoking a tool-capable model."""
 
+    def __init__(self, synthesizer=None) -> None:
+        self._synthesizer = synthesizer
+
     def compose(
         self,
         request: CommandRequest,
@@ -78,9 +81,32 @@ class ResponseComposer:
         else:
             outcome = "succeeded"
 
+        text = "\n".join(messages)
+        if (
+            self._synthesizer is not None
+            and receipts
+            and all(
+                receipt.status is ReceiptStatus.SUCCEEDED
+                for receipt in receipts
+            )
+            and not plan.requires_follow_up
+        ):
+            try:
+                synthesized = self._synthesizer.synthesize(
+                    request,
+                    plan,
+                    receipts,
+                    text,
+                )
+            except Exception:
+                pass
+            else:
+                if synthesized.strip():
+                    text = synthesized.strip()
+
         return CommandResponse(
             request_id=request.request_id,
-            text="\n".join(messages),
+            text=text,
             should_listen=plan.requires_follow_up or blocked,
             outcome=outcome,
             receipts=receipts,
