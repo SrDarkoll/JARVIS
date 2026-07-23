@@ -302,6 +302,26 @@ def _click_control(control: Any) -> bool:
         return False
 
 
+def _prepare_control_for_activation(control: Any) -> tuple[bool, bool]:
+    visibility = getattr(control, "is_visible", None)
+    if not callable(visibility):
+        return True, False
+    try:
+        if visibility():
+            return True, False
+    except Exception:
+        return True, False
+
+    scroll_item = getattr(control, "iface_scroll_item", None)
+    if scroll_item is None:
+        return False, False
+    try:
+        scroll_item.ScrollIntoView()
+    except Exception:
+        return False, False
+    return True, True
+
+
 def _is_player_control(control: Any) -> bool:
     parent_method = getattr(control, "parent", None)
     if not callable(parent_method):
@@ -454,11 +474,21 @@ class SpotifyUIAutomationAdapter:
 
     def activate(self, candidate: SpotifyCandidate) -> bool:
         control = self._elements.get(candidate.element_id)
-        return bool(control is not None and (_click_control(control) or _invoke_control(control)))
+        if control is None:
+            return False
+        ready, scrolled = _prepare_control_for_activation(control)
+        if not ready:
+            return False
+        if scrolled:
+            return _invoke_control(control)
+        return _click_control(control) or _invoke_control(control)
 
     def activate_fallback(self, candidate: SpotifyCandidate) -> bool:
         control = self._elements.get(candidate.element_id)
-        return bool(control is not None and _invoke_control(control))
+        if control is None:
+            return False
+        ready, _scrolled = _prepare_control_for_activation(control)
+        return ready and _invoke_control(control)
 
     def control(self, handle: int, action: str) -> bool:
         normalized_action = normalize_text(action)

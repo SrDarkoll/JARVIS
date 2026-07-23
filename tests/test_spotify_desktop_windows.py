@@ -297,6 +297,42 @@ def test_real_input_click_is_preferred_when_the_control_supports_it():
     assert not play.invoked
 
 
+def test_offscreen_result_is_scrolled_into_view_and_invoked():
+    class ScrollItem:
+        def __init__(self, control):
+            self.control = control
+
+        def ScrollIntoView(self):
+            self.control.scrolled = True
+            self.control.visible = True
+
+    class OffscreenControl(FakeControl):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.clicked = False
+            self.scrolled = False
+            self.visible = False
+            self.iface_scroll_item = ScrollItem(self)
+
+        def is_visible(self):
+            return self.visible
+
+        def click_input(self):
+            self.clicked = True
+
+    play = OffscreenControl(
+        name="Reproducir Killer Queen, de Queen",
+        control_type="Button",
+    )
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
+    candidate = adapter.read_candidates(503)[0]
+
+    assert adapter.activate(candidate)
+    assert play.scrolled
+    assert play.invoked
+    assert not play.clicked
+
+
 def test_english_result_accessible_name_is_supported():
     play = FakeControl(name="Play Dreams by Fleetwood Mac", control_type="Button")
     adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
