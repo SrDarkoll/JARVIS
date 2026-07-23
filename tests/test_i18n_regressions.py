@@ -439,3 +439,18 @@ def test_dynamic_web_detection_is_bilingual_regardless_of_ui_language():
         )
     finally:
         set_current_language(previous)
+
+
+def test_mojibake_is_repaired_before_routing_or_synthesis():
+    _ensure_backend_path()
+    from utils.jarvis_text import reparar_unicode
+
+    broken = (
+        "\u00c2\u00bfCu\u00c3\u00a1l es la ra\u00c3\u00adz cuadrada? "
+        "C\u00c3\u00b3mo est\u00c3\u00a1 \u00c3\u0081frica?"
+    )
+
+    assert reparar_unicode(broken) == (
+        "\u00bfCu\u00e1l es la ra\u00edz cuadrada? "
+        "C\u00f3mo est\u00e1 \u00c1frica?"
+    )

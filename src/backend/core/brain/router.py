@@ -144,6 +144,31 @@ _MONTHS_ES = [
     "diciembre",
 ]
 
+_BROAD_WEATHER_REGIONS = frozenset(
+    {
+        "africa",
+        "america",
+        "america del norte",
+        "america del sur",
+        "amazon",
+        "amazon rainforest",
+        "amazonas",
+        "amazonia",
+        "antarctica",
+        "antartida",
+        "asia",
+        "europe",
+        "europa",
+        "mundo",
+        "north america",
+        "oceania",
+        "sahara",
+        "south america",
+        "the amazon",
+        "world",
+    }
+)
+
 
 def _lang_is_english() -> bool:
     return get_current_language().startswith("en")
@@ -178,8 +203,8 @@ def _extract_weather_city(text: str, default_city: str | None = None) -> str:
     patterns = [
         r"(?:weather|temperature|forecast)\s+(?:in|for|at)\s+([a-z0-9,\s.-]{3,60})$",
         r"(?:in|for|at)\s+([a-z0-9,\s.-]{3,60})$",
-        r"(?:clima|temperatura|pronostico|tiempo)\s+(?:en|de|para)\s+([a-z0-9,\s.-]{3,60})$",
-        r"(?:en|de|para)\s+([a-z0-9,\s.-]{3,60})$",
+        r"(?:clima|temperatura|pronostico|tiempo)\s+(?:en|de|del|para)\s+([a-z0-9,\s.-]{3,60})$",
+        r"(?:en|de|del|para)\s+([a-z0-9,\s.-]{3,60})$",
     ]
     ignored = {
         "today",
@@ -205,8 +230,15 @@ def _extract_weather_city(text: str, default_city: str | None = None) -> str:
         )
         candidate = re.sub(r"\s+", " ", candidate).strip(" ,.-")
         candidate = re.sub(
-            r"^(?:in|at|for|en|de|para)\s+", "", candidate
+            r"^(?:in|at|for|en|de|del|para)\s+", "", candidate
         ).strip(" ,.-")
+        region = re.sub(
+            r"^(?:el|la|los|las|the)\s+",
+            "",
+            _normalizar_ascii(candidate),
+        )
+        if region in _BROAD_WEATHER_REGIONS:
+            return ""
         if candidate and candidate not in ignored:
             return candidate.title()
     return default_city
@@ -491,6 +523,10 @@ _ARITHMETIC_RE = re.compile(
     r"(?P<expression>[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
     r"(?:\s*(?:\*\*|[+\-*/%])\s*[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+))+)",
 )
+_SQUARE_ROOT_RE = re.compile(
+    r"\b(?:square root of|raiz cuadrada de)\s+"
+    r"(?P<number>[-+]?\d+(?:[.,]\d+)?)\b"
+)
 
 
 def _evaluate_arithmetic_node(node: ast.AST) -> Decimal:
@@ -536,7 +572,65 @@ def _format_arithmetic_number(value: Decimal) -> str:
     return integer + (dot + fraction if fraction else "")
 
 
-def _try_arithmetic_reply(text: str) -> str | None:
+def _try_square_root_reply(
+    text: str,
+    language: str | None = None,
+) -> str | None:
+    normalized = _normalizar_ascii(reparar_unicode(str(text or "")))
+    match = _SQUARE_ROOT_RE.search(normalized)
+    if not match:
+        return None
+
+    display_number = match.group("number")
+    number = display_number
+    if "," in number and "." not in number:
+        integer, fraction = number.rsplit(",", 1)
+        number = (
+            integer + fraction
+            if len(fraction) == 3
+            else integer + "." + fraction
+        )
+    else:
+        number = number.replace(",", "")
+
+    try:
+        value = Decimal(number)
+        if value < 0:
+            return None
+        with localcontext() as context:
+            context.prec = 28
+            result = value.sqrt()
+    except (ArithmeticError, InvalidOperation, ValueError):
+        return None
+
+    if result == result.to_integral_value():
+        rendered = _format_arithmetic_number(result)
+        approximate = False
+    else:
+        rendered = format(result, ".10f").rstrip("0").rstrip(".")
+        approximate = True
+
+    if _language_is_english(language):
+        qualifier = "approximately " if approximate else ""
+        return (
+            f"The square root of {display_number} is "
+            f"{qualifier}{rendered}."
+        )
+    qualifier = "aproximadamente " if approximate else ""
+    return (
+        f"La raiz cuadrada de {display_number} es "
+        f"{qualifier}{rendered}."
+    )
+
+
+def _try_arithmetic_reply(
+    text: str,
+    language: str | None = None,
+) -> str | None:
+    square_root_reply = _try_square_root_reply(text, language)
+    if square_root_reply is not None:
+        return square_root_reply
+
     normalized = (
         reparar_unicode(str(text or ""))
         .replace("\u00d7", "*")
@@ -718,7 +812,10 @@ def plan_hybrid(
     if followup_plan is not None:
         return followup_plan
 
-    arithmetic_reply = _try_arithmetic_reply(user_input)
+    arithmetic_reply = _try_arithmetic_reply(
+        user_input,
+        request.language,
+    )
     if arithmetic_reply is not None:
         return _direct_plan(request, arithmetic_reply)
 

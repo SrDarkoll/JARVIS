@@ -278,6 +278,93 @@ def test_router_evaluates_arithmetic_without_web_tool(monkeypatch):
     assert plan.direct_response == "99,000 / 8 = 12,375."
 
 
+@pytest.mark.parametrize(
+    ("text", "language", "expected"),
+    [
+        (
+            "Cual es la raiz cuadrada de 28?",
+            "es",
+            "La raiz cuadrada de 28 es aproximadamente 5.2915026221.",
+        ),
+        (
+            "What is the square root of 81?",
+            "en",
+            "The square root of 81 is 9.",
+        ),
+    ],
+)
+def test_router_evaluates_square_root_locally(
+    monkeypatch,
+    text,
+    language,
+    expected,
+):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("square root must stay local"),
+    )
+    request = CommandRequest.create(
+        text=text,
+        profile_id="admin",
+        channel="chat",
+        language=language,
+        request_id=f"square-root-{language}",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert plan.steps == ()
+    assert plan.direct_response == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "language", "expected"),
+    [
+        (
+            "Como esta el clima en Africa?",
+            "es",
+            "De que ciudad desea consultar el clima?",
+        ),
+        (
+            "Dime el clima del Amazonas",
+            "es",
+            "De que ciudad desea consultar el clima?",
+        ),
+        (
+            "What is the weather in Europe?",
+            "en",
+            "Which city should I check?",
+        ),
+    ],
+)
+def test_broad_weather_region_requests_a_precise_location(
+    text,
+    language,
+    expected,
+):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    request = CommandRequest.create(
+        text=text,
+        profile_id="admin",
+        channel="chat",
+        language=language,
+        request_id=f"broad-weather-{language}-{len(text)}",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert plan.steps == ()
+    assert plan.direct_response == expected
+    assert plan.requires_follow_up is True
+
+
 def test_preflight_reply_does_not_trigger_strict_web_retry(monkeypatch):
     from core.brain import brain_utils, processor
 
