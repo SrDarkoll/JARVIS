@@ -366,7 +366,7 @@ whisper_model = None
 transcription_service = build_transcription_coordinator(
     jarvis_config.SPEECH_TO_TEXT,
     jarvis_config.GROQ_API_KEY,
-    os.getenv("JARVIS_RUNTIME_DIR") or jarvis_config.BASE_DIR,
+    jarvis_config.RUNTIME_DIR,
 )
 
 
@@ -498,6 +498,12 @@ _CRITICAL_API_PATHS = {
     "/api/voice/registro/admin/capturar",
     "/api/voice/registro/admin/iniciar",
 }
+_ORIGIN_PROTECTED_API_PATHS = {
+    "/api/chat",
+    "/api/chat/stream",
+    "/api/tts",
+    "/api/voice",
+}
 
 
 def _is_loopback(addr: str | None) -> bool:
@@ -539,17 +545,47 @@ def _is_critical_api_path(path: str) -> bool:
     return any(normalized.startswith(prefix + "/") for prefix in _CRITICAL_API_PATHS)
 
 
+def _is_origin_protected_api_path(path: str) -> bool:
+    normalized = (path or "").rstrip("/") or "/"
+    if normalized in _ORIGIN_PROTECTED_API_PATHS:
+        return True
+    return any(
+        normalized.startswith(prefix + "/")
+        for prefix in _ORIGIN_PROTECTED_API_PATHS
+    )
+
+
+def _has_valid_api_token() -> bool:
+    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
+    if not configured_token:
+        return False
+    supplied = (request.headers.get("X-JARVIS-API-TOKEN") or "").strip()
+    return hmac.compare_digest(supplied, configured_token)
+
+
 @app.before_request
 async def _require_token_for_critical_routes():
     if request.method == "OPTIONS":
         return None
-    if not _is_critical_api_path(request.path):
+    is_critical = _is_critical_api_path(request.path)
+    if (
+        _is_origin_protected_api_path(request.path)
+        and not _is_trusted_browser_origin()
+        and not _has_valid_api_token()
+    ):
+        obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
+        message = (
+            "Untrusted origin for critical route."
+            if is_critical
+            else "Untrusted origin for API route."
+        )
+        return jsonify({"error": message}), 403
+    if not is_critical:
         return None
 
     configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
     if configured_token:
-        supplied = (request.headers.get("X-JARVIS-API-TOKEN") or "").strip()
-        if hmac.compare_digest(supplied, configured_token):
+        if _has_valid_api_token():
             return None
         obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
         return jsonify({"error": "Invalid or missing token."}), 401

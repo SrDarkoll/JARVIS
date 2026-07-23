@@ -1,19 +1,35 @@
 import importlib.util
 import os
 import time as _time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 import requests as http_requests
 from core import jarvis_state
 from core.brain import brain_state, brain_utils
+from core.command_pipeline.execution import (
+    ControlledToolBlockedError,
+    ToolAuthorizationRequiredError,
+    ToolConfirmationRequiredError,
+    ToolExecutionService,
+    ToolPolicyBlockedError,
+)
+from core.command_pipeline.models import (
+    ActionStep,
+    CommandRequest,
+    ReceiptStatus,
+)
 from core.jarvis_config import AUTOCURACION_ACTIVA, BASE_DIR, PLUGINS_DIR, ROOT_DIR, SRC_DIR
 from core.jarvis_observability import obs_event, obs_inc, obs_tool
+from core.service_container import services
 from core.unified_log import write_log
 from langchain_core.tools import tool
 from services import security_manager
 from tools._common import _open_url_or_app
+from utils.jarvis_i18n import get_current_language
 
 # Pool global para ejecución paralela de herramientas
 tool_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="ToolOp")
@@ -25,6 +41,11 @@ def _resultado_parece_error(texto: str) -> bool:
         return False
     if "access_denied" in t:
         return False
+    t = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", t)
+        if not unicodedata.combining(character)
+    )
     patrones = [
         "error",
         "could not",
@@ -34,6 +55,13 @@ def _resultado_parece_error(texto: str) -> bool:
         "timeout",
         "traceback",
         "exception",
+        "no encontre",
+        "no pude",
+        "no pudo",
+        "no se pudo",
+        "no esta disponible",
+        "no es accesible",
+        "perdio el foco",
     ]
     return any(p in t for p in patrones)
 
@@ -139,21 +167,66 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
     if "routine" in t:
         return True
     if tool_name == "ajustar_volumen":
-        return any(k in t for k in ["volume", "up", "down", "mute", "silence", "do not disturb"])
+        return any(
+            k in t
+            for k in [
+                "volume",
+                "volumen",
+                "up",
+                "sube",
+                "down",
+                "baja",
+                "mute",
+                "silence",
+                "silencio",
+                "silencia",
+                "do not disturb",
+                "no molestar",
+            ]
+        )
     if tool_name == "borrar_memoria":
         return any(
-            k in t for k in ["clear memory", "reset memory", "forget everything"]
+            k in t
+            for k in [
+                "clear memory",
+                "reset memory",
+                "forget everything",
+                "borra memoria",
+                "borrar memoria",
+                "olvida todo",
+            ]
         )
     if tool_name == "matar_proceso":
-        return any(k in t for k in ["kill process", "end process", "close process", "kill"])
+        return any(
+            k in t
+            for k in [
+                "kill process",
+                "end process",
+                "close process",
+                "kill",
+                "mata proceso",
+                "termina proceso",
+                "cierra proceso",
+            ]
+        )
     if tool_name == "controlar_pc":
         return any(
             k in t
             for k in [
                 "turn off",
+                "apaga",
+                "apagar",
                 "restart",
+                "reinicia",
+                "reiniciar",
                 "hibernate",
+                "hiberna",
+                "hibernar",
                 "lock",
+                "bloquea",
+                "bloquear",
+                "cancela",
+                "cancelar",
             ]
         )
     if tool_name == "abrir_aplicacion":
@@ -165,6 +238,13 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
                 "launch",
                 "application",
                 "app",
+                "abre",
+                "abrir",
+                "inicia",
+                "ejecuta",
+                "lanza",
+                "aplicacion",
+                "programa",
             ]
         )
 
@@ -210,24 +290,38 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
     return True
 
 
-def _invocar_tool_entry(tc_name: str, args: dict, user_input: str, source: str = "unknown", profile_id: str = None):
-    tc = {"name": tc_name, "args": args, "id": "entry"}
-    context = {"user_input": user_input, "source": source}
-    if profile_id:
-        context["profile_id"] = profile_id
-    return _invocar_tool(tc, brain_state.tool_map, context)
+class _ToolReportedFailure(RuntimeError):
+    pass
 
 
-def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
-    tool_name = tc.get("name")
-    args = tc.get("args") or {}
-    user_input = context.get("user_input", "")
-    source = context.get("source", "unknown")
-    profile_id = jarvis_state.normalize_profile_id(
-        context.get("profile_id") or jarvis_state.get_active_profile_id()
-    )
+def _blocked_error(reason: str) -> ControlledToolBlockedError:
+    public_reason = str(reason or "").strip()
+    normalized_reason = public_reason.lower()
+    if "authoriz" in normalized_reason or "autoriz" in normalized_reason:
+        return ToolAuthorizationRequiredError(public_reason)
+    if "confirm" in normalized_reason:
+        return ToolConfirmationRequiredError(public_reason)
+    return ToolPolicyBlockedError(public_reason)
 
-    inicio = _time.perf_counter()
+
+def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
+    tool_name = step.tool_name
+    args = dict(step.arguments)
+    user_input = request.text
+    source = request.channel
+    profile_id = request.profile_id
+    configured_tool_map = request.metadata.get("_tool_map")
+    if isinstance(configured_tool_map, dict):
+        tool = configured_tool_map.get(tool_name)
+    else:
+        registry = brain_state.tool_registry.snapshot()
+        tool = registry.by_name.get(tool_name)
+        if tool is None:
+            # Compatibility for tests and legacy plugins that still mutate
+            # brain_state.tool_map directly.
+            tool = brain_state.tool_map.get(tool_name)
+
+    started = _time.perf_counter()
     obs_inc("tool_calls_total", 1)
     outcome = "error"
     result_preview = ""
@@ -249,10 +343,9 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
     try:
         # Anti-hallucination guard by context
         if not _tool_permitida_por_contexto(tool_name, user_input, source):
-            return _finish(
-                f"ACCESS_DENIED: Tool {tool_name} does not match the current context.",
-                "blocked",
-            )
+            outcome = "blocked"
+            result_preview = "context_guard_blocked"
+            raise ToolPolicyBlockedError()
 
         # Security guard: profile_id travels explicitly or via ContextVar.
         guard_fn = getattr(security_manager, "_security_guard", None)
@@ -265,18 +358,33 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
                     source,
                     profile_id=profile_id,
                 )
-            except Exception as e:
-                reason = f"Security guard failure: {e}"
-                elapsed = (_time.perf_counter() - inicio) * 1000.0
-                obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=reason)
-                return _finish(f"ACCESS_DENIED: {reason}", "blocked")
+            except Exception as exc:
+                outcome = "blocked"
+                result_preview = f"security_guard_failed:{type(exc).__name__}"
+                elapsed = (_time.perf_counter() - started) * 1000.0
+                obs_tool(
+                    tool_name,
+                    False,
+                    elapsed,
+                    source,
+                    user_input=user_input,
+                    error=result_preview,
+                )
+                raise ToolPolicyBlockedError() from exc
             if not allowed:
-                msg = str(reason or "Action blocked by security policy.").strip()
-                if not msg.lower().startswith("access_denied"):
-                    msg = f"ACCESS_DENIED: {msg}"
-                elapsed = (_time.perf_counter() - inicio) * 1000.0
-                obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=msg)
-                return _finish(msg, "blocked")
+                outcome = "blocked"
+                blocked_error = _blocked_error(reason)
+                result_preview = blocked_error.diagnostic_code
+                elapsed = (_time.perf_counter() - started) * 1000.0
+                obs_tool(
+                    tool_name,
+                    False,
+                    elapsed,
+                    source,
+                    user_input=user_input,
+                    error=result_preview,
+                )
+                raise blocked_error
 
         from core.brain import security_engine
 
@@ -289,16 +397,17 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
                 _registrar_accion_pendiente_auth(
                     profile_id, tool_name, args, user_input
                 )
-                return _finish(
-                    "ACCESS_DENIED: Requires Administrator authorization.",
-                    "blocked",
-                )
+                outcome = "blocked"
+                result_preview = "tool_authorization_required"
+                raise ToolAuthorizationRequiredError()
 
         # Actual tool execution
-        if tool_name not in tool_map:
-            return _finish(f"Tool '{tool_name}' not available.", "unavailable")
+        if tool is None:
+            outcome = "unavailable"
+            result_preview = "tool_unavailable"
+            raise LookupError("tool_unavailable")
         with jarvis_state.active_profile(profile_id):
-            result = tool_map[tool_name].invoke(args)
+            result = tool.invoke(args)
         result_txt = str(result)
 
         ok = not _resultado_parece_error(result_txt)
@@ -310,26 +419,49 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
                 ok = True
 
         if not ok:
-            security_manager._proactive_register_tool_error(tool_name, result_txt)
+            security_manager._proactive_register_tool_error(
+                tool_name,
+                "tool_reported_failure",
+            )
+            outcome = "error"
+            result_preview = "tool_reported_failure"
+            raise _ToolReportedFailure("tool_reported_failure")
 
-        elapsed = (_time.perf_counter() - inicio) * 1000.0
+        elapsed = (_time.perf_counter() - started) * 1000.0
         obs_tool(
             tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt
         )
-        return _finish(result, "ok" if ok else "error")
-    except Exception as e:
-        err = str(e)
+        return _finish(result, "ok")
+    except (ControlledToolBlockedError, LookupError, _ToolReportedFailure):
+        raise
+    except Exception as exc:
+        error_type = type(exc).__name__
         if AUTOCURACION_ACTIVA:
-            healed = _intentar_autocuracion(tool_name, args, user_input, err)
+            healed = _intentar_autocuracion(
+                tool_name,
+                args,
+                user_input,
+                error_type,
+            )
             if healed:
                 obs_inc("autocure_success", 1)
                 return _finish(healed, "ok")
-        security_manager._proactive_register_tool_error(tool_name, err)
-        elapsed = (_time.perf_counter() - inicio) * 1000.0
-        obs_tool(tool_name, False, elapsed, source, user_input=user_input, error=err)
-        return _finish(f"Error executing {tool_name}: {err}", "error")
+        diagnostic = f"tool_execution_failed:{error_type}"
+        security_manager._proactive_register_tool_error(tool_name, diagnostic)
+        elapsed = (_time.perf_counter() - started) * 1000.0
+        obs_tool(
+            tool_name,
+            False,
+            elapsed,
+            source,
+            user_input=user_input,
+            error=diagnostic,
+        )
+        outcome = "error"
+        result_preview = diagnostic
+        raise RuntimeError("tool_execution_failed") from exc
     finally:
-        elapsed = (_time.perf_counter() - inicio) * 1000.0
+        elapsed = (_time.perf_counter() - started) * 1000.0
         write_log(
             "TOOL",
             f"END {tool_name}",
@@ -339,6 +471,67 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
             elapsed_ms=round(elapsed, 2),
             result=result_preview,
         )
+
+
+_tool_execution_service = ToolExecutionService(_invoke_tool_once)
+services.tool_execution = _tool_execution_service
+
+
+def _receipt_value(receipt) -> Any:
+    if receipt.result is not None:
+        return receipt.result
+    if receipt.status is ReceiptStatus.BLOCKED:
+        return f"ACCESS_DENIED: {receipt.user_message}"
+    return receipt.user_message
+
+
+def _invocar_tool_entry(
+    tc_name: str,
+    args: dict,
+    user_input: str,
+    source: str = "unknown",
+    profile_id: str | None = None,
+    request_id: str | None = None,
+    step_id: str | None = None,
+) -> Any:
+    request = CommandRequest.create(
+        text=user_input or tc_name,
+        profile_id=profile_id or jarvis_state.get_active_profile_id(),
+        channel=source,
+        request_id=request_id,
+        language=get_current_language(),
+    )
+    step = ActionStep(
+        step_id=step_id or f"legacy-{uuid4()}",
+        tool_name=tc_name,
+        arguments=args,
+    )
+    return _receipt_value(_tool_execution_service.execute(request, step))
+
+
+def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
+    tool_name = str(tc.get("name") or "").strip()
+    user_input = str(context.get("user_input") or tool_name)
+    request = CommandRequest.create(
+        text=user_input,
+        profile_id=(
+            context.get("profile_id") or jarvis_state.get_active_profile_id()
+        ),
+        channel=context.get("source", "unknown"),
+        request_id=context.get("request_id"),
+        language=get_current_language(),
+        metadata={"_tool_map": tool_map},
+    )
+    step = ActionStep(
+        step_id=str(
+            context.get("step_id")
+            or tc.get("id")
+            or f"legacy-{uuid4()}"
+        ),
+        tool_name=tool_name,
+        arguments=tc.get("args") or {},
+    )
+    return _receipt_value(_tool_execution_service.execute(request, step))
 
 
 def _intentar_autocuracion(

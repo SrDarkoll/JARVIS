@@ -19,6 +19,51 @@ from core.command_pipeline.models import (
 )
 
 
+class ControlledToolBlockedError(PermissionError):
+    """Blocked operation whose public response is safe to expose."""
+
+    diagnostic_code = "tool_blocked"
+    message_en = "I need explicit confirmation before performing that action."
+    message_es = (
+        "Necesito confirmacion explicita antes de realizar esa accion."
+    )
+
+    def __init__(self, public_message: str = "") -> None:
+        super().__init__(self.diagnostic_code)
+        self.public_message = str(public_message or "").strip()
+
+    def user_message(self, language: str) -> str:
+        if self.public_message:
+            return self.public_message
+        if str(language or "").lower().startswith("es"):
+            return self.message_es
+        return self.message_en
+
+
+class ToolConfirmationRequiredError(ControlledToolBlockedError):
+    """The action is valid but still needs explicit user confirmation."""
+
+    diagnostic_code = "tool_confirmation_required"
+
+
+class ToolAuthorizationRequiredError(ControlledToolBlockedError):
+    """The current profile is not authorized to perform the action."""
+
+    diagnostic_code = "tool_authorization_required"
+    message_en = "Administrator authorization is required for that action."
+    message_es = (
+        "Se requiere autorizacion de administrador para realizar esa accion."
+    )
+
+
+class ToolPolicyBlockedError(ControlledToolBlockedError):
+    """The configured security policy forbids the action."""
+
+    diagnostic_code = "tool_policy_blocked"
+    message_en = "That action is blocked by the security policy."
+    message_es = "Esa accion esta bloqueada por la politica de seguridad."
+
+
 def operation_signature(step: ActionStep) -> str:
     """Return a stable signature for one tool operation."""
     arguments = json.dumps(
@@ -108,6 +153,19 @@ class ToolExecutionService:
                 user_message=str(value or ""),
                 verified=True,
                 diagnostic_code="",
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+            )
+        except ControlledToolBlockedError as exc:
+            receipt = ExecutionReceipt(
+                request_id=request.request_id,
+                step_id=step.step_id,
+                tool_name=step.tool_name,
+                status=ReceiptStatus.BLOCKED,
+                result=None,
+                user_message=exc.user_message(request.language),
+                verified=False,
+                diagnostic_code=exc.diagnostic_code,
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
             )

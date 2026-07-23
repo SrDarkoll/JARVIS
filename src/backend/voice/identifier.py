@@ -17,7 +17,7 @@ import time as _time
 
 import numpy as np
 import soundfile as sf
-from core.jarvis_config import BASE_DIR, VOICE_ID_ENABLED
+from core.jarvis_config import CACHE_DIR, RUNTIME_DIR, VOICE_ID_ENABLED
 from utils.audio_conversion import AudioConversionError, convert_to_wav
 
 VOICE_ID_DISPONIBLE = False
@@ -45,9 +45,7 @@ from core.jarvis_state import DEFAULT_PROFILE_ID
 
 OWNER_PID = DEFAULT_PROFILE_ID  # Alias for clarity in biometric context
 
-RUNTIME_DIR = os.getenv("JARVIS_RUNTIME_DIR") or BASE_DIR
 DB_PATH = os.getenv("JARVIS_DB_PATH") or os.path.join(RUNTIME_DIR, "memoria_jarvis.db")
-CACHE_DIR = os.getenv("JARVIS_CACHE_DIR") or os.path.join(RUNTIME_DIR, ".cache")
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 _lock = threading.Lock()

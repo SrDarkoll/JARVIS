@@ -1,250 +1,194 @@
 from __future__ import annotations
 
-
-def _make_safe_mock_tool():
-    """Creates a mock that absolutely prevents any side effects."""
-    def safe_mock(tool_name, args, user_input, source="router"):
-        if tool_name in ("reproducir_en_spotify", "reproducir_mix_spotify", "abrir_navegador", "abrir_youtube"):
-            return f"{tool_name}:mocked"
-        return f"{tool_name}:ok"
-    return safe_mock
+from core.command_pipeline.models import CommandRequest
 
 
-def test_compound_router_executes_music_then_weather(monkeypatch):
-    from core.brain import processor, router
+def _plan(text: str, *, request_id: str = "compound-1"):
+    from core.command_pipeline.deterministic import DeterministicPlanner
 
-    calls = []
+    request = CommandRequest.create(
+        text=text,
+        profile_id="admin",
+        channel="chat",
+        language="en",
+        request_id=request_id,
+        metadata={"default_location": "Malibu, CA"},
+    )
+    return DeterministicPlanner().plan(request)
 
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
 
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
+def _steps(plan):
+    return [(step.tool_name, dict(step.arguments)) for step in plan.steps]
 
-    reply = router._router_hibrido(
+
+def test_compound_router_plans_music_then_weather():
+    plan = _plan(
         "ponme reggaeton lento de cnco y dime el clima para hoy en malibu"
     )
 
-    assert reply is not None
-    assert [call[0] for call in calls] == ["reproducir_en_spotify", "obtener_clima"]
-    assert calls[0][1]["cancion"] == "reggaeton lento de cnco"
-    assert calls[1][1]["ciudad"] == "Malibu"
-    assert "Paso 1" in reply
-    assert "Paso 2" in reply
+    assert plan is not None
+    assert _steps(plan) == [
+        ("reproducir_en_spotify", {"cancion": "reggaeton lento de cnco"}),
+        ("obtener_clima", {"ciudad": "Malibu"}),
+    ]
+    assert [step.step_id for step in plan.steps] == ["step-1", "step-2"]
 
 
-def test_compound_router_handles_verbose_nba_then_spotify(monkeypatch):
-    from core.brain import processor, router
-
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido(
+def test_compound_router_handles_verbose_nba_then_spotify():
+    plan = _plan(
         "first, you need to search NBA matches for today and then I need you to "
         "put a song on Spotify that his name is Reggaeton Lento of CNCO. "
         "Can you do that for me?"
     )
 
-    assert reply is not None
-    assert [call[0] for call in calls] == ["obtener_deportes_espn", "reproducir_en_spotify"]
-    assert calls[0][1]["consulta"] == "hoy"
-    assert "reggaeton lento" in calls[1][1]["cancion"]
-    assert "cnco" in calls[1][1]["cancion"]
+    assert plan is not None
+    assert [step.tool_name for step in plan.steps] == [
+        "obtener_deportes_espn",
+        "reproducir_en_spotify",
+    ]
+    assert plan.steps[0].arguments["consulta"] == "hoy"
+    assert "reggaeton lento" in plan.steps[1].arguments["cancion"]
+    assert "cnco" in plan.steps[1].arguments["cancion"]
 
 
-def test_router_handles_spanish_reproduzcas_spotify_song(monkeypatch):
-    from core.brain import processor, router
-
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido(
+def test_router_handles_spanish_reproduzcas_spotify_song():
+    plan = _plan(
         "necesito que reproduzcas en spotify una cancion que se llama "
         "1000 miles de vanessa carlton"
     )
 
-    assert reply == "reproducir_en_spotify:ok"
-    assert [call[0] for call in calls] == ["reproducir_en_spotify"]
-    assert calls[0][1]["cancion"] == "1000 miles de vanessa carlton"
+    assert plan is not None
+    assert _steps(plan) == [
+        (
+            "reproducir_en_spotify",
+            {"cancion": "1000 miles de vanessa carlton"},
+        )
+    ]
 
 
-def test_router_routes_spotify_mix_request_to_mix_tool(monkeypatch):
-    from core.brain import processor, router
+def test_router_routes_spotify_mix_request_to_mix_tool():
+    plan = _plan("pon un mix similar a bad bunny en spotify")
 
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido("pon un mix similar a bad bunny en spotify")
-
-    assert reply == "reproducir_mix_spotify:ok"
-    assert [call[0] for call in calls] == ["reproducir_mix_spotify"]
-    assert calls[0][1]["semilla"] == "bad bunny"
+    assert plan is not None
+    assert _steps(plan) == [
+        ("reproducir_mix_spotify", {"semilla": "bad bunny"})
+    ]
 
 
-def test_compound_router_handles_spanish_music_then_search(monkeypatch):
-    from core.brain import processor, router
-
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido(
+def test_compound_router_handles_spanish_music_then_search():
+    plan = _plan(
         "necesito que reproduzcas en spotify una cancion que se llama "
         "1000 miles de vanessa carlton y despues busques cuanto esta "
         "ahorita el kilo de tortillas"
     )
 
-    assert reply is not None
-    assert [call[0] for call in calls] == ["reproducir_en_spotify", "buscar_en_internet"]
-    assert calls[0][1]["cancion"] == "1000 miles de vanessa carlton"
-    assert "kilo de tortillas" in calls[1][1]["query"]
+    assert plan is not None
+    assert [step.tool_name for step in plan.steps] == [
+        "reproducir_en_spotify",
+        "buscar_en_internet",
+    ]
+    assert plan.steps[0].arguments["cancion"] == "1000 miles de vanessa carlton"
+    assert "kilo de tortillas" in plan.steps[1].arguments["query"]
 
 
-def test_router_weather_wins_over_social_status(monkeypatch):
-    from core.brain import processor, router
+def test_topic_news_search_is_not_intercepted_by_briefing():
+    plan = _plan("search the latest Python security news")
 
-    calls = []
+    assert plan is not None
+    assert [step.tool_name for step in plan.steps] == ["buscar_en_internet"]
 
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
 
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
+def test_explicit_briefing_request_remains_supported():
+    from core.brain import processor
 
-    reply = router._router_hibrido(
+    assert processor._is_briefing_request("news")
+    assert processor._is_briefing_request("daily news briefing")
+    assert processor._is_briefing_request("resumen de noticias")
+    assert not processor._is_briefing_request("search the latest Python security news")
+
+
+def test_router_weather_wins_over_social_status():
+    plan = _plan(
         "how are you today how is the weather doing like in malibu"
     )
 
-    assert reply == "obtener_clima:ok"
-    assert [call[0] for call in calls] == ["obtener_clima"]
-    assert calls[0][1]["ciudad"] == "Malibu"
+    assert plan is not None
+    assert _steps(plan) == [("obtener_clima", {"ciudad": "Malibu"})]
 
 
-def test_preflight_compound_handles_reminder_then_music(monkeypatch):
-    from core import core_tools
-    from core.brain import processor
-
-    reminders = []
-    calls = []
-
-    def fake_reminder(text, minutes):
-        reminders.append((text, minutes))
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(core_tools, "agregar_recordatorio", fake_reminder)
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply, should_listen = processor._preflight(
+def test_compound_handles_reminder_then_music():
+    plan = _plan(
         "recuerdame revisar el horno en 5 minutos y pon despacito",
-        "admin",
     )
 
-    assert should_listen is False
-    assert reminders == [("revisar el horno", 5)]
-    assert [call[0] for call in calls] == ["reproducir_en_spotify"]
-    assert calls[0][1]["cancion"] == "despacito"
-    assert "Paso 1" in reply
-    assert "Paso 2" in reply
+    assert plan is not None
+    assert _steps(plan) == [
+        (
+            "poner_recordatorio",
+            {"texto": "revisar el horno", "minutos": 5},
+        ),
+        ("reproducir_en_spotify", {"cancion": "despacito"}),
+    ]
 
 
-def test_preflight_compound_handles_music_then_reminder(monkeypatch):
-    from core import core_tools
-    from core.brain import processor
-
-    reminders = []
-    calls = []
-
-    def fake_reminder(text, minutes):
-        reminders.append((text, minutes))
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(core_tools, "agregar_recordatorio", fake_reminder)
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply, should_listen = processor._preflight(
+def test_compound_handles_music_then_reminder():
+    plan = _plan(
         "pon despacito y recuerdame revisar el horno en 5 minutos",
-        "admin",
     )
 
-    assert should_listen is False
-    assert [call[0] for call in calls] == ["reproducir_en_spotify"]
-    assert calls[0][1]["cancion"] == "despacito"
-    assert reminders == [("revisar el horno", 5)]
-    assert "Paso 1" in reply
-    assert "Paso 2" in reply
+    assert plan is not None
+    assert _steps(plan) == [
+        ("reproducir_en_spotify", {"cancion": "despacito"}),
+        (
+            "poner_recordatorio",
+            {"texto": "revisar el horno", "minutos": 5},
+        ),
+    ]
 
 
-def test_router_stop_the_music_is_not_media_control(monkeypatch):
-    from core.brain import processor, router
+def test_compound_pause_then_sing_plans_each_action_once():
+    plan = _plan(
+        "Can you pause the music, please? And then you can sing me "
+        "Bad Habit by Steve Lacey.",
+    )
 
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido("jarvis can you stop the music please")
-
-    assert reply != "controlar_reproduccion:ok"
-    assert calls == []
+    assert plan is not None
+    assert [step.tool_name for step in plan.steps] == [
+        "controlar_reproduccion",
+        "reproducir_en_spotify",
+    ]
+    assert plan.steps[1].arguments["cancion"] == "bad habit by steve lacey"
 
 
-def test_router_bare_stop_is_not_media_control(monkeypatch):
-    from core.brain import processor, router
+def test_partial_compound_returns_clarification_without_planned_actions():
+    plan = _plan(
+        "pause the music and then dance in circles",
+    )
 
-    calls = []
-
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
-
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-    reply = router._router_hibrido("stop")
-
-    assert reply != "controlar_reproduccion:ok"
-    assert calls == []
+    assert plan is not None
+    assert plan.steps == ()
+    assert "dance in circles" in plan.direct_response.lower()
+    assert plan.requires_follow_up is True
 
 
-def test_router_spanish_para_music_is_not_media_control(monkeypatch):
-    from core.brain import processor, router
+def test_router_stop_the_music_is_not_media_control():
+    plan = _plan("jarvis can you stop the music please")
 
-    calls = []
+    assert plan is not None
+    assert plan.steps == ()
+    assert plan.direct_response == "No action taken."
 
-    def fake_tool(tool_name, args, user_input, source="router"):
-        calls.append((tool_name, args, source))
-        return f"{tool_name}:ok"
 
-    monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
+def test_router_bare_stop_is_not_media_control():
+    plan = _plan("stop")
 
-    reply = router._router_hibrido("jarvis para la musica por favor")
+    assert plan is not None
+    assert plan.steps == ()
+    assert plan.direct_response == "No action taken."
 
-    assert reply != "controlar_reproduccion:ok"
-    assert calls == []
+
+def test_router_spanish_para_music_is_not_media_control():
+    plan = _plan("jarvis para la musica por favor")
+
+    assert plan is not None
+    assert plan.steps == ()

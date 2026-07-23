@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 
+import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND = os.path.join(ROOT, "src", "backend")
@@ -35,13 +37,11 @@ class TestRouterConstants:
     def test_action_start_pattern_is_valid_regex(self):
         from core.brain import router
 
-        import re
         assert re.compile(router._ACTION_START_PATTERN) is not None
 
     def test_trailing_request_re_is_valid_regex(self):
         from core.brain import router
 
-        import re
         assert re.compile(router._TRAILING_REQUEST_RE) is not None
 
 
@@ -178,6 +178,51 @@ class TestRouterHelpers:
 
         assert callable(router._extract_weather_city)
 
+    def test_extract_weather_city_with_time_word_and_question_mark(self):
+        from core.brain import router
+
+        assert (
+            router._extract_weather_city("How's the weather today in Malibu?")
+            == "Malibu"
+        )
+        assert router._extract_weather_city("¿Cuál es el clima hoy en Reynosa?") == "Reynosa"
+
+    def test_incomplete_weather_location_requests_city(self, monkeypatch):
+        from core.command_pipeline.deterministic import DeterministicPlanner
+        from core.command_pipeline.models import CommandRequest
+
+        monkeypatch.setattr(
+            "core.brain.tool_manager._invocar_tool_entry",
+            lambda *_args, **_kwargs: pytest.fail("weather tool must not run"),
+        )
+        request = CommandRequest.create(
+            text="What's the weather in?",
+            profile_id="admin",
+            channel="chat",
+            language="en",
+            request_id="weather-clarification",
+        )
+
+        plan = DeterministicPlanner().plan(request)
+
+        assert plan is not None
+        assert plan.steps == ()
+        assert plan.direct_response == "Which city should I check?"
+        assert plan.requires_follow_up is True
+
+    def test_compound_result_labels_follow_active_language(self):
+        from core.brain import router
+        from utils.jarvis_i18n import get_current_language, set_current_language
+
+        previous_language = get_current_language()
+        try:
+            set_current_language("en")
+            assert "Step 1:" in router._format_compound_results([("one", "ok")])
+            set_current_language("es")
+            assert "Paso 1:" in router._format_compound_results([("uno", "ok")])
+        finally:
+            set_current_language(previous_language)
+
 
 class TestRouterCompound:
     def test_router_compuesto_function_exists(self):
@@ -208,3 +253,197 @@ class TestRouterHasActionableMarker:
         from core.brain import router
 
         assert callable(router._has_actionable_marker)
+
+
+def test_router_evaluates_arithmetic_without_web_tool(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("arithmetic must stay local"),
+    )
+    request = CommandRequest.create(
+        text="Could you tell me what is 99,000 / 8?",
+        profile_id="admin",
+        channel="chat",
+        language="en",
+        request_id="arithmetic-1",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert plan.steps == ()
+    assert plan.direct_response == "99,000 / 8 = 12,375."
+
+
+def test_preflight_reply_does_not_trigger_strict_web_retry(monkeypatch):
+    from core.brain import brain_utils, processor
+
+    monkeypatch.setattr(
+        brain_utils,
+        "_respuesta_necesita_web_forzarla",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a routed preflight reply must not be replaced"
+        ),
+    )
+
+    assert (
+        processor._reply_needs_strict_web_retry(
+            "How's the weather today?",
+            "The weather in Malibu is sunny.",
+            [],
+            path="preflight",
+        )
+        is False
+    )
+
+
+def test_strict_web_detects_existing_spanish_web_tool_call(monkeypatch):
+    from core import jarvis_config
+    from core.brain import brain_utils, social_engine
+
+    class ExistingWebCall:
+        tool_calls = [
+            {
+                "name": "buscar_en_internet",
+                "args": {"query": "latest news"},
+                "id": "web-call",
+            }
+        ]
+
+    monkeypatch.setattr(jarvis_config, "STRICT_WEB_SEARCH", True)
+    monkeypatch.setattr(social_engine, "_debe_buscar_en_web", lambda _text: True)
+
+    assert (
+        brain_utils._respuesta_necesita_web_forzarla(
+            "latest news",
+            "Current results.",
+            [ExistingWebCall()],
+        )
+        is False
+    )
+
+def test_router_does_not_call_guest_administrator(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    request = CommandRequest.create(
+        text="how are you today",
+        profile_id="guest_unverified",
+        channel="chat",
+        language="en",
+        request_id="guest-status",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert "Administrator" not in plan.direct_response
+    assert "Guest" in plan.direct_response
+
+
+def test_weather_planning_has_no_side_effects(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest, PlanSource
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("planner must not execute tools"),
+    )
+    request = CommandRequest.create(
+        text="clima en Monterrey",
+        profile_id="admin",
+        channel="chat",
+        language="es",
+        request_id="weather-1",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert plan.source is PlanSource.DETERMINISTIC
+    assert [(step.tool_name, dict(step.arguments)) for step in plan.steps] == [
+        ("obtener_clima", {"ciudad": "Monterrey"})
+    ]
+
+
+def test_dangerous_action_is_planned_but_not_executed(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("planner must not execute tools"),
+    )
+    request = CommandRequest.create(
+        text="apaga la computadora",
+        profile_id="admin",
+        channel="chat",
+        language="es",
+        request_id="shutdown-1",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert [(step.tool_name, dict(step.arguments)) for step in plan.steps] == [
+        ("controlar_pc", {"accion": "apagar"})
+    ]
+
+
+def test_spotify_followup_uses_read_only_request_snapshot(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("planner must not execute tools"),
+    )
+    request = CommandRequest.create(
+        text="la primera",
+        profile_id="guest_unverified",
+        channel="chat",
+        language="es",
+        request_id="spotify-followup-1",
+        metadata={
+            "spotify_pending_choices": (
+                {
+                    "title": "No Te Apartes de Mi",
+                    "artist": "Vicentico, Valeria Bertuccelli",
+                },
+                {"title": "Acariname", "artist": "Los Angeles Azules"},
+            )
+        },
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert [(step.tool_name, dict(step.arguments)) for step in plan.steps] == [
+        (
+            "reproducir_en_spotify",
+            {
+                "cancion": (
+                    "No Te Apartes de Mi de Vicentico, Valeria Bertuccelli"
+                )
+            },
+        )
+    ]
+
+
+def test_legacy_router_rejects_tool_execution():
+    from core.brain import router
+
+    with pytest.raises(RuntimeError, match="legacy_router_execution_removed"):
+        router._router_hibrido("clima en Monterrey")
+
+
+def test_router_source_does_not_import_processor_or_invoke_tools():
+    from core.brain import router
+
+    source = open(router.__file__, encoding="utf-8").read()
+
+    assert "core.brain.processor" not in source
+    assert "_invocar_tool_wrapper" not in source

@@ -106,18 +106,41 @@ def _get_default_location() -> str:
     return get_default_location()
 
 
-def _resolve_openmeteo_coords(default_location: str) -> tuple[str, str]:
-    env_lat = (os.getenv("JARVIS_DEFAULT_LAT") or "").strip()
-    env_lon = (os.getenv("JARVIS_DEFAULT_LON") or "").strip()
-    if env_lat and env_lon:
-        return env_lat, env_lon
+def _resolve_openmeteo_coords(
+    location: str,
+    *,
+    use_configured_coordinates: bool,
+) -> tuple[str, str] | None:
+    if use_configured_coordinates:
+        env_lat = (os.getenv("JARVIS_DEFAULT_LAT") or "").strip()
+        env_lon = (os.getenv("JARVIS_DEFAULT_LON") or "").strip()
+        if env_lat and env_lon:
+            return env_lat, env_lon
 
-    loc = str(default_location or "").lower()
+    loc = str(location or "").lower()
     if "malibu" in loc:
         return "34.0259", "-118.7798"
     if "madrid" in loc:
         return "40.4168", "-3.7038"
-    return "40.4168", "-3.7038"
+
+    response = http_requests.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": location, "count": 1, "format": "json"},
+        timeout=5,
+    )
+    if response.status_code != 200:
+        raise http_requests.RequestException(
+            f"Open-Meteo geocoding returned HTTP {response.status_code}"
+        )
+    results = (response.json() or {}).get("results") or []
+    if not results:
+        return None
+    first = results[0] or {}
+    latitude = first.get("latitude")
+    longitude = first.get("longitude")
+    if latitude is None or longitude is None:
+        return None
+    return str(latitude), str(longitude)
 
 
 def _temperature_to_float(value) -> float | None:
@@ -203,7 +226,24 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
     try:
         import time
         from requests.exceptions import RequestException
-        lat, lon = _resolve_openmeteo_coords(ciudad_actual or default_location)
+        explicit_location = bool(str(ciudad or "").strip())
+        use_configured_coordinates = (
+            not explicit_location
+            or str(ciudad_actual).strip().casefold()
+            == str(default_location).strip().casefold()
+        )
+        coordinates = _resolve_openmeteo_coords(
+            ciudad_actual or default_location,
+            use_configured_coordinates=use_configured_coordinates,
+        )
+        if coordinates is None:
+            not_found = (
+                "Location not found"
+                if lang.startswith("en")
+                else "Ubicación no encontrada"
+            )
+            return not_found, "--"
+        lat, lon = coordinates
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:

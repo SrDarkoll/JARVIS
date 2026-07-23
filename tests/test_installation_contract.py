@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -124,6 +123,28 @@ def test_setup_scripts_use_the_project_interpreter_for_all_python_tools():
     assert 'source venv/bin/activate' not in shell
 
 
+def test_windows_setup_anchors_paths_and_checks_prerequisites_before_pip():
+    powershell = (ROOT / "setup.ps1").read_text(encoding="utf-8")
+
+    assert (
+        "$repoRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path"
+        in powershell
+    )
+    assert "Set-Location -LiteralPath $repoRoot" in powershell
+    assert (
+        powershell.index("Require-Command -Name \"git-lfs\"")
+        < powershell.index("pip install --upgrade pip")
+    )
+    assert (
+        powershell.index("Require-Command -Name \"ffmpeg\"")
+        < powershell.index("pip install --upgrade pip")
+    )
+    assert "Microsoft\\EdgeUpdate\\Clients" in powershell
+    assert "Python 3.11 or 3.12" in powershell
+    assert '[ValidateSet("3.11", "3.12")]' in powershell
+    assert "$pythonCandidates = @(\n    foreach ($version in $versions)" in powershell
+
+
 def test_spotipy_version_and_spotify_environment_contract():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -204,7 +225,8 @@ def test_unified_readable_log_distribution_contract():
     assert 'JARVIS_UNIFIED_LOG_MAX_BYTES="5242880"' in env_example
     assert 'JARVIS_UNIFIED_LOG_BACKUP_COUNT="3"' in env_example
     assert 'UNIFIED_LOG_FILE = os.path.join(OBS_DIR, "log.txt")' in config
-    assert "src/backend/logs/log.txt" in readme
+    assert "JARVIS_RUNTIME_DIR" in readme
+    assert "log.txt" in readme
     assert "conversation text in plaintext" in readme
     assert "src/backend/logs/" in gitignore
 

@@ -6,14 +6,6 @@ Delega toda la lógica a los módulos en core.brain.*
 from core import jarvis_state
 from core.brain import brain_state
 
-# Re-export variables de estado
-llm = brain_state.llm
-llm_with_tools = brain_state.llm_with_tools
-tools_list = brain_state.tools_list
-tool_map = brain_state.tool_map
-PLUGIN_STATE = brain_state.PLUGIN_STATE
-PLUGIN_LOCK = brain_state.PLUGIN_LOCK
-memoria_lock = brain_state.memoria_lock
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 
 def __getattr__(name: str):
@@ -26,6 +18,9 @@ def __getattr__(name: str):
     if name == "procesar_mensaje":
         from core.brain.processor import procesar_mensaje
         return procesar_mensaje
+    if name == "process_command":
+        from core.brain.processor import process_command
+        return process_command
     if name == "stream_procesar_mensaje_events":
         from core.brain.processor import stream_procesar_mensaje_events
         return stream_procesar_mensaje_events

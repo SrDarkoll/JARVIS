@@ -4,7 +4,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from core import unified_log
-from core.brain import brain_utils, processor, security_engine, tool_manager
+from core.brain import processor, security_engine, tool_manager
+from services.memory_manager import memory_manager
 
 
 @pytest.fixture
@@ -24,54 +25,25 @@ def test_processor_records_user_and_jarvis_turns(
     readable_log: Path,
     monkeypatch,
 ):
-    history = []
-    monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda _pid: "admin")
-    monkeypatch.setattr(processor, "_preflight", lambda *_args: ("Todo listo.", False))
-    monkeypatch.setattr(
-        brain_utils,
-        "_respuesta_necesita_web_forzarla",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        processor.history_manager,
-        "_append_to_profile_history",
-        lambda _pid, user, assistant, **_kwargs: history.extend([user, assistant]),
-    )
-    monkeypatch.setattr(
-        processor.history_manager,
-        "_get_history_for_profile",
-        lambda _pid: history,
-    )
+    profile_id = "log_test"
+    memory_manager.set_profile_history(profile_id, [])
     monkeypatch.setattr(processor.core_tools, "guardar_memoria_async", lambda *_args: None)
-    monkeypatch.setattr(processor.core_tools, "_limpiar_respuesta", lambda text: text)
-    monkeypatch.setattr(
-        processor.brain_utils,
-        "_formatear_reply_por_perfil",
-        lambda text, _pid: text,
-    )
-    monkeypatch.setattr(
-        processor.security_engine,
-        "_es_bloqueo_autorizacion",
-        lambda _reply: False,
-    )
     monkeypatch.setattr(processor.rag_motor, "agregar_interaccion", lambda **_kwargs: None)
     monkeypatch.setattr(processor, "obs_event", lambda *_args, **_kwargs: None)
 
     reply, should_listen = processor.procesar_mensaje(
-        "Jarvis, pon Monster de Meg and Dia",
-        profile_id="admin",
+        "quien eres",
+        profile_id=profile_id,
     )
 
-    assert reply == "Todo listo."
+    assert reply
     assert should_listen is False
+    history = memory_manager.get_history(profile_id)
     assert isinstance(history[0], HumanMessage)
     assert isinstance(history[1], AIMessage)
     content = readable_log.read_text(encoding="utf-8")
-    assert (
-        "[CONVERSATION] USUARIO(admin): Jarvis, pon Monster de Meg and Dia"
-        in content
-    )
-    assert "[CONVERSATION] JARVIS(admin): Todo listo." in content
+    assert "[CONVERSATION] USUARIO(log_test): quien eres" in content
+    assert f"[CONVERSATION] JARVIS(log_test): {reply}" in content
 
 
 def test_tool_manager_records_start_and_successful_end(

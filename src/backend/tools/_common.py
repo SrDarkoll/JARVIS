@@ -9,6 +9,7 @@ import sys
 import unicodedata
 
 from core import jarvis_state
+from core import jarvis_config
 from core.service_container import services
 
 IS_WINDOWS = sys.platform == "win32"
@@ -49,8 +50,8 @@ _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(_TOOLS_DIR)
 ROOT_DIR = os.path.dirname(os.path.dirname(BASE_DIR)) # jarvis/
 
-MEMORIA_PROFILES_FILE = os.path.join(BASE_DIR, "memoria_perfiles.json")
-MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_jarvis.json")
+MEMORIA_PROFILES_FILE = jarvis_config.MEMORIA_PROFILES_FILE
+MEMORIA_FILE = jarvis_config.MEMORIA_FILE
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 SHARED_PROFILE_ID = "shared"

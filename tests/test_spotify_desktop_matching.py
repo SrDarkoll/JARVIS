@@ -79,6 +79,22 @@ def test_empty_candidates_return_not_found():
     assert choose_candidate(request, []).status is MatchStatus.NOT_FOUND
 
 
+def test_title_and_artist_without_connector_matches_combined_candidate_text():
+    request = SpotifyRequest(
+        raw="What's Up? 4 Non Blondes",
+        query="What's Up? 4 Non Blondes",
+        title="What's Up? 4 Non Blondes",
+    )
+    decision = choose_candidate(
+        request,
+        [candidate("What's Up?", "4 Non Blondes", "canonical")],
+    )
+
+    assert decision.status is MatchStatus.SELECTED
+    assert decision.selected is not None
+    assert decision.selected.element_id == "canonical"
+
+
 def test_canonical_collaboration_beats_unrequested_quarantine_variant():
     request = SpotifyRequest(
         raw="No te apartes de mi de Vicentico",

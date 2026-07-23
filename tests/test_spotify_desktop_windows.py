@@ -254,6 +254,31 @@ def test_value_pattern_search_pulses_input_event_before_submit():
     assert shortcuts == ["{END}x{BACKSPACE}", "{ENTER}"]
 
 
+def test_search_falls_back_to_keyboard_when_uia_edit_patterns_fail():
+    class IncompatibleSearchControl(FakeControl):
+        def set_edit_text(self, _value):
+            raise RuntimeError("NoPatternInterfaceError")
+
+        @property
+        def iface_value(self):
+            raise RuntimeError("NoPatternInterfaceError")
+
+    search = IncompatibleSearchControl(name="Search", control_type="ComboBox")
+    shortcuts = []
+    text_inputs = []
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[search]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+        send_text=lambda value: text_inputs.append(value),
+    )
+
+    adapter.search(502, "Monster Meg and Dia")
+
+    assert search.focused
+    assert shortcuts == ["^a{BACKSPACE}", "{ENTER}"]
+    assert text_inputs == ["Monster Meg and Dia"]
+
+
 def test_result_play_buttons_are_mapped_to_candidates_and_deduplicated():
     first = FakeControl(name="Reproducir Killer Queen, de Queen", control_type="Button")
     duplicate = FakeControl(name="Reproducir Killer Queen, de Queen", control_type="Button")

@@ -1,5 +1,6 @@
 """Herramientas de búsqueda en internet: Brave, NewsAPI, YouTube, multi-source."""
 
+import html
 import re
 
 import requests as http_requests
@@ -8,12 +9,29 @@ from utils.jarvis_i18n import get_current_language
 
 from tools._common import _limpiar_respuesta, _similitud_texto
 
+_tavily_missing_reported = False
+
+
+def _clean_search_field(value: object) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _web_unavailable_message(status_code: int | None = None) -> str:
+    suffix = f" (HTTP {status_code})" if status_code is not None else ""
+    if get_current_language().startswith("en"):
+        return f"Web search is temporarily unavailable{suffix}."
+    return f"La búsqueda web no está disponible temporalmente{suffix}."
+
 
 # ─────────────────────────────────────────
 # Brave Search API
 # ─────────────────────────────────────────
 def _buscar_en_tavily(query: str) -> str:
     """Búsqueda usando Tavily AI (prioridad alta)."""
+    global _tavily_missing_reported
+
     from datetime import datetime
 
     from core.jarvis_config import TAVILY_API_KEY
@@ -48,8 +66,13 @@ def _buscar_en_tavily(query: str) -> str:
             if title and desc:
                 res.append(f"- {title}: {desc}")
         return "\n".join(res)
+    except ModuleNotFoundError:
+        if not _tavily_missing_reported:
+            print("  [TAVILY] Optional client unavailable; using Brave Search.")
+            _tavily_missing_reported = True
+        return None
     except Exception as e:
-        print(f"  [TAVILY] Error: {e}")
+        print(f"  [TAVILY] Request failed: {type(e).__name__}")
         return None
 
 
@@ -119,8 +142,13 @@ def _buscar_en_brave(query: str) -> str:
                         return f"Sin resultados para '{query_mod}' en la red."
                     res = []
                     for it in results:
+                        title = _clean_search_field(it.get("title"))
+                        description = _clean_search_field(it.get("description"))
+                        result_url = str(it.get("url") or "").strip()
+                        if not title:
+                            continue
                         res.append(
-                            f"- {it.get('title')}: {it.get('description')} ({it.get('url')})"
+                            f"- {title}: {description} ({result_url})"
                         )
                     resultado = "\n".join(res)
                     return resultado
@@ -128,19 +156,19 @@ def _buscar_en_brave(query: str) -> str:
                     if attempt < max_retries:
                         time.sleep(2)
                         continue
-                    return f"Consulta web no available (codigo {r.status_code}): {r.text[:200]}"
+                    return _web_unavailable_message(r.status_code)
                 else:
-                    return f"Consulta web no available (codigo {r.status_code}): {r.text[:200]}"
+                    return _web_unavailable_message(r.status_code)
             except RequestException as exc:
                 print(f"  [SEARCH] Brave request failed: {type(exc).__name__}")
                 if attempt < max_retries:
                     time.sleep(1)
                     continue
-                return "I could not query the network at this time."
-        return "I could not query the network at this time."
+                return _web_unavailable_message()
+        return _web_unavailable_message()
     except Exception as e:
         print(f"  [SEARCH] Brave unexpected error: {type(e).__name__}")
-        return "I could not query the network at this time."
+        return _web_unavailable_message()
 
 
 # Alias para compatibilidad

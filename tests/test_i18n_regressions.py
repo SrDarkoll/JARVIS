@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sys
 
-
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND = os.path.join(ROOT, "src", "backend")
 
@@ -68,8 +67,8 @@ def test_language_routes_init_syncs_runtime_language_state():
 def test_weather_logic_uses_settings_location_by_default(monkeypatch):
     """Weather logic should use LOCATION when city is omitted."""
     _ensure_backend_path()
-    from core.service_container import services  # pyright: ignore[reportMissingImports]
     from core import app_config  # pyright: ignore[reportMissingImports]
+    from core.service_container import services  # pyright: ignore[reportMissingImports]
     from tools import utilities  # pyright: ignore[reportMissingImports]
     from utils.jarvis_i18n import get_current_language, set_current_language
 
@@ -121,31 +120,112 @@ def test_weather_logic_uses_settings_location_by_default(monkeypatch):
         set_current_language(prev_lang)
 
 
+def test_weather_invalid_location_does_not_fall_back_to_madrid(monkeypatch):
+    from tools import utilities
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    calls = []
+
+    def fake_get(url, *args, **kwargs):
+        calls.append((url, kwargs.get("params") or {}))
+        if "wttr.in" in url:
+            return Response(404, {})
+        if "geocoding-api.open-meteo.com" in url:
+            return Response(200, {"results": []})
+        raise AssertionError(f"Unexpected weather request: {url}")
+
+    monkeypatch.setattr(utilities.http_requests, "get", fake_get)
+
+    description, temperature = utilities._obtener_clima_logic(
+        "zzzz-invalid-city-987654"
+    )
+
+    assert "not found" in description.lower() or "no encontrada" in description.lower()
+    assert temperature == "--"
+    assert not any("api.open-meteo.com/v1/forecast" in url for url, _ in calls)
+
+
+def test_weather_geocodes_explicit_location_for_openmeteo_fallback(monkeypatch):
+    from tools import utilities
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    calls = []
+
+    def fake_get(url, *args, **kwargs):
+        params = kwargs.get("params") or {}
+        calls.append((url, params))
+        if "wttr.in" in url:
+            return Response(503, {})
+        if "geocoding-api.open-meteo.com" in url:
+            return Response(
+                200,
+                {"results": [{"latitude": 26.08, "longitude": -98.29}]},
+            )
+        if "api.open-meteo.com/v1/forecast" in url:
+            return Response(
+                200,
+                {"current_weather": {"temperature": 36.5, "weathercode": 0}},
+            )
+        raise AssertionError(f"Unexpected weather request: {url}")
+
+    monkeypatch.setattr(utilities.http_requests, "get", fake_get)
+
+    description, temperature = utilities._obtener_clima_logic("Reynosa")
+
+    assert temperature == "36.5"
+    assert description.lower() in {"clear", "despejado"}
+    forecast_params = next(
+        params for url, params in calls if "api.open-meteo.com/v1/forecast" in url
+    )
+    assert forecast_params["latitude"] == "26.08"
+    assert forecast_params["longitude"] == "-98.29"
+
+
 def test_router_english_weather_and_date_are_localized(monkeypatch):
     _ensure_backend_path()
-    from core.brain import processor, router  # pyright: ignore[reportMissingImports]
-    from utils.jarvis_i18n import get_current_language, set_current_language
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
 
-    prev_lang = get_current_language()
-    captured: dict[str, object] = {}
+    planner = DeterministicPlanner()
+    date_plan = planner.plan(
+        CommandRequest.create(
+            text="What day is it?",
+            profile_id="admin",
+            channel="chat",
+            language="en",
+            request_id="date-en",
+        )
+    )
+    weather_plan = planner.plan(
+        CommandRequest.create(
+            text="What's the weather today?",
+            profile_id="admin",
+            channel="chat",
+            language="en",
+            request_id="weather-en",
+            metadata={"default_location": "Malibu, CA"},
+        )
+    )
 
-    def fake_tool(tool_name, args, user_input, source="wrapper"):
-        captured["tool_name"] = tool_name
-        captured["args"] = args
-        captured["source"] = source
-        return "Weather routed."
-
-    try:
-        set_current_language("en")
-        monkeypatch.setattr(router, "get_default_location", lambda: "Malibu, CA")
-        monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-        assert router._router_hibrido("What day is it?").startswith("Today is ")
-        assert router._router_hibrido("What's the weather today?") == "Weather routed."
-        assert captured["tool_name"] == "obtener_clima"
-        assert captured["args"] == {"ciudad": "Malibu, CA"}
-    finally:
-        set_current_language(prev_lang)
+    assert date_plan is not None
+    assert date_plan.direct_response.startswith("Today is ")
+    assert weather_plan is not None
+    assert weather_plan.steps[0].tool_name == "obtener_clima"
+    assert dict(weather_plan.steps[0].arguments) == {"ciudad": "Malibu, CA"}
 
 
 def test_frontend_voice_i18n_is_runtime_driven():
@@ -194,8 +274,8 @@ def test_backend_stop_para_aliases_are_removed_from_prompts_and_keywords():
 
 def test_voice_transcription_uses_active_language_and_keeps_clear_hint():
     _ensure_backend_path()
-    from voice import service as voice_service  # pyright: ignore[reportMissingImports]
     from utils.jarvis_i18n import get_current_language, set_current_language
+    from voice import service as voice_service  # pyright: ignore[reportMissingImports]
 
     calls: list[dict[str, object]] = []
 
@@ -302,27 +382,60 @@ def test_spanish_social_identity_queries_do_not_become_web_search():
 
 def test_router_routes_spanish_nba_questions_to_nba_tool(monkeypatch):
     _ensure_backend_path()
-    from core.brain import processor, router  # pyright: ignore[reportMissingImports]
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    plan = DeterministicPlanner().plan(
+        CommandRequest.create(
+            text="¿Quién está jugando ahorita en la NBA los partidos?",
+            profile_id="admin",
+            channel="chat",
+            language="es",
+            request_id="nba-es",
+        )
+    )
+
+    assert plan is not None
+    assert plan.steps[0].tool_name == "obtener_deportes_espn"
+    assert dict(plan.steps[0].arguments) == {
+        "deporte": "basketball",
+        "liga": "nba",
+        "consulta": "hoy",
+    }
+
+
+def test_static_definitions_do_not_force_web_search():
+    _ensure_backend_path()
+    from core.brain import social_engine
     from utils.jarvis_i18n import get_current_language, set_current_language
 
-    prev_lang = get_current_language()
-    captured: dict[str, object] = {}
-
-    def fake_tool(tool_name, args, user_input, source="wrapper"):
-        captured["tool_name"] = tool_name
-        captured["args"] = args
-        captured["source"] = source
-        captured["user_input"] = user_input
-        return "Resumen NBA localizado."
-
+    previous = get_current_language()
     try:
+        set_current_language("en")
+        assert social_engine._debe_buscar_en_web("What is an environment?") is False
+        assert social_engine._debe_buscar_en_web("What is the current temperature?") is True
+
         set_current_language("es")
-        monkeypatch.setattr(processor, "_invocar_tool_wrapper", fake_tool)
-
-        reply = router._router_hibrido("¿Quién está jugando ahorita en la NBA los partidos?")
-
-        assert reply == "Resumen NBA localizado."
-        assert captured["tool_name"] == "obtener_deportes_espn"
-        assert captured["source"] == "router_directo"
+        assert social_engine._debe_buscar_en_web("Que es la latencia?") is False
+        assert social_engine._debe_buscar_en_web("A cuanto esta el kilo de tamales?") is True
     finally:
-        set_current_language(prev_lang)
+        set_current_language(previous)
+
+
+def test_dynamic_web_detection_is_bilingual_regardless_of_ui_language():
+    _ensure_backend_path()
+    from core.brain import social_engine
+    from utils.jarvis_i18n import get_current_language, set_current_language
+
+    previous = get_current_language()
+    try:
+        set_current_language("en")
+        assert social_engine._debe_buscar_en_web(
+            "Cual es la noticia mas reciente de inteligencia artificial?"
+        )
+        set_current_language("es")
+        assert social_engine._debe_buscar_en_web(
+            "What is the latest artificial intelligence news?"
+        )
+    finally:
+        set_current_language(previous)

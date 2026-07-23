@@ -32,6 +32,7 @@ _SENSITIVE_QUERY_RE = re.compile(
     r"(?i)([?&](?:access_token|api[_-]?key|client_secret|password|secret|token)=)"
     r"[^&#\s]+"
 )
+_BEARER_TOKEN_RE = re.compile(r"(?i)(\bbearer\s+)[^\s,;&]+")
 _RUNTIME_STREAM_PREFIXES = (
     "[INFO] JARVIS:",
     "[WARNING] JARVIS:",
@@ -72,6 +73,7 @@ def redact_text(value: object) -> str:
         text = text.replace(secret, "[REDACTED]")
     text = _SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", text)
     text = _CREDENTIAL_ASSIGNMENT_RE.sub(r"\1[REDACTED]", text)
+    text = _BEARER_TOKEN_RE.sub(r"\1[REDACTED]", text)
     text = text.replace("\r", "\\r").replace("\n", "\\n")
     if len(text) > _MAX_MESSAGE_CHARS:
         text = text[:_MAX_MESSAGE_CHARS] + "...[TRUNCATED]"

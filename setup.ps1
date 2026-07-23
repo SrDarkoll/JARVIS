@@ -2,23 +2,111 @@
 [CmdletBinding()]
 param(
     [switch]$Dev,
-    [switch]$Full
+    [switch]$Full,
+    [ValidateSet("3.11", "3.12")]
+    [string]$PythonVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
 
+$repoRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+Set-Location -LiteralPath $repoRoot
+
 Write-Host "== J.A.R.V.I.S. setup =="
 
-$repoTemp = Join-Path (Get-Location) "scratch\setup-temp"
+function Require-Command {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$InstallCommand
+    )
+
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        Write-Host "ERROR: '$Name' was not found." -ForegroundColor Red
+        Write-Host "Install with: $InstallCommand" -ForegroundColor Yellow
+        exit 1
+    }
+}
+
+Require-Command -Name "git-lfs" -InstallCommand "winget install GitHub.GitLFS"
+Require-Command -Name "ffmpeg" -InstallCommand "winget install Gyan.FFmpeg"
+
+$requiredModels = @(
+    "models\en_GB-northern_english_male-medium.onnx",
+    "models\en_GB-northern_english_male-medium.onnx.json",
+    "models\es_MX-claude-high.onnx",
+    "models\es_MX-claude-high.onnx.json"
+)
+
+$missingModels = @()
+foreach ($model in $requiredModels) {
+    if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
+        $missingModels += $model
+        continue
+    }
+    if ($model.EndsWith(".onnx") -and
+        (Get-Item -LiteralPath $model).Length -lt 1000000) {
+        $missingModels += "$model (Git LFS pointer, not full model)"
+    }
+}
+
+if ($missingModels.Count -gt 0) {
+    Write-Host "ERROR: required model files are missing:" -ForegroundColor Red
+    $missingModels | ForEach-Object {
+        Write-Host "  $_" -ForegroundColor Red
+    }
+    Write-Host "Run: git lfs pull" -ForegroundColor Yellow
+    exit 1
+}
+
+$webViewRoots = @(
+    "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"
+)
+$webViewAvailable = $false
+foreach ($root in $webViewRoots) {
+    if (-not (Test-Path -LiteralPath $root)) {
+        continue
+    }
+    $webViewAvailable = [bool](
+        Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue |
+            Get-ItemProperty -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.name -like "*WebView2*" -or
+                $_.DisplayName -like "*WebView2*"
+            } |
+            Select-Object -First 1
+    )
+    if ($webViewAvailable) {
+        break
+    }
+}
+if (-not $webViewAvailable) {
+    Write-Host "WARNING: WebView2 Runtime was not detected; the desktop shell may be degraded." -ForegroundColor Yellow
+}
+
+if (-not (Get-Command "espeak-ng" -ErrorAction SilentlyContinue) -and
+    -not (Get-Command "espeak" -ErrorAction SilentlyContinue)) {
+    Write-Host "WARNING: eSpeak was not detected; voices that require it will be unavailable." -ForegroundColor Yellow
+}
+
+$repoTemp = Join-Path $repoRoot "scratch\setup-temp"
 New-Item -ItemType Directory -Force -Path $repoTemp | Out-Null
 $env:TEMP = $repoTemp
 $env:TMP = $repoTemp
 
 $pythonCmd = $null
 $pythonArgs = @()
+$versions = if ($PythonVersion) {
+    @($PythonVersion)
+} else {
+    @("3.11", "3.12")
+}
 $pythonCandidates = @(
-    @{ Cmd = "py"; Args = @("-3.11") },
-    @{ Cmd = "py"; Args = @("-3.12") },
+    foreach ($version in $versions) {
+        @{ Cmd = "py"; Args = @("-$version") }
+    }
+)
+$pythonCandidates += @(
     @{ Cmd = "python"; Args = @() },
     @{ Cmd = "py"; Args = @() }
 )
@@ -48,7 +136,7 @@ foreach ($candidate in $pythonCandidates) {
 }
 
 if (-not $pythonCmd) {
-    Write-Host "ERROR: Python 3.11/3.12 was not found." -ForegroundColor Red
+    Write-Host "ERROR: Python 3.11 or 3.12 was not found outside WindowsApps." -ForegroundColor Red
     exit 1
 }
 
@@ -72,7 +160,7 @@ if (-not (Test-Path "venv")) {
     }
 }
 
-$venvPython = Join-Path (Get-Location) "venv\Scripts\python.exe"
+$venvPython = Join-Path $repoRoot "venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython -PathType Leaf)) {
     Write-Host "ERROR: The project virtual environment is incomplete. Remove 'venv' and rerun setup." -ForegroundColor Red
     exit 1
@@ -104,41 +192,6 @@ if ($Dev) {
         Write-Host "ERROR: Failed to install development dependencies." -ForegroundColor Red
         exit 1
     }
-}
-
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Host "WARNING: ffmpeg is not on PATH. Voice/audio features need it." -ForegroundColor Yellow
-    Write-Host "Install with: winget install Gyan.FFmpeg" -ForegroundColor Yellow
-}
-
-if (-not (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
-    Write-Host "WARNING: Git LFS was not found. Model files may be missing." -ForegroundColor Yellow
-    Write-Host "Install with: winget install GitHub.GitLFS" -ForegroundColor Yellow
-}
-
-$requiredModels = @(
-    "models\en_GB-northern_english_male-medium.onnx",
-    "models\en_GB-northern_english_male-medium.onnx.json",
-    "models\es_MX-claude-high.onnx",
-    "models\es_MX-claude-high.onnx.json"
-)
-
-$missingModels = @()
-foreach ($model in $requiredModels) {
-    if (-not (Test-Path $model)) {
-        $missingModels += $model
-        continue
-    }
-    if ($model.EndsWith(".onnx") -and (Get-Item $model).Length -lt 1000000) {
-        $missingModels += "$model (Git LFS pointer, not full model)"
-    }
-}
-
-if ($missingModels.Count -gt 0) {
-    Write-Host "ERROR: required model files are missing:" -ForegroundColor Red
-    $missingModels | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-    Write-Host "Run: git lfs pull" -ForegroundColor Yellow
-    exit 1
 }
 
 if ($Full) {

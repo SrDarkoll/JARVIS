@@ -430,17 +430,31 @@ class SpotifyUIAutomationAdapter:
         except Exception:
             pass
 
+        query_written = False
         setter = getattr(control, "set_edit_text", None)
         if callable(setter):
-            setter(clean_query)
-        else:
-            value_pattern = getattr(control, "iface_value", None)
+            try:
+                setter(clean_query)
+                query_written = True
+            except Exception:
+                pass
+
+        if not query_written:
+            try:
+                value_pattern = getattr(control, "iface_value", None)
+            except Exception:
+                value_pattern = None
             if value_pattern is not None:
-                value_pattern.SetValue(clean_query)
-                self._send_shortcut("{END}x{BACKSPACE}")
-            else:
-                self._send_shortcut("^a{BACKSPACE}")
-                self._send_text(clean_query)
+                try:
+                    value_pattern.SetValue(clean_query)
+                    self._send_shortcut("{END}x{BACKSPACE}")
+                    query_written = True
+                except Exception:
+                    pass
+
+        if not query_written:
+            self._send_shortcut("^a{BACKSPACE}")
+            self._send_text(clean_query)
         self._send_shortcut("{ENTER}")
 
     def read_candidates(self, handle: int) -> list[SpotifyCandidate]:

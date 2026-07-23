@@ -114,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-451 passed, 1 skipped in 15.43s
+574 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -188,6 +188,18 @@ Router/tool routing smoke regression:
 pytest tests\test_smoke.py::test_dynamic_queries_force_web_tools tests\test_compound_router.py -q
 ```
 
+Single command pipeline, exactly-once execution, and state isolation:
+
+```powershell
+pytest tests\test_command_orchestrator.py tests\test_command_pipeline_e2e.py tests\test_processor_pipeline.py tests\test_tool_execution_service.py tests\test_tool_registry.py tests\test_memory_concurrency.py tests\test_voice_session_store.py -q
+```
+
+Capabilities, setup, and runtime-path regressions:
+
+```powershell
+pytest tests\test_capabilities.py tests\test_setup_wizard.py tests\test_runtime_paths.py tests\test_installation_contract.py tests\test_test_runtime.py -q
+```
+
 Spotify recommendation regressions:
 
 ```powershell
@@ -231,9 +243,12 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - Authorization and explicit user confirmation are separate concepts. Do not treat an authorized source as confirmation for destructive or sensitive actions.
 - Network/provider failures should return generic user-facing messages. Do not expose proxy details, local IPs, tokens, stack traces, or raw exception text.
 - Logs may include exception class names for diagnosis, but avoid raw credential-bearing URLs or headers.
-- `src/backend/logs/log.txt` contains plaintext conversation history. Keep it
-  ignored, redact secrets before writing, and never attach it to issues or
-  commits without reviewing its contents.
+- The runtime `logs/log.txt` contains plaintext conversation history. Its
+  default root is `%LOCALAPPDATA%\Jarvis` on Windows,
+  `~/Library/Application Support/Jarvis` on macOS, and
+  `${XDG_DATA_HOME:-~/.local/share}/jarvis` on Linux. Keep it ignored, redact
+  secrets before writing, and never attach it to issues or commits without
+  reviewing its contents.
 
 ## API And Chat Workflow
 
@@ -241,12 +256,19 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - `/api/chat/stream` is expected to be `POST` only.
 - Use controlled JSON errors for bad input instead of silent failures.
 - Keep rate-limit buckets separate when endpoint behavior differs.
+- Chat, streaming, and voice must enter the same `CommandOrchestrator`.
+- Routers and Groq planners may only produce immutable plans. They must not
+  invoke tools.
+- `ToolExecutionService` is the only side-effect boundary. Preserve
+  request/step idempotency so one planned operation executes at most once.
 
 ## Test Runtime Notes
 
 - `tests/conftest.py` sets repo-local runtime paths. Avoid tests that depend on global OS temp behavior when possible.
 - On Windows, stale or locked temp directories can cause pytest setup issues. Prefer repo-local scratch paths and explicit cleanup of files created by the test.
 - Avoid using real network calls in unit tests. Mock provider clients and requests.
+- `JARVIS_TEST_MODE=1` must disable the unified runtime log even when
+  `.env.example` enables logging for normal runs.
 - `JARVIS_MONITORING_ENABLED` defaults off in core mode and on in full mode. Installing APScheduler does not enable jobs by itself.
 - Without `GROQ_API_KEY`, AI-backed routes must return controlled `llm_unconfigured` errors while setup/status and local preflight paths remain usable.
 

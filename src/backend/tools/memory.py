@@ -6,10 +6,10 @@ import re
 import threading
 
 from langchain_core.messages import AIMessage, HumanMessage
+from core import jarvis_config
 from services.memory_manager import memory_manager
 
 from tools._common import (
-    BASE_DIR,
     DEFAULT_PROFILE_ID,
     SHARED_PROFILE_ID,
     _normalizar_ascii,
@@ -23,7 +23,10 @@ from tools._common import (
 
 
 def _db_path() -> str:
-    return os.getenv("JARVIS_DB_PATH") or os.path.join(BASE_DIR, "memoria_jarvis.db")
+    return os.getenv("JARVIS_DB_PATH") or os.path.join(
+        jarvis_config.MEMORY_DIR,
+        "memoria_jarvis.db",
+    )
 
 
 # ─────────────────────────────────────────

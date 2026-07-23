@@ -4,12 +4,15 @@ import re
 import sqlite3
 import threading
 
-from core import jarvis_state
+from core import jarvis_config, jarvis_state
 from langchain_core.messages import AIMessage, HumanMessage
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
-DB_PATH = os.getenv("JARVIS_DB_PATH") or os.path.join(_ROOT, "memoria_jarvis.db")
+DB_PATH = os.getenv("JARVIS_DB_PATH") or os.path.join(
+    jarvis_config.MEMORY_DIR,
+    "memoria_jarvis.db",
+)
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 memoria_lock = jarvis_state.memoria_lock

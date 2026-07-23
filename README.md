@@ -184,6 +184,22 @@ features can also be enabled with `JARVIS_VOICE_ID_ENABLED`,
 `JARVIS_MONITORING_ENABLED` defaults to `false` in core mode and `true` in full
 mode. Installing APScheduler does not enable background jobs by itself.
 
+## Reliable Command Pipeline
+
+Chat, streaming chat, and voice commands use the same five-stage pipeline:
+
+1. normalize and understand the request;
+2. build one deterministic or Groq-generated action plan;
+3. validate every planned operation;
+4. execute each unique operation through one tool boundary;
+5. compose and persist one user-facing response.
+
+Routers and the Groq planner cannot execute tools. `ToolExecutionService` owns
+all side effects and deduplicates request/step identifiers, so retries cannot
+silently run the same planned action twice. `/api/status` exposes each major
+feature as `available`, `unconfigured`, `degraded`, `failed`, or `disabled`;
+missing optional integrations do not prevent stable core startup.
+
 Strongly recommended before LAN access or shared-machine use:
 
 - `JARVIS_API_TOKEN`
@@ -207,7 +223,7 @@ Environment groups:
 | Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
 | Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
 | Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
-| Runtime paths | Optional relocation | `JARVIS_RUNTIME_DIR`, `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR` |
+| Runtime paths | Optional relocation | `JARVIS_DATA_DIR`, `JARVIS_RUNTIME_DIR` (legacy alias), `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR`, `JARVIS_LOG_DIR` |
 | Readable logging | Optional tuning | `JARVIS_UNIFIED_LOG_ENABLED`, `JARVIS_UNIFIED_LOG_MAX_BYTES`, `JARVIS_UNIFIED_LOG_BACKUP_COUNT` |
 
 Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
@@ -315,6 +331,12 @@ Run all tests:
 pytest -q
 ```
 
+Current verified baseline:
+
+```text
+574 passed, 1 skipped
+```
+
 Release checks:
 
 ```powershell
@@ -333,9 +355,17 @@ Ruff is useful for future cleanup, but it is not currently enforced as a release
 
 ## Unified Readable Log
 
-Jarvis writes a chronological UTF-8 diagnostic journal to
-`src/backend/logs/log.txt`. Every line includes a local timestamp with
-milliseconds and a category. The journal combines:
+Jarvis writes a chronological UTF-8 diagnostic journal named `log.txt` under
+the platform runtime directory. The defaults are:
+
+- Windows: `%LOCALAPPDATA%\Jarvis\logs\log.txt`
+- macOS: `~/Library/Application Support/Jarvis/logs/log.txt`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/jarvis/logs/log.txt`
+
+Set `JARVIS_DATA_DIR` to relocate all mutable data, or `JARVIS_LOG_DIR` to move
+only logs. `JARVIS_RUNTIME_DIR` remains a compatible alias for existing
+installations. Every line includes a local timestamp with milliseconds and a
+category. The journal combines:
 
 - user and Jarvis conversation turns from voice, classic chat, and streaming;
 - tool starts, results, duration, source, and blocked/error states;
@@ -351,7 +381,8 @@ Change those limits with `JARVIS_UNIFIED_LOG_MAX_BYTES` and
 The log intentionally contains conversation text in plaintext. Known API keys,
 tokens, authorization headers, passwords, client secrets, and sensitive URL
 parameters are redacted, but the file must still be treated as private runtime
-data. `src/backend/logs/` is ignored by Git and must never be committed.
+data and must never be committed. The old `src/backend/logs/` location remains
+ignored so an upgrade cannot accidentally publish historical logs.
 
 ## Spotify Notes
 
@@ -391,8 +422,9 @@ window, and deletes the local image immediately after the attempt.
 
 For Web API mode, register exactly `http://127.0.0.1:8888/callback` in the
 Spotify developer dashboard and use the same value in `.env`; Spotify does not
-accept `localhost` redirect aliases. Delete `src/backend/.cache-jarvis` and
-authenticate again after changing the redirect URI or scopes.
+accept `localhost` redirect aliases. Delete the `spotify-oauth-cache` file under
+the configured runtime cache directory and authenticate again after changing
+the redirect URI or scopes.
 
 Jarvis builds an API-backed AutoMix playlist/queue after a seed song or mix
 request when Web API access is available. The development-mode mix strategy
@@ -438,7 +470,7 @@ Before publishing or tagging a release:
 ## Troubleshooting
 
 - Missing model files: run `git lfs pull`.
-- Spotify Web API says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `src/backend/.cache-jarvis`, restart, and authenticate again.
+- Spotify Web API says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `spotify-oauth-cache` from the runtime cache directory, restart, and authenticate again.
 - Spotify Desktop cannot search: keep Spotify signed in, restore its main window, use an English or Spanish accessible interface, and verify `SPOTIFY_PLAYBACK_MODE=desktop`.
 - No Spotify API device: open Spotify on a device and play one song once, or use desktop mode on Windows.
 - TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.

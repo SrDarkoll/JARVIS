@@ -5,7 +5,9 @@ import time
 
 import pytest
 from core.command_pipeline.execution import (
+    ToolAuthorizationRequiredError,
     ToolExecutionService,
+    ToolPolicyBlockedError,
     validate_plan_operations,
 )
 from core.command_pipeline.models import ActionStep, CommandRequest, ReceiptStatus
@@ -100,6 +102,41 @@ def test_executor_returns_controlled_blocked_receipt() -> None:
         "Necesito confirmacion explicita antes de realizar esa accion."
     )
     assert "raw authorization details" not in receipt.user_message
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_message"),
+    [
+        (
+            ToolAuthorizationRequiredError(),
+            "tool_authorization_required",
+            "Administrator authorization is required for that action.",
+        ),
+        (
+            ToolPolicyBlockedError(),
+            "tool_policy_blocked",
+            "That action is blocked by the security policy.",
+        ),
+    ],
+)
+def test_executor_preserves_controlled_block_reason(
+    error: PermissionError,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    def invoke(_request: CommandRequest, _step: ActionStep) -> None:
+        raise error
+
+    service = ToolExecutionService(invoke)
+    receipt = service.execute(
+        _request(),
+        ActionStep(step_id="step-1", tool_name="protected_tool"),
+    )
+
+    assert receipt.status is ReceiptStatus.BLOCKED
+    assert receipt.result is None
+    assert receipt.diagnostic_code == expected_code
+    assert receipt.user_message == expected_message
 
 
 def test_executor_returns_controlled_unavailable_receipt() -> None:

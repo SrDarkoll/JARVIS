@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import threading
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core import jarvis_state
+
+if TYPE_CHECKING:
+    from core.command_pipeline.execution import ToolExecutionService
 
 
 class ServiceContainer:
@@ -36,6 +41,7 @@ class ServiceContainer:
         self.reparar_unicode: Callable[[str], str] | None = None
         self.invocar_tool: Callable[..., Any] | None = None
         self.recargar_plugins: Callable[[], str] | None = None
+        self.tool_execution: ToolExecutionService | None = None
 
         # --- LLM Engines ---
         self.llm: Any = None

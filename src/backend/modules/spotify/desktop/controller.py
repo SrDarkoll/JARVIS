@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 
+from core.unified_log import write_log
 from modules.spotify.desktop.matching import (
     choose_candidate,
     normalize_text,
@@ -316,6 +317,8 @@ class SpotifyDesktopController:
 
     def play(self, request: SpotifyRequest) -> SpotifyDesktopResult:
         states = [AutomationState.IDLE]
+        ranked: list[SpotifyCandidate] = []
+        decision_status = "not_started"
         generation = self._next_generation()
         started = self._monotonic()
         acquired = self._lock.acquire(timeout=self._start_timeout + self._action_timeout)
@@ -354,6 +357,7 @@ class SpotifyDesktopController:
                 generation,
                 readiness_timeout=self._start_timeout if cold_start else 0.0,
             )
+            decision_status = search_status
             if search_status == "cancelled":
                 return self._cancelled_result(states)
             if search_status == "focus_lost":
@@ -386,6 +390,9 @@ class SpotifyDesktopController:
                 request,
                 generation,
                 retry_search=cold_start,
+            )
+            decision_status = (
+                decision.status.value if decision is not None else "cancelled"
             )
             if decision_error:
                 states.append(AutomationState.FAILED)
@@ -529,6 +536,15 @@ class SpotifyDesktopController:
                 "spotify_desktop_operation final_state=%s duration_ms=%d",
                 final_state,
                 duration_ms,
+            )
+            write_log(
+                "SPOTIFY",
+                "Desktop playback operation",
+                final_state=final_state,
+                decision=decision_status,
+                duration_ms=duration_ms,
+                candidate_count=len(ranked),
+                top_score=round(ranked[0].score, 3) if ranked else 0.0,
             )
             self._lock.release()
 

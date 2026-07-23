@@ -16,10 +16,11 @@ import time as _time
 import unicodedata
 import wave
 
-from core.jarvis_config import BASE_DIR
+from core.jarvis_config import RUNTIME_DIR, RUNTIME_PATHS
 from utils.audio_conversion import AudioConversionError, convert_to_wav
 from utils.jarvis_i18n import get_current_language, get_whisper_lang
 from utils.jarvis_text import reparar_unicode
+from voice.session_store import VoiceSessionMapping, VoiceSessionStore
 
 # =========================================================
 # CONSTANTES
@@ -38,9 +39,13 @@ _NO_ES_NOMBRE = {
     "you", "your", "guest", "user", "person", "someone", "nobody",
 }
 
-# Sesiones de registro pendientes: {ip: {audio, stage, samples_collected, created_at}}
-_PENDING_VOICE_REGISTRATION: dict = {}
 _PENDING_VOICE_REGISTRATION_TTL = 300
+_VOICE_SESSION_STORE = VoiceSessionStore(
+    clock=_time.time,
+    ttl_seconds=_PENDING_VOICE_REGISTRATION_TTL,
+)
+# Compatibility mapping for routes and legacy code still using dict syntax.
+_PENDING_VOICE_REGISTRATION = VoiceSessionMapping(_VOICE_SESSION_STORE)
 
 try:
     WHISPER_BEAM_SIZE = max(
@@ -101,7 +106,7 @@ def normalizar_a_wav(audio_bytes: bytes) -> tuple[bytes, bool]:
     if wav_ya_optimizado(audio_bytes):
         return audio_bytes, True
     try:
-        runtime_dir = os.getenv("JARVIS_RUNTIME_DIR") or BASE_DIR
+        runtime_dir = RUNTIME_DIR
         return convert_to_wav(audio_bytes, runtime_dir=runtime_dir), True
     except AudioConversionError:
         return audio_bytes, False
@@ -227,7 +232,7 @@ def transcribir_audio(
         with tempfile.NamedTemporaryFile(
             prefix="temp_api_voice_",
             suffix=".wav",
-            dir=BASE_DIR,
+            dir=RUNTIME_PATHS.temp,
             delete=False,
         ) as temp_file:
             temp_file.write(audio_bytes)
@@ -330,30 +335,23 @@ def es_alias_owner(nombre: str) -> bool:
 def cancel_pending_voice_registration(ip: str = None) -> int:
     """Cancela registros pendientes. Si ip=None, cancela TODOS."""
     if ip:
-        removed = _PENDING_VOICE_REGISTRATION.pop(ip, None)
-        return 1 if removed else 0
-    count = len(_PENDING_VOICE_REGISTRATION)
-    _PENDING_VOICE_REGISTRATION.clear()
+        return 1 if _VOICE_SESSION_STORE.cancel(ip) else 0
+    count = len(_VOICE_SESSION_STORE.keys())
+    _VOICE_SESSION_STORE.cancel()
     return count
 
 
 def cleanup_pending_voice_registration() -> None:
-    now = _time.time()
-    expired = [
-        ip for ip, data in list(_PENDING_VOICE_REGISTRATION.items())
-        if (now - float((data or {}).get("created_at") or 0.0)) > _PENDING_VOICE_REGISTRATION_TTL
-    ]
-    for ip in expired:
-        _PENDING_VOICE_REGISTRATION.pop(ip, None)
+    _VOICE_SESSION_STORE.cleanup_expired()
 
 
 def get_pending(ip: str) -> dict:
-    return _PENDING_VOICE_REGISTRATION.get(ip) or {}
+    return _VOICE_SESSION_STORE.get(ip) or {}
 
 
 def set_pending(ip: str, data: dict) -> None:
-    _PENDING_VOICE_REGISTRATION[ip] = data
+    _VOICE_SESSION_STORE.replace(ip, data)
 
 
 def pop_pending(ip: str) -> None:
-    _PENDING_VOICE_REGISTRATION.pop(ip, None)
+    _VOICE_SESSION_STORE.pop(ip)

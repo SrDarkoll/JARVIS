@@ -478,6 +478,41 @@ def test_controller_logs_state_and_duration_without_query(caplog, monkeypatch):
     assert "No te apartes" not in output
 
 
+def test_controller_writes_sanitized_matching_diagnostics(monkeypatch):
+    from modules.spotify.desktop import controller as controller_module
+
+    records = []
+    monkeypatch.setattr(
+        controller_module,
+        "write_log",
+        lambda category, message, **context: records.append(
+            (category, message, context)
+        ),
+    )
+    uia = FakeUIA(
+        [expected_candidate()],
+        now_playing=("No Te Apartes de M\u00ed", "Vicentico"),
+    )
+
+    result = make_controller(FakeWindowAdapter(), uia).play(request())
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert records == [
+        (
+            "SPOTIFY",
+            "Desktop playback operation",
+            {
+                "final_state": "complete",
+                "decision": "selected",
+                "duration_ms": 0,
+                "candidate_count": 1,
+                "top_score": 1.0,
+            },
+        )
+    ]
+    assert "No Te Apartes" not in str(records)
+
+
 def test_visual_target_must_stay_inside_spotify_window(tmp_path):
     recovery = SpotifyVisualRecovery(
         scratch_dir=tmp_path,

@@ -1,7 +1,7 @@
 """Pruebas unitarias ligeras para la fachada LLM/tools del cerebro."""
 
 from core import jarvis_brain
-from core.brain import prompts
+from core.brain import brain_state, prompts
 
 
 def test_jarvis_brain_facade_exports_expected_symbols():
@@ -10,6 +10,13 @@ def test_jarvis_brain_facade_exports_expected_symbols():
     assert callable(jarvis_brain.necesita_tools)
     assert callable(jarvis_brain.get_system_msg)
     assert isinstance(jarvis_brain.DEFAULT_PROFILE_ID, str)
+
+
+def test_jarvis_brain_facade_reads_current_runtime_state(monkeypatch):
+    marker = object()
+    monkeypatch.setattr(brain_state, "llm", marker)
+
+    assert jarvis_brain.llm is marker
 
 
 def test_necesita_tools_router_heuristics():

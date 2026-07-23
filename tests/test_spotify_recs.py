@@ -1,5 +1,6 @@
 """Pruebas unitarias para helpers de recomendaciones de Spotify."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,10 @@ def test_spotify_scope_supports_dynamic_mix_inputs():
 
 
 def test_spotify_uses_single_supported_cache_path():
-    expected = Path(jarvis_config.BASE_DIR) / ".cache-jarvis"
+    expected = (
+        Path(os.environ["JARVIS_CACHE_DIR"])
+        / "spotify-oauth-cache"
+    )
 
     assert Path(jarvis_config.SPOTIFY_CACHE) == expected
     assert Path(spotify_config.SPOTIFY_CACHE) == expected

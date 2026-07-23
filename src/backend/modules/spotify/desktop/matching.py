@@ -91,8 +91,17 @@ def score_candidate(request: SpotifyRequest, candidate: SpotifyCandidate) -> flo
         score += artist_sequence * 0.20
         if artist_sequence < 0.45:
             score -= 0.18
-    elif candidate.kind != "track":
-        score -= 0.20
+    else:
+        combined_candidate = f"{candidate.title} {candidate.artist}".strip()
+        combined_sequence = SequenceMatcher(
+            None,
+            normalize_text(request.query),
+            normalize_text(combined_candidate),
+        ).ratio()
+        combined_tokens = _token_overlap(request.query, combined_candidate)
+        score = max(score, (combined_sequence * 0.70) + (combined_tokens * 0.30))
+        if candidate.kind != "track":
+            score -= 0.20
 
     return max(0.0, min(1.0, score - _variant_penalty(request, candidate)))
 

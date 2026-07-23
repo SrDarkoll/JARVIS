@@ -1,10 +1,16 @@
 import os
+import sys
 
 import psutil
 from core import jarvis_brain, jarvis_state
 from core.action_plans import list_action_plans
 from core.api_contracts import validate_status_full_response
 from core.app_config import get_default_location
+from core.capabilities import (
+    CapabilityRegistry,
+    CapabilityReport,
+    CapabilityState,
+)
 from core.jarvis_config import RUNTIME_FEATURES
 from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
 from core.operator_status import build_operator_status
@@ -112,9 +118,227 @@ def _speech_to_text_status() -> dict:
         return fallback
 
 
+def _admin_voice_profile_count() -> int:
+    try:
+        from api import voice_routes
+
+        motor = getattr(voice_routes, "_voice_id_motor", None)
+        profiles = (
+            getattr(motor, "voice_profiles", None)
+            or getattr(motor, "perfiles_voz", None)
+            or {}
+        )
+        return 1 if DEFAULT_PROFILE_ID in profiles else 0
+    except Exception:
+        return 0
+
+
+def _runtime_capabilities(
+    *,
+    monitoring: dict[str, bool],
+    speech_to_text: dict,
+    admin_voice_profiles: int | None = None,
+) -> dict[str, dict[str, str]]:
+    registry = CapabilityRegistry()
+
+    def publish(
+        name: str,
+        state: CapabilityState,
+        code: str,
+        action: str = "",
+        detail: str = "",
+    ) -> None:
+        registry.set(
+            CapabilityReport(
+                name=name,
+                state=state,
+                code=code,
+                action=action,
+                detail=detail,
+            )
+        )
+
+    groq_configured = bool((os.getenv("GROQ_API_KEY") or "").strip())
+    if jarvis_brain.llm is not None:
+        publish("llm", CapabilityState.AVAILABLE, "groq_ready")
+    elif groq_configured:
+        publish(
+            "llm",
+            CapabilityState.DEGRADED,
+            "groq_initializing",
+            "Review backend logs if initialization does not complete",
+        )
+    else:
+        publish(
+            "llm",
+            CapabilityState.UNCONFIGURED,
+            "groq_key_missing",
+            "Configure GROQ_API_KEY",
+        )
+
+    voice_profiles = (
+        _admin_voice_profile_count()
+        if admin_voice_profiles is None
+        else int(admin_voice_profiles)
+    )
+    if not RUNTIME_FEATURES.voice_id_enabled:
+        publish(
+            "voice_id",
+            CapabilityState.DISABLED,
+            "core_mode",
+            "Enable JARVIS_VOICE_ID_ENABLED",
+        )
+    elif voice_profiles > 0:
+        publish("voice_id", CapabilityState.AVAILABLE, "voice_id_ready")
+    else:
+        publish(
+            "voice_id",
+            CapabilityState.UNCONFIGURED,
+            "admin_voice_missing",
+            "Register the administrator voice",
+        )
+
+    for name, enabled, action in (
+        (
+            "rag",
+            RUNTIME_FEATURES.rag_enabled,
+            "Enable JARVIS_RAG_ENABLED",
+        ),
+        (
+            "vision",
+            RUNTIME_FEATURES.vision_enabled,
+            "Enable JARVIS_VISION_ENABLED",
+        ),
+        (
+            "plugins",
+            RUNTIME_FEATURES.plugins_enabled,
+            "Enable JARVIS_PLUGINS_ENABLED",
+        ),
+        (
+            "briefing",
+            RUNTIME_FEATURES.briefing_enabled,
+            "Enable JARVIS_BRIEFING_ENABLED",
+        ),
+    ):
+        publish(
+            name,
+            (
+                CapabilityState.AVAILABLE
+                if enabled
+                else CapabilityState.DISABLED
+            ),
+            "enabled" if enabled else "core_mode",
+            "" if enabled else action,
+        )
+
+    spotify_mode = (
+        os.getenv("SPOTIFY_PLAYBACK_MODE") or "auto"
+    ).strip().lower()
+    spotify_api = bool(
+        (
+            os.getenv("SPOTIPY_CLIENT_ID")
+            or os.getenv("SPOTIFY_CLIENT_ID")
+            or ""
+        ).strip()
+        and (
+            os.getenv("SPOTIPY_CLIENT_SECRET")
+            or os.getenv("SPOTIFY_CLIENT_SECRET")
+            or ""
+        ).strip()
+    )
+    spotify_desktop = sys.platform == "win32"
+    spotify_available = (
+        (spotify_mode == "api" and spotify_api)
+        or (spotify_mode == "desktop" and spotify_desktop)
+        or (
+            spotify_mode not in {"api", "desktop"}
+            and (spotify_api or spotify_desktop)
+        )
+    )
+    publish(
+        "spotify",
+        (
+            CapabilityState.AVAILABLE
+            if spotify_available
+            else CapabilityState.UNCONFIGURED
+        ),
+        "spotify_ready" if spotify_available else "spotify_unconfigured",
+        (
+            ""
+            if spotify_available
+            else "Configure Spotify credentials or use Windows desktop mode"
+        ),
+    )
+
+    telegram_configured = bool(
+        (os.getenv("TELEGRAM_TOKEN") or "").strip()
+        and (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    )
+    if not RUNTIME_FEATURES.telegram_enabled:
+        publish(
+            "telegram",
+            CapabilityState.DISABLED,
+            "core_mode",
+            "Enable JARVIS_TELEGRAM_ENABLED",
+        )
+    elif telegram_configured:
+        publish("telegram", CapabilityState.AVAILABLE, "telegram_ready")
+    else:
+        publish(
+            "telegram",
+            CapabilityState.UNCONFIGURED,
+            "telegram_credentials_missing",
+            "Configure TELEGRAM_TOKEN and TELEGRAM_CHAT_ID",
+        )
+
+    if not monitoring["configured"]:
+        publish(
+            "monitoring",
+            CapabilityState.DISABLED,
+            "monitoring_disabled",
+            "Enable JARVIS_MONITORING_ENABLED",
+        )
+    elif monitoring["available"] and monitoring["running"]:
+        publish(
+            "monitoring",
+            CapabilityState.AVAILABLE,
+            "monitoring_running",
+        )
+    else:
+        publish(
+            "monitoring",
+            CapabilityState.DEGRADED,
+            "monitoring_unavailable",
+            "Install optional monitoring dependencies",
+        )
+
+    local_state = str(speech_to_text.get("local_state") or "")
+    if speech_to_text.get("groq_configured") or local_state == "loaded":
+        publish(
+            "speech_to_text",
+            CapabilityState.AVAILABLE,
+            "speech_to_text_ready",
+        )
+    else:
+        publish(
+            "speech_to_text",
+            CapabilityState.DEGRADED,
+            "browser_transcription_only",
+            "Configure Groq transcription or install local Whisper",
+        )
+
+    publish(
+        "command_pipeline",
+        CapabilityState.AVAILABLE,
+        "single_pipeline_ready",
+    )
+    return registry.snapshot()
+
+
 @status_bp.route("/api/status", methods=["GET"])
 def api_status():
     monitoring = _monitoring_status()
+    speech_to_text = _speech_to_text_status()
     return jsonify(
         {
             "status": "online",
@@ -130,7 +354,11 @@ def api_status():
                 "monitoring_available": monitoring["available"],
                 "monitoring_running": monitoring["running"],
             },
-            "speech_to_text": _speech_to_text_status(),
+            "speech_to_text": speech_to_text,
+            "capabilities": _runtime_capabilities(
+                monitoring=monitoring,
+                speech_to_text=speech_to_text,
+            ),
             "profile": jarvis_state.get_active_profile_id(),
             "heartbeat": jarvis_state.heartbeat_state.get("last_pulse", 0),
         }
@@ -236,23 +464,22 @@ def auth_status():
 
 @status_bp.route("/api/setup/status", methods=["GET"])
 def setup_status():
-    try:
-        from api import voice_routes
-
-        motor = getattr(voice_routes, "_voice_id_motor", None)
-        profiles = getattr(motor, "voice_profiles", {}) or {}
-        admin_voice_profiles = 1 if DEFAULT_PROFILE_ID in profiles else 0
-    except Exception:
-        admin_voice_profiles = 0
+    admin_voice_profiles = _admin_voice_profile_count()
     from utils.jarvis_i18n import get_current_language
 
+    setup = build_setup_status(
+        env=os.environ,
+        language=get_current_language(),
+        admin_voice_profiles=admin_voice_profiles,
+        weather_location=get_default_location(),
+    )
+    setup["capabilities"] = _runtime_capabilities(
+        monitoring=_monitoring_status(),
+        speech_to_text=_speech_to_text_status(),
+        admin_voice_profiles=admin_voice_profiles,
+    )
     return jsonify(
-        build_setup_status(
-            env=os.environ,
-            language=get_current_language(),
-            admin_voice_profiles=admin_voice_profiles,
-            weather_location=get_default_location(),
-        )
+        setup
     )
 
 

@@ -229,6 +229,69 @@ def test_critical_route_allows_trusted_loopback_origin_without_token(monkeypatch
     assert r.status_code in (200, 503)
 
 
+def test_interactive_routes_reject_untrusted_browser_origin(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    chat = c.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"Origin": "https://evil.example"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    voice = c.post(
+        "/api/voice",
+        data=b"x",
+        headers={
+            "Origin": "https://evil.example",
+            "Content-Type": "text/plain",
+        },
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert chat.status_code == 403
+    assert voice.status_code == 403
+    assert (chat.get_json() or {}).get("error") == "Untrusted origin for API route."
+    assert (voice.get_json() or {}).get("error") == "Untrusted origin for API route."
+
+
+def test_interactive_route_allows_trusted_local_origin_without_token(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.post(
+        "/api/chat",
+        json={},
+        headers={"Origin": "http://localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "test-token")
+    c = _test_client(jarvis_backend.app)
+
+    response = c.post(
+        "/api/chat",
+        json={},
+        headers={
+            "Origin": "https://remote.example",
+            "X-JARVIS-API-TOKEN": "test-token",
+        },
+        environ_base={"REMOTE_ADDR": "192.168.1.20"},
+    )
+
+    assert response.status_code == 400
+
+
 def test_chat_stream_rejects_get():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
 
@@ -292,6 +355,21 @@ def test_status_endpoint_reports_runtime_mode():
         "loaded",
         "disabled",
         "unavailable",
+    }
+    assert data["capabilities"]["llm"]["state"] in {
+        "available",
+        "degraded",
+        "unconfigured",
+        "failed",
+    }
+    assert data["capabilities"]["voice_id"]["state"] == "disabled"
+    assert data["capabilities"]["rag"]["state"] == "disabled"
+    assert data["capabilities"]["spotify"]["state"] in {
+        "available",
+        "degraded",
+        "unconfigured",
+        "failed",
+        "disabled",
     }
 
 
@@ -1949,6 +2027,7 @@ def test_setup_wizard_reports_core_configuration(monkeypatch):
 
     status = build_setup_status(
         env={
+            "GROQ_API_KEY": "configured",
             "JARVIS_API_TOKEN": "token",
             "SPOTIPY_CLIENT_ID": "client",
             "SPOTIPY_CLIENT_SECRET": "secret",
@@ -1962,10 +2041,12 @@ def test_setup_wizard_reports_core_configuration(monkeypatch):
 
     assert status["items"]["language"]["configured"] is True
     assert status["items"]["admin_voice"]["configured"] is False
+    assert status["items"]["admin_voice"]["optional"] is True
     assert status["items"]["spotify"]["configured"] is True
     assert status["items"]["telegram"]["optional"] is True
     assert status["items"]["api_token"]["configured"] is True
-    assert status["complete"] is False
+    assert status["items"]["api_token"]["optional"] is True
+    assert status["complete"] is True
 
 
 def test_voice_identifier_similarity_event_and_debug(monkeypatch):

@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 
 from core import core_tools, jarvis_state
+from core.app_config import get_default_location
 from core.brain import (
     brain_state,
     brain_utils,
@@ -34,7 +35,18 @@ from modules.spotify.followup import (
     SpotifySelectionStatus,
     pending_spotify_selections,
 )
+from core.command_pipeline.deterministic import DeterministicPlanner
+from core.command_pipeline.groq_planner import GroqPlanner
+from core.command_pipeline.models import (
+    ActionPlan,
+    CommandRequest,
+    CommandResponse,
+    PlanSource,
+)
+from core.command_pipeline.orchestrator import CommandOrchestrator
+from core.command_pipeline.responses import ResponseComposer
 from modules.spotify.state import get_last_requested_track
+from services.memory_manager import memory_manager
 from utils.jarvis_i18n import get_current_language
 from utils.jarvis_text import reparar_unicode
 
@@ -82,12 +94,28 @@ def _invoke_model(model, messages: list, *, event: str):
         raise LLMServiceError from None
 
 
+def _reply_needs_strict_web_retry(
+    user_input: str,
+    reply: str,
+    messages: list,
+    *,
+    path: str,
+) -> bool:
+    if path in {"preflight", "early", "dynamic_router"}:
+        return False
+    return brain_utils._respuesta_necesita_web_forzarla(user_input, reply, messages)
+
+
 def _finalize_reply(
     reply: str, messages: list, user_input: str, pid: str, path: str
 ) -> tuple[str, bool]:
     # Post-check: if STRICT_WEB_SEARCH and dynamic topic without tool → force retry
-    from core.brain.brain_utils import _respuesta_necesita_web_forzarla
-    if _respuesta_necesita_web_forzarla(user_input, reply, messages):
+    if _reply_needs_strict_web_retry(
+        user_input,
+        reply,
+        messages,
+        path=path,
+    ):
         obs_event("strict_web_forced_retry", user_input=user_input[:100], path=path)
         from core.brain import tool_manager
         web_result = tool_manager._invocar_tool_entry(
@@ -159,17 +187,23 @@ def _preflight_compuesto(user_input: str, profile_id: str) -> tuple[str | None, 
         return None, False
 
     results: list[tuple[str, str]] = []
+    unhandled: list[str] = []
     should_listen = False
     for segment in segments[:5]:
         reply, sl = _preflight(segment, profile_id, allow_compound=False)
         if reply is None:
+            unhandled.append(segment)
             continue
         results.append((segment, str(reply)))
         should_listen = should_listen or bool(sl)
 
-    if len(results) < 2:
+    if not results:
         return None, False
-    return router._format_compound_results(results), should_listen
+    formatted = router._format_compound_results(results)
+    if unhandled:
+        formatted = router._format_partial_compound_results(formatted, unhandled)
+        should_listen = True
+    return formatted, should_listen
 
 
 def _resolve_pending_spotify_selection(
@@ -219,6 +253,24 @@ def _resolve_pending_spotify_selection(
     return str(result), False
 
 
+def _is_briefing_request(text: str) -> bool:
+    normalized = reparar_unicode(str(text or "")).strip().lower()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if normalized in {"news", "noticias", "briefing"}:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in (
+            "daily news",
+            "news briefing",
+            "daily briefing",
+            "resumen de noticias",
+            "informe diario",
+        )
+    )
+
+
 def _preflight(
     user_input: str,
     profile_id: str,
@@ -249,13 +301,22 @@ def _preflight(
         return spotify_reply, spotify_should_listen
 
     # 2. Cached briefing
-    if any(k in user_input_norm.lower() for k in ["daily news", "news briefing", "briefing", "news"]):
+    if _is_briefing_request(user_input_norm):
         nc = services.noticias_cache
         if nc and nc.get("resumen") and nc.get("listo"):
             resumen = re.sub(r"<think>.*?</think>", "", nc["resumen"], flags=re.DOTALL)
             resumen = re.sub(r"\s+", " ", resumen).strip()
-            return f"Daily news briefing: {resumen}", False
-        return "The briefing is still being generated, Administrator. One moment.", False
+            prefix = (
+                "Daily news briefing"
+                if get_current_language().startswith("en")
+                else "Resumen diario de noticias"
+            )
+            return f"{prefix}: {resumen}", False
+        return (
+            "The briefing is still being generated. One moment."
+            if get_current_language().startswith("en")
+            else "El resumen de noticias todavía se está generando. Un momento."
+        ), False
 
     # 4. Quick responses
     social = social_engine._respuesta_rapida_social(user_input_norm, pid)
@@ -342,7 +403,7 @@ def _preflight(
     return None, False
 
 
-def procesar_mensaje(
+def _procesar_mensaje_legacy(
     user_input: str, profile_id: str = DEFAULT_PROFILE_ID, *, count_inbound: bool = True
 ) -> tuple[str, bool]:
     if count_inbound:
@@ -446,7 +507,15 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
             if len(tcs) == 1:
                 tc = tcs[0]
                 result = tool_manager._invocar_tool(tc, brain_state.tool_map, {"user_input": user_input, "source": "llm_loop", "profile_id": pid})
-                messages.append(ToolMessage(content=core_tools._limpiar_respuesta(brain_utils._formatear_reply_por_perfil(str(result), pid)), tool_call_id=tc["id"]))
+                messages.append(
+                    ToolMessage(
+                        content=core_tools._limpiar_respuesta(
+                            brain_utils._formatear_reply_por_perfil(str(result), pid)
+                        ),
+                        tool_call_id=tc["id"],
+                        name=tc.get("name"),
+                    )
+                )
             else:
                 futures = []
                 for tc in tcs:
@@ -457,7 +526,17 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
                 for tc, f in futures:
                     try:
                         result = f.result(timeout=25)
-                        messages.append(ToolMessage(content=core_tools._limpiar_respuesta(brain_utils._formatear_reply_por_perfil(str(result), pid)), tool_call_id=tc["id"]))
+                        messages.append(
+                            ToolMessage(
+                                content=core_tools._limpiar_respuesta(
+                                    brain_utils._formatear_reply_por_perfil(
+                                        str(result), pid
+                                    )
+                                ),
+                                tool_call_id=tc["id"],
+                                name=tc.get("name"),
+                            )
+                        )
                     except Exception as exc:
                         obs_event(
                             "parallel_tool_failed",
@@ -468,6 +547,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
                             ToolMessage(
                                 content="Parallel tool execution failed.",
                                 tool_call_id=tc["id"],
+                                name=tc.get("name"),
                             )
                         )
 
@@ -493,7 +573,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
     return _finalize_reply(reply, messages, user_input, pid, "final")
 
 
-def stream_procesar_mensaje_events(
+def _stream_procesar_mensaje_events_legacy(
     user_input: str, profile_id: str = DEFAULT_PROFILE_ID
 ) -> Iterator[dict]:
     # (Streaming with 100% parity including heartbeats)
@@ -586,3 +666,277 @@ def stream_procesar_mensaje_events(
         if context_token is not None:
             jarvis_state.reset_active_profile_id(context_token)
         stop_heartbeat.set()
+
+
+_PIPELINE_LOCK = threading.RLock()
+_COMMAND_ORCHESTRATOR: CommandOrchestrator | None = None
+
+
+def _legacy_pipeline_enabled() -> bool:
+    return (os.getenv("JARVIS_LEGACY_COMMAND_PIPELINE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+class _RuntimeGroqPlanner:
+    """Build a planner from the latest atomically published Groq model."""
+
+    def plan(
+        self,
+        request: CommandRequest,
+        messages: list,
+    ) -> ActionPlan:
+        if _llm_calls_disabled_for_tests():
+            return ActionPlan(
+                request_id=request.request_id,
+                source=PlanSource.GROQ,
+                direct_response="Brain not initialized.",
+            )
+
+        bound_model, plain_model, registry = (
+            brain_state.get_tooling_snapshot()
+        )
+        model = bound_model or plain_model
+        if model is None:
+            raise LLMUnavailableError
+
+        allowed_tools = (
+            tuple(registry.by_name)
+            if bound_model is not None
+            else ()
+        )
+        try:
+            return GroqPlanner(
+                model,
+                allowed_tools=allowed_tools,
+            ).plan(request, messages)
+        except (LLMUnavailableError, LLMServiceError):
+            raise
+        except Exception as exc:
+            obs_event(
+                "groq_planner_failed",
+                error=type(exc).__name__,
+                request_id=request.request_id,
+            )
+            raise LLMServiceError from None
+
+
+def _build_planner_messages(
+    request: CommandRequest,
+    history: list,
+) -> list:
+    count = memory_manager.next_message_count(request.profile_id)
+    if count == 1 or count % 3 == 0:
+        snapshot = memory_manager.snapshot(request.profile_id)
+        try:
+            facts = core_tools.extraer_datos_criticos(
+                request.text,
+                snapshot.facts,
+            )
+        except Exception as exc:
+            obs_event(
+                "memory_fact_extraction_failed",
+                error=type(exc).__name__,
+                profile_id=request.profile_id,
+            )
+        else:
+            memory_manager.set_facts(request.profile_id, facts)
+
+    return [
+        prompts.get_system_msg(
+            request.text,
+            profile_id=request.profile_id,
+        ),
+        *history[-10:],
+        HumanMessage(content=request.text),
+    ]
+
+
+def _get_command_orchestrator() -> CommandOrchestrator:
+    global _COMMAND_ORCHESTRATOR
+
+    with _PIPELINE_LOCK:
+        if _COMMAND_ORCHESTRATOR is None:
+            executor = services.tool_execution or tool_manager._tool_execution_service
+            _COMMAND_ORCHESTRATOR = CommandOrchestrator(
+                deterministic=DeterministicPlanner(),
+                groq=_RuntimeGroqPlanner(),
+                executor=executor,
+                responses=ResponseComposer(),
+                history=memory_manager,
+                message_factory=_build_planner_messages,
+            )
+        return _COMMAND_ORCHESTRATOR
+
+
+def _build_command_request(
+    user_input: str,
+    *,
+    profile_id: str,
+    channel: str,
+) -> CommandRequest:
+    pid = jarvis_state.normalize_profile_id(
+        profile_id,
+        DEFAULT_PROFILE_ID,
+    )
+    return CommandRequest.create(
+        text=reparar_unicode(str(user_input or "")),
+        profile_id=pid,
+        channel=channel,
+        language=get_current_language(),
+        metadata={
+            "default_location": get_default_location(),
+            "spotify_pending_choices": pending_spotify_selections.snapshot(pid),
+        },
+    )
+
+
+def _record_pipeline_response(
+    request: CommandRequest,
+    response: CommandResponse,
+) -> None:
+    pending_choices = request.metadata.get("spotify_pending_choices")
+    spotify_selection_consumed = any(
+        receipt.tool_name == "reproducir_en_spotify"
+        for receipt in response.receipts
+    )
+    spotify_selection_cancelled = (
+        response.text.strip().lower()
+        in {
+            "spotify selection cancelled.",
+            "seleccion de spotify cancelada.",
+        }
+    )
+    if pending_choices and (
+        spotify_selection_consumed or spotify_selection_cancelled
+    ):
+        pending_spotify_selections.clear(request.profile_id)
+
+    write_conversation(
+        "JARVIS",
+        response.text,
+        profile_id=request.profile_id,
+        channel=request.channel,
+    )
+    print(f"[JARVIS] {response.text}")
+    obs_event(
+        "reply_sent",
+        path="command_pipeline",
+        channel=request.channel,
+        request_id=request.request_id,
+        outcome=response.outcome,
+        should_listen=response.should_listen,
+        reply=response.text[:220],
+    )
+
+    try:
+        core_tools.guardar_memoria_async(request.profile_id)
+    except Exception as exc:
+        obs_event(
+            "memory_persist_schedule_failed",
+            error=type(exc).__name__,
+            profile_id=request.profile_id,
+        )
+
+    try:
+        rag_motor.agregar_interaccion(
+            user_msg=request.text,
+            ai_msg=response.text,
+            profile_id=request.profile_id,
+        )
+    except Exception as exc:
+        obs_event(
+            "rag_interaction_store_failed",
+            error=type(exc).__name__,
+            profile_id=request.profile_id,
+        )
+
+
+def process_command(
+    request: CommandRequest,
+    *,
+    emit=None,
+) -> CommandResponse:
+    write_conversation(
+        "USUARIO",
+        request.text,
+        profile_id=request.profile_id,
+        channel=request.channel,
+    )
+    with jarvis_state.active_profile(request.profile_id):
+        response = _get_command_orchestrator().process(
+            request,
+            emit=emit,
+        )
+    _record_pipeline_response(request, response)
+    return response
+
+
+def procesar_mensaje(
+    user_input: str,
+    profile_id: str = DEFAULT_PROFILE_ID,
+    *,
+    count_inbound: bool = True,
+) -> tuple[str, bool]:
+    if _legacy_pipeline_enabled():
+        return _procesar_mensaje_legacy(
+            user_input,
+            profile_id=profile_id,
+            count_inbound=count_inbound,
+        )
+
+    if count_inbound:
+        obs_inc("messages_total", 1)
+    request = _build_command_request(
+        user_input,
+        profile_id=profile_id,
+        channel="brain",
+    )
+    response = process_command(request)
+    return response.text, response.should_listen
+
+
+def stream_procesar_mensaje_events(
+    user_input: str,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> Iterator[dict]:
+    if _legacy_pipeline_enabled():
+        yield from _stream_procesar_mensaje_events_legacy(
+            user_input,
+            profile_id=profile_id,
+        )
+        return
+
+    try:
+        obs_inc("messages_total", 1)
+        request = _build_command_request(
+            user_input,
+            profile_id=profile_id,
+            channel="stream",
+        )
+        events: list[dict] = []
+        process_command(request, emit=events.append)
+        yield from events
+    except LLMUnavailableError:
+        obs_event(
+            "llm_stream_unavailable",
+            error="LLMUnavailableError",
+        )
+        yield {
+            "type": "error",
+            "code": "llm_unconfigured",
+            "message": LLM_UNCONFIGURED_MESSAGE,
+        }
+    except Exception as exc:
+        obs_event(
+            "llm_stream_failed",
+            error=type(exc).__name__,
+        )
+        yield {
+            "type": "error",
+            "code": "chat_unavailable",
+            "message": CHAT_UNAVAILABLE_MESSAGE,
+        }

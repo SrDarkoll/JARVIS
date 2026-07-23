@@ -3,7 +3,7 @@ import json
 import os
 import threading
 
-from core.jarvis_config import RAG_ENABLED
+from core.jarvis_config import CACHE_DIR, RAG_ENABLED, RUNTIME_DIR
 from core.jarvis_state import DEFAULT_PROFILE_ID as _OWNER_PID
 
 # It will be attempted to import FAISS in a secure way
@@ -49,7 +49,7 @@ def _format_embeddings_import_error() -> str:
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
-_RUNTIME_DIR = os.getenv("JARVIS_RUNTIME_DIR") or _ROOT
+_RUNTIME_DIR = RUNTIME_DIR
 VECTOR_DB_DIR = os.getenv("JARVIS_FAISS_DIR") or os.path.join(_RUNTIME_DIR, "faiss_index")
 # Explicit repository + local cache avoids failures like "NoneType" with empty HF_HOME or weird cwd.
 EMBEDDING_MODEL = (
@@ -57,7 +57,7 @@ EMBEDDING_MODEL = (
     or "sentence-transformers/all-MiniLM-L6-v2"
 )
 _HF_CACHE = os.getenv("JARVIS_HF_CACHE") or os.path.join(
-    os.getenv("JARVIS_CACHE_DIR") or os.path.join(_BASE, ".cache"),
+    os.getenv("JARVIS_CACHE_DIR") or CACHE_DIR,
     "huggingface",
 )
 FAISS_MANIFEST_FILE = "index.sha256.json"

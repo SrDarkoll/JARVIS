@@ -89,22 +89,114 @@ def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
 def parsear_recordatorio(user_input: str) -> tuple[str | None, int | None]:
     return parse_reminder(user_input)
 
-def parsear_comando_volumen(user_input: str) -> tuple[str | None, float | None]:
-    t = (user_input or "").strip().lower()
-    if "volume" not in t and not any(k in t for k in ["raise", "lower", "mute", "silence"]):
+def parse_volume_command(
+    user_input: str,
+) -> tuple[str | None, float | None]:
+    text = _normalizar_ascii(user_input).strip().lower()
+    volume_markers = (
+        "volume",
+        "volumen",
+        "raise",
+        "lower",
+        "increase",
+        "decrease",
+        "sube",
+        "subir",
+        "baja",
+        "bajar",
+        "mute",
+        "silence",
+        "silencia",
+    )
+    if not any(marker in text for marker in volume_markers):
         return None, None
-    t_norm = re.sub(r"\s+", " ", t).strip()
-    m_num = re.search(r"(?<!\d)-?\d{1,3}(?:[.,]\d+)?\s*%?(?!\d)", t_norm)
-    valor = None
-    if m_num:
-        try: valor = int(float(m_num.group(0).replace("%", "").replace(",", ".").strip()))
-        except: pass
-    if valor is not None:
-        objetivo_explicito = bool(re.search(r"\b(?:to|at|in)\s*-?\d{1,3}(?:[.,]\d+)?\s*%?(?=\s|$|[.,;:!?])", t_norm) or any(k in t for k in ["set", "put", "adjust", "fix"]))
-        if objetivo_explicito: return "absolute", valor
-    if any(k in t for k in ["lower", "decrease", "reduce", "less"]): return "relative", -(valor if valor is not None else 10)
-    if any(k in t for k in ["raise", "increase", "more", "more"]): return "relative", +(valor if valor is not None else 10)
+
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if any(
+        marker in normalized
+        for marker in ("mute", "silence", "silencia", "silenciar")
+    ):
+        return "absolute", 0
+
+    number_match = re.search(
+        r"(?<!\d)-?\d{1,3}(?:[.,]\d+)?\s*%?(?!\d)",
+        normalized,
+    )
+    value: int | None = None
+    if number_match:
+        try:
+            value = int(
+                float(
+                    number_match.group(0)
+                    .replace("%", "")
+                    .replace(",", ".")
+                    .strip()
+                )
+            )
+        except ValueError:
+            value = None
+
+    if value is not None:
+        explicit_target = bool(
+            re.search(
+                r"\b(?:to|at|in|a|al|en)\s*"
+                r"-?\d{1,3}(?:[.,]\d+)?\s*%?"
+                r"(?=\s|$|[.,;:!?])",
+                normalized,
+            )
+            or any(
+                marker in normalized
+                for marker in (
+                    "set",
+                    "put",
+                    "adjust",
+                    "fix",
+                    "pon",
+                    "ajusta",
+                    "fija",
+                    "establece",
+                )
+            )
+        )
+        if explicit_target:
+            return "absolute", value
+
+    if any(
+        marker in normalized
+        for marker in (
+            "lower",
+            "decrease",
+            "reduce",
+            "less",
+            "baja",
+            "bajar",
+        )
+    ):
+        return "relative", -(value if value is not None else 10)
+    if any(
+        marker in normalized
+        for marker in (
+            "raise",
+            "increase",
+            "more",
+            "sube",
+            "subir",
+            "aumenta",
+        )
+    ):
+        return "relative", value if value is not None else 10
+    if value is not None and any(
+        marker in normalized for marker in ("volume", "volumen")
+    ):
+        return "absolute", value
     return None, None
+
+
+def parsear_comando_volumen(
+    user_input: str,
+) -> tuple[str | None, float | None]:
+    """Compatibility alias for older plugins and tests."""
+    return parse_volume_command(user_input)
 
 def _abrir_en_navegador_sistema(url: str) -> bool:
     try:
@@ -180,9 +272,13 @@ def _respuesta_necesita_web_forzarla(user_input: str, reply: str, messages: list
     from core.brain.social_engine import _debe_buscar_en_web
     if not _debe_buscar_en_web(user_input):
         return False
+    web_tool_names = {"buscar_en_internet", "search_on_internet"}
     has_web_tool = any(
-        getattr(m, "name", None) == "search_on_internet"
-        for m in messages
-        if (hasattr(m, "name") or hasattr(m, "type")) and str(getattr(m, "type", "")) == "tool"
+        str(getattr(message, "name", "") or "") in web_tool_names
+        or any(
+            str((tool_call or {}).get("name") or "") in web_tool_names
+            for tool_call in (getattr(message, "tool_calls", None) or [])
+        )
+        for message in messages
     )
     return not has_web_tool

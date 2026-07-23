@@ -9,10 +9,14 @@ import threading
 from typing import Any
 
 from core import jarvis_state
+from core.command_pipeline.tool_registry import (
+    ToolRegistryService,
+    ToolRegistrySnapshot,
+)
 
 # Global Locks
 memoria_lock = jarvis_state.memoria_lock
-PLUGIN_LOCK = threading.Lock()
+PLUGIN_LOCK = threading.RLock()
 
 # LLM Engines
 llm: Any = None
@@ -24,6 +28,14 @@ llm_with_tools: Any = None
 tools_list: list = []
 tool_map: dict = {}
 _BASE_TOOLS: list = []
+tool_registry = ToolRegistryService()
+
+
+def get_tooling_snapshot(
+) -> tuple[Any, Any, ToolRegistrySnapshot]:
+    """Return a coherent model and tool registry view."""
+    with PLUGIN_LOCK:
+        return llm_with_tools, llm, tool_registry.snapshot()
 
 # Plugin Management
 PLUGIN_STATE: dict[str, Any] = {

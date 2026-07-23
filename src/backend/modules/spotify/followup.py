@@ -177,6 +177,15 @@ class PendingSpotifySelections:
         with self._lock:
             return self._current(profile_id) is not None
 
+    def snapshot(
+        self,
+        profile_id: str,
+    ) -> tuple[SpotifyCandidate, ...]:
+        """Return an immutable, non-consuming view of current choices."""
+        with self._lock:
+            pending = self._current(profile_id)
+            return pending.choices if pending is not None else ()
+
     def resolve(
         self,
         profile_id: str,

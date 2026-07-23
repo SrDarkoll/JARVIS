@@ -5,6 +5,7 @@ import sys
 from types import SimpleNamespace
 
 from core.brain import llm_engine
+from core.command_pipeline.tool_registry import ToolRegistryService
 from langchain_core.messages import AIMessage, HumanMessage
 
 
@@ -235,3 +236,80 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
     assert brain_state.llm is not None
     assert brain_state.llm_vision is None
     assert brain_state.llm_fallback is None
+
+
+def test_rebuild_tooling_replaces_registry_under_plugin_lock(monkeypatch):
+    from core.brain import brain_state  # pyright: ignore[reportMissingImports]
+
+    events = []
+
+    class RecordingLock:
+        active = False
+
+        def __enter__(self):
+            self.active = True
+            events.append("lock_enter")
+            return self
+
+        def __exit__(self, *_args):
+            events.append("lock_exit")
+            self.active = False
+
+    lock = RecordingLock()
+
+    class Tool:
+        def __init__(self, name):
+            self.name = name
+
+    class BoundModel:
+        def bind_tools(self, tools, tool_choice="auto"):
+            assert lock.active is True
+            events.append(("bind", [tool.name for tool in tools], tool_choice))
+            return ("bound", tuple(tool.name for tool in tools))
+
+    monkeypatch.setattr(brain_state, "PLUGIN_LOCK", lock)
+    monkeypatch.setattr(brain_state, "llm", BoundModel())
+    monkeypatch.setattr(brain_state, "_BASE_TOOLS", ["stale"])
+    monkeypatch.setattr(brain_state, "tools_list", ["stale"])
+    monkeypatch.setattr(brain_state, "tool_map", {"stale": object()})
+    monkeypatch.setattr(brain_state, "llm_with_tools", "stale")
+    monkeypatch.setattr(
+        brain_state,
+        "tool_registry",
+        ToolRegistryService(),
+    )
+
+    base = [Tool("base")]
+    plugins = [Tool("plugin")]
+    llm_engine._rebuild_tooling(base, plugins)
+
+    assert events == [
+        "lock_enter",
+        ("bind", ["base", "plugin"], "auto"),
+        "lock_exit",
+    ]
+    assert brain_state._BASE_TOOLS == base
+    assert brain_state.tools_list == [*base, *plugins]
+    assert brain_state.tool_map == {
+        "base": base[0],
+        "plugin": plugins[0],
+    }
+    assert brain_state.llm_with_tools == (
+        "bound",
+        ("base", "plugin"),
+    )
+    snapshot = brain_state.tool_registry.snapshot()
+    assert snapshot.version == 1
+    assert snapshot.tools == tuple([*base, *plugins])
+    assert dict(snapshot.by_name) == brain_state.tool_map
+
+
+def test_rebuild_tooling_clears_stale_bound_model_without_llm(monkeypatch):
+    from core.brain import brain_state  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(brain_state, "llm", None)
+    monkeypatch.setattr(brain_state, "llm_with_tools", "stale")
+
+    llm_engine._rebuild_tooling([], [])
+
+    assert brain_state.llm_with_tools is None

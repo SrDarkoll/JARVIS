@@ -90,6 +90,19 @@ def test_pending_selection_expires():
     assert not store.has_pending("guest_unverified")
 
 
+def test_snapshot_is_non_consuming_and_respects_expiration():
+    now = [100.0]
+    store = PendingSpotifySelections(clock=lambda: now[0], timeout=60.0)
+    store.remember("guest_unverified", _choices())
+
+    assert store.snapshot("guest_unverified") == _choices()
+    assert store.has_pending("guest_unverified")
+
+    now[0] = 161.0
+    assert store.snapshot("guest_unverified") == ()
+    assert not store.has_pending("guest_unverified")
+
+
 def test_preflight_resolves_spotify_followup_before_dynamic_router(monkeypatch):
     calls = []
     pending_spotify_selections.remember("guest_unverified", _choices())

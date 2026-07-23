@@ -377,11 +377,20 @@ def init_brain(app_ref):
         threading.Thread(target=core_tools.generar_resumen_noticias, daemon=True).start()
 
 def _rebuild_tooling(base_tools: list, plugin_tools: list) -> None:
-    brain_state._BASE_TOOLS = list(base_tools)
-    brain_state.tools_list = list(base_tools) + list(plugin_tools)
-    brain_state.tool_map = {t.name: t for t in brain_state.tools_list if getattr(t, "name", "")}
-    if brain_state.llm is not None:
-        brain_state.llm_with_tools = brain_state.llm.bind_tools(
-        brain_state.tools_list,
-        tool_choice="auto",
-    )
+    new_base_tools = list(base_tools)
+    new_tools = new_base_tools + list(plugin_tools)
+
+    with brain_state.PLUGIN_LOCK:
+        new_llm_with_tools = (
+            brain_state.llm.bind_tools(
+                new_tools,
+                tool_choice="auto",
+            )
+            if brain_state.llm is not None
+            else None
+        )
+        registry = brain_state.tool_registry.replace(new_tools)
+        brain_state._BASE_TOOLS = new_base_tools
+        brain_state.tools_list = list(registry.tools)
+        brain_state.tool_map = dict(registry.by_name)
+        brain_state.llm_with_tools = new_llm_with_tools
