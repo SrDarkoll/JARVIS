@@ -17,6 +17,10 @@ _LAZY_EXPORTS = {
         "cerrar_navegador_playwright",
     ),
     "abrir_youtube": ("tools.browser", "abrir_youtube"),
+    "reproducir_en_youtube": (
+        "modules.youtube.tools",
+        "reproducir_en_youtube",
+    ),
     "buscar_en_wikipedia": ("tools.browser", "buscar_en_wikipedia"),
     "leer_archivo": ("tools.utilities", "leer_archivo"),
     "poner_recordatorio": ("tools.utilities", "poner_recordatorio"),
