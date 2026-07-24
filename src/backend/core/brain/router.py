@@ -329,24 +329,18 @@ def _extract_music_request(text: str) -> str:
     if not raw:
         return ""
 
-    name_pattern = (
-        r"\b(?:that\s+(?:is|its|it's|his)\s+name\s+is|"
-        r"called|named|se\s+llama|llamada|llamado|nombre\s+es)\s+(.+)$"
+    raw = re.sub(
+        r"^(reproduce|pon|ponme|play|toca)\.([a-z0-9])",
+        r"\1 \2",
+        raw,
+        flags=re.IGNORECASE,
     )
-    if "spotify" in raw or any(
-        k in raw for k in ["play", "reproduce", "pon", "toca", "put", "es "]
-    ):
-        match = re.search(name_pattern, raw, flags=re.IGNORECASE)
-        if match:
-            query = _clean_music_query(match.group(1))
-            if query:
-                return query
 
     play_patterns = [
         r"^(?:pon|ponme|reproduce|play|toca)\s+(.+)$",
         r"^(?:reproducir|reproduzcas)\s+(.+)$",
-        r"^(?:es|es la de|es el tema|es la cancion)\s+(.+)$",
-        r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar)\s+(.+)$",
+        r"^(?:no,?\s+)?(?:es|es la de|es el tema|es la cancion|es un video de|es el video de|me refiero a|hablo de)\s+(.+)$",
+        r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar|escuchemos)?\s*(.+)$",
         r"^(?:put\s+on|put)\s+(.+)$",
         r"\b(?:puedes\s+(?:reproducir|poner|tocar)|"
         r"puedes\s+que\s+(?:reproduzcas|pongas)|"
@@ -1115,7 +1109,19 @@ def plan_hybrid(
 
     song = _extract_music_request(text)
     if song:
-        if "en youtube" in text or "youtube" in text:
+        is_youtube = any(
+            k in text
+            for k in [
+                "youtube",
+                "video",
+                "canal",
+                "creador",
+                "yt",
+                "vdeo",
+                "bideo",
+            ]
+        ) or request.metadata.get("last_media_source") == "youtube"
+        if is_youtube:
             return _tool_plan(
                 request,
                 "reproducir_en_youtube",
