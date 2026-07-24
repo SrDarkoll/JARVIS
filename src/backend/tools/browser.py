@@ -393,35 +393,75 @@ def cerrar_navegador_playwright() -> str:
     return "Sesion Playwright cerrada."
 
 
+def _obtener_top_youtube_url(query: str) -> str:
+    """Extrae la URL del primer video relevante en YouTube para reproducirlo directamente."""
+    try:
+        import urllib.request
+        import urllib.parse
+        q_clean = str(query or "").strip()
+        if not q_clean:
+            return "https://www.youtube.com"
+        search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(q_clean)
+        req = urllib.request.Request(
+            search_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8")
+        vids = re.findall(r"watch\?v=([a-zA-Z0-9_-]{11})", html)
+        if vids:
+            return f"https://www.youtube.com/watch?v={vids[0]}"
+        return search_url
+    except Exception:
+        return f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+
+
 @tool
 def abrir_youtube(query: str) -> str:
-    """Busca y abre YouTube. SOLO cuando diga 'busca en YouTube' o 'pon en YouTube' + tema."""
+    """Busca y reproduce un video en YouTube. Abre y reproduce el video directo cuando se especifique un tema o creador."""
     query_limpio = (query or "").strip()
-    url = (
-        f"https://www.youtube.com/results?search_query={quote_plus(query_limpio)}"
-        if query_limpio
-        else "https://www.youtube.com"
-    )
+    if query_limpio:
+        url = _obtener_top_youtube_url(query_limpio)
+    else:
+        url = "https://www.youtube.com"
+
     if _browser_prefers_system():
         if _abrir_en_navegador_sistema(url, require_policy=False):
             if query_limpio:
-                return (
-                    f"Buscando '{query_limpio}' en YouTube en navegador predeterminado."
-                )
+                return f"Reproduciendo video de '{query_limpio}' en YouTube."
             return "YouTube abierto en navegador predeterminado."
-        return "I could not open YouTube en el navegador predeterminado."
+        return "No se pudo abrir YouTube en el navegador predeterminado."
     try:
         worker = _ensure_pw_worker()
         worker.execute(_pw_goto, url)
         if query_limpio:
-            return f"Buscando '{query_limpio}' en YouTube con Playwright."
+            return f"Reproduciendo '{query_limpio}' en YouTube con Playwright."
         return "YouTube abierto con Playwright."
     except Exception as e:
         if _abrir_en_navegador_sistema(url):
             if query_limpio:
-                return f"Buscando '{query_limpio}' en YouTube en navegador del sistema."
-            return "YouTube abierto en navegador del sistema."
-        return f"Error: {e}"
+                return f"Reproduciendo '{query_limpio}' en YouTube."
+            return "YouTube abierto en el navegador."
+        return f"Error al abrir YouTube: {e}"
 
 
+@tool
+def buscar_en_wikipedia(consulta: str) -> str:
+    """Busca un tema y abre directamente el artículo de Wikipedia en el navegador del usuario."""
+    query_limpio = str(consulta or "").strip()
+    if not query_limpio:
+        url = "https://es.wikipedia.org"
+    else:
+        url = f"https://es.wikipedia.org/wiki/Especial:Buscar?search={quote_plus(query_limpio)}"
 
+    if _browser_prefers_system():
+        if _abrir_en_navegador_sistema(url, require_policy=False):
+            return f"Abriendo artículo sobre '{query_limpio}' en Wikipedia."
+        return "No se pudo abrir Wikipedia."
+    try:
+        worker = _ensure_pw_worker()
+        worker.execute(_pw_goto, url)
+        return f"Abriendo '{query_limpio}' en Wikipedia con Playwright."
+    except Exception as e:
+        if _abrir_en_navegador_sistema(url):
+            return f"Abriendo '{query_limpio}' en Wikipedia."
+        return f"Error al abrir Wikipedia: {e}"

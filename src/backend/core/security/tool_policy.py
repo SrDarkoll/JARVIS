@@ -51,6 +51,7 @@ DEFAULT_TOOL_POLICIES: dict[str, ToolPolicy] = {
     "ejecutar_plan_acciones": ToolPolicy("ejecutar_plan_acciones", "critical", ("admin",), True, True),
     "crear_archivo_texto": ToolPolicy("crear_archivo_texto", "elevated", ("admin",), False, True),
     "ejecutar_comando_terminal": ToolPolicy("ejecutar_comando_terminal", "elevated", ("admin",), False, True),
+    "buscar_en_wikipedia": ToolPolicy("buscar_en_wikipedia", "elevated", ("admin",), False, True),
 }
 
 
