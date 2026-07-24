@@ -317,7 +317,8 @@ def _clean_music_query(value: str) -> str:
         flags=re.IGNORECASE,
     )
     q = re.sub(r"\s+", " ", q).strip(" \t\r\n,.;:!?")
-    q = re.sub(r"\b6\s+a\s+m\b", "6 AM", q, flags=re.IGNORECASE)
+    q = re.sub(r"\b(\d{1,2})\s*a\.?\s*m\.?\b", r"\1 AM", q, flags=re.IGNORECASE)
+    q = re.sub(r"\b(\d{1,2})\s*p\.?\s*m\.?\b", r"\1 PM", q, flags=re.IGNORECASE)
     if q in {"music", "musica", "song", "a song", "algo", "something", "like"}:
         return ""
     return q
@@ -817,15 +818,19 @@ def _spotify_followup_plan(request: CommandRequest) -> ActionPlan | None:
                 str(item.get("artist") or "").strip(),
             )
         )
-    if not candidates:
+    from modules.spotify.followup import pending_spotify_selections
+    if candidates:
+        pending_spotify_selections.remember(request.profile_id, candidates)
+
+    if not pending_spotify_selections.has_pending(request.profile_id):
         return None
 
-    selections = PendingSpotifySelections(clock=lambda: 0.0)
-    selections.remember(request.profile_id, candidates)
-    resolution = selections.resolve(request.profile_id, request.text)
+    resolution = pending_spotify_selections.resolve(request.profile_id, request.text)
     if resolution is None or resolution.status is SpotifySelectionStatus.UNRELATED:
+        pending_spotify_selections.clear(request.profile_id)
         return None
     if resolution.status is SpotifySelectionStatus.CANCELLED:
+        pending_spotify_selections.clear(request.profile_id)
         response = (
             "Spotify selection cancelled."
             if _language_is_english(request.language)
