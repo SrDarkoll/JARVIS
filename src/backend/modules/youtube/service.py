@@ -17,11 +17,35 @@ from tools.browser import (
 )
 
 
+def _es_short_clip(duration: str) -> bool:
+    """Verifica de forma segura si el video es un Short o clip menor a 30 segundos."""
+    if not duration:
+        return False
+    parts = duration.split(":")
+    if len(parts) == 2:
+        try:
+            mins = int(parts[0].strip())
+            secs = int(parts[1].strip())
+            if mins == 0 and secs < 30:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
 def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
     """Busca en YouTube y extrae candidatos estructurados con título, canal, vistas y duración."""
     clean_query = str(query or "").strip()
     if not clean_query:
         return []
+
+    # Phonetic STT corrections for common YouTube terms & channel titles
+    clean_query = re.sub(
+        r"\b(?:informen|inforcut)\s+(?:de\s+)?hcf\b",
+        "Informe HCF",
+        clean_query,
+        flags=re.IGNORECASE,
+    )
 
     search_url = (
         "https://www.youtube.com/results?search_query="
@@ -43,7 +67,7 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
     except Exception:
         return []
 
-    match = re.search(r"var ytInitialData = (\{.*?\});</script>", html)
+    match = re.search(r"ytInitialData\s*=\s*(\{.*?\});</script>", html)
     if not match:
         match = re.search(r"window\[\"ytInitialData\"\] = (\{.*?\});</script>", html)
 
@@ -51,9 +75,7 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
     if match:
         try:
             data = json.loads(match.group(1))
-            contents = data["contents"]["twoColumnSearchResultsRenderer"][
-                "primaryContents"
-            ]["sectionListRenderer"]["contents"]
+            contents = data.get("contents", {}).get("twoColumnSearchResultsRenderer", {}).get("primaryContents", {}).get("sectionListRenderer", {}).get("contents", [])
             for section in contents:
                 item_section = section.get("itemSectionRenderer", {})
                 for item in item_section.get("contents", []):
@@ -73,9 +95,8 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                     views = vr.get("viewCountText", {}).get("simpleText", "")
 
                     # Filter out short meme clips/shorts under 30s unless explicitly requested
-                    if duration and (duration.count(":") == 0 or (duration.startswith("0:") and int(duration.split(":")[1]) < 30)):
-                        if "short" not in clean_query.lower():
-                            continue
+                    if _es_short_clip(duration) and "short" not in clean_query.lower():
+                        continue
 
                     if vid_id and title:
                         from utils.jarvis_i18n import reparar_unicode

@@ -1118,7 +1118,7 @@ def plan_hybrid(
         if "en youtube" in text or "youtube" in text:
             return _tool_plan(
                 request,
-                "abrir_youtube",
+                "reproducir_en_youtube",
                 {"query": _youtube_query(song)},
             )
         return _tool_plan(
