@@ -25,7 +25,7 @@ export class ArcReactor {
     init() {
         const size = this.canvas.clientWidth || 300;
         this.renderer.setSize(size, size);
-        this.camera.position.z = 5;
+        this.camera.position.z = 6.0;
 
         // --- Núcleo de Energía (Esfera central) ---
         const coreGeom = new THREE.IcosahedronGeometry(1.2, 2);
@@ -78,40 +78,16 @@ export class ArcReactor {
         }
 
         this.rings.forEach(r => {
-            r.mesh.rotation.x += r.speed;
-            r.mesh.rotation.y += r.speed * 1.2;
+            if (r.mesh) {
+                r.mesh.rotation.x += r.speed;
+                r.mesh.rotation.y += r.speed * 0.5;
+            }
         });
 
         if (this.particles) {
-            this.particles.rotation.y += 0.001;
+            this.particles.rotation.y -= 0.001;
         }
 
         this.renderer.render(this.scene, this.camera);
-    }
-
-    resize() {
-        if (!this.canvas) return;
-        const size = this.canvas.clientWidth || 300;
-        this.renderer.setSize(size, size);
-        this.camera.aspect = 1;
-        this.camera.updateProjectionMatrix();
-    }
-
-    dispose() {
-        if (this.core) {
-            this.core.geometry.dispose();
-            this.core.material.dispose();
-        }
-        this.rings.forEach(r => {
-            r.mesh.geometry.dispose();
-            r.mesh.material.dispose();
-        });
-        if (this.particles) {
-            this.particles.geometry.dispose();
-            this.particles.material.dispose();
-        }
-        if (this.renderer) {
-            this.renderer.dispose();
-        }
     }
 }

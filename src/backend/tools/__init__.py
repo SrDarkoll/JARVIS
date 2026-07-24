@@ -48,6 +48,12 @@ _LAZY_EXPORTS = {
     "analizar_pantalla": ("tools.utilities", "analizar_pantalla"),
     "recargar_plugins": ("tools.utilities", "recargar_plugins"),
     "ejecutar_rutina": ("tools.utilities", "ejecutar_rutina"),
+    "evaluar_expresion_matematica": (
+        "tools.utilities",
+        "evaluar_expresion_matematica",
+    ),
+    "crear_archivo_texto": ("tools.system", "crear_archivo_texto"),
+    "ejecutar_comando_terminal": ("tools.system", "ejecutar_comando_terminal"),
 }
 _BASE_TOOL_NAMES = tuple(_LAZY_EXPORTS)
 __all__ = ["get_base_tools", *_BASE_TOOL_NAMES]

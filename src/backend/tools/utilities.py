@@ -858,4 +858,163 @@ def generar_resumen_noticias(forzar: bool = False):
         print(f"[ERROR] News: {e}")
 
 
+@tool
+def evaluar_expresion_matematica(expresion: str) -> str:
+    """Evalúa una expresión matemática compuesta (aritmética, raíces, potencias, trigonometría, logaritmos).
+    Ejemplos: 'sqrt(28) * 4 / 20 * 5 / 5 * 8 * 9 * 6 / 5 - 8 * 828', '2^8 + sqrt(144)', 'sin(pi/2)'
+    """
+    import ast
+    import math
+    from decimal import Decimal, localcontext
+
+    if not expresion or not isinstance(expresion, str):
+        return "Error: expresión vacía."
+
+    limpio = re.sub(
+        r"^(?:cuanto\s+es|cuánto\s+es|calcula|calculame|dime\s+cuanto\s+es|cuanto\s+da|what\s+is|calculate|compute)\s+",
+        "",
+        str(expresion).strip(),
+        flags=re.IGNORECASE,
+    )
+    limpio = (
+        limpio.replace("multiplicado por", "*")
+        .replace("multiplied by", "*")
+        .replace("dividido entre", "/")
+        .replace("dividido por", "/")
+        .replace("divided by", "/")
+        .replace("por la", "*")
+        .replace("por el", "*")
+        .replace(" por ", " * ")
+        .replace(" times ", " * ")
+        .replace(" entre ", " / ")
+        .replace(" over ", " / ")
+        .replace(" mas ", " + ")
+        .replace(" más ", " + ")
+        .replace(" plus ", " + ")
+        .replace(" menos ", " - ")
+        .replace(" minus ", " - ")
+        .replace("×", "*")
+        .replace("÷", "/")
+        .replace("π", "pi")
+        .replace("^", "**")
+    )
+    limpio = re.sub(
+        r"√\s*(\d+(?:\.\d+)?|\([^)]+\))",
+        r"sqrt(\1)",
+        limpio,
+    )
+    limpio = re.sub(
+        r"∛\s*(\d+(?:\.\d+)?|\([^)]+\))",
+        r"cbrt(\1)",
+        limpio,
+    )
+    limpio = limpio.replace("√", "sqrt").replace("∛", "cbrt").strip("?. \t\r\n")
+
+    def _eval_node(node: ast.AST) -> Decimal:
+        if isinstance(node, ast.Expression):
+            return _eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return Decimal(str(node.value))
+        if isinstance(node, ast.Name):
+            var = node.id.lower()
+            if var in ("pi", "π"):
+                return Decimal(str(math.pi))
+            if var == "e":
+                return Decimal(str(math.e))
+            if var == "tau":
+                return Decimal(str(math.tau))
+            raise ValueError(f"variable no soportada: {node.id}")
+        if isinstance(node, ast.UnaryOp):
+            val = _eval_node(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return val
+            if isinstance(node.op, ast.USub):
+                return -val
+            raise ValueError("operador unario no soportado")
+        if isinstance(node, ast.BinOp):
+            left = _eval_node(node.left)
+            right = _eval_node(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if right == 0:
+                    raise ZeroDivisionError("división por cero")
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                if right == 0:
+                    raise ZeroDivisionError("división por cero")
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                if abs(right) > 100:
+                    raise ValueError("exponente demasiado grande")
+                if right == right.to_integral_value():
+                    return left ** int(right)
+                return Decimal(str(float(left) ** float(right)))
+            raise ValueError("operador binario no soportado")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            fn = node.func.id.lower()
+            args = [_eval_node(arg) for arg in node.args]
+            if len(args) == 1:
+                val = float(args[0])
+                if fn in ("sqrt", "raiz"):
+                    if val < 0:
+                        raise ValueError("raíz de número negativo")
+                    return Decimal(str(math.sqrt(val)))
+                if fn == "cbrt":
+                    return Decimal(str(math.cbrt(val)))
+                if fn == "abs":
+                    return abs(args[0])
+                if fn == "sin":
+                    return Decimal(str(math.sin(val)))
+                if fn == "cos":
+                    return Decimal(str(math.cos(val)))
+                if fn == "tan":
+                    return Decimal(str(math.tan(val)))
+                if fn == "log":
+                    if val <= 0:
+                        raise ValueError("logaritmo de número <= 0")
+                    return Decimal(str(math.log10(val)))
+                if fn == "ln":
+                    if val <= 0:
+                        raise ValueError("logaritmo de número <= 0")
+                    return Decimal(str(math.log(val)))
+                if fn == "exp":
+                    return Decimal(str(math.exp(val)))
+                if fn == "floor":
+                    return Decimal(str(math.floor(val)))
+                if fn == "ceil":
+                    return Decimal(str(math.ceil(val)))
+                if fn == "round":
+                    return Decimal(str(round(val)))
+            elif len(args) == 2 and fn == "round":
+                return Decimal(str(round(float(args[0]), int(args[1]))))
+            elif len(args) == 2 and fn == "log":
+                return Decimal(str(math.log(float(args[0]), float(args[1]))))
+            raise ValueError(f"función matemática no soportada: {fn}")
+        raise ValueError("expresión matemática inválida")
+
+    try:
+        parsed = ast.parse(limpio, mode="eval")
+        with localcontext() as ctx:
+            ctx.prec = 28
+            res = _eval_node(parsed)
+
+        if res == res.to_integral_value():
+            rendered = f"{int(res):,}"
+        else:
+            rendered = format(res.normalize(), "f").rstrip("0").rstrip(".")
+            if rendered.endswith("."):
+                rendered = rendered[:-1]
+
+        return f"El resultado de '{expresion}' es {rendered}."
+    except Exception as e:
+        return f"Error al evaluar la expresión matemática: {e}"
+
+
 

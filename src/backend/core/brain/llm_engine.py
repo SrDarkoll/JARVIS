@@ -321,28 +321,33 @@ def init_brain(app_ref):
 
     # Clean key configuration (avoids issues with literal quotes in .env)
     g_key = (GROQ_API_KEY or "").strip().replace('"', "").replace("'", "")
+    google_key = (os.getenv("GOOGLE_API_KEY") or "").strip().replace('"', "").replace("'", "")
+
+    is_google_model = GROQ_MODEL.startswith("gemini") or GROQ_MODEL.startswith("gemma") or (os.getenv("JARVIS_LLM_PROVIDER") or "").strip().lower() in {"gemini", "google"}
+    active_key = google_key if is_google_model else g_key
+    active_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/" if is_google_model else "https://api.groq.com/openai/v1"
 
     ChatOpenAI = _load_chat_openai()
     brain_state.llm = None
     brain_state.llm_vision = None
     brain_state.llm_fallback = None
 
-    if not g_key:
-        log_warning("groq_api_key_missing", error="GROQ_API_KEY is not configured")
+    if not active_key:
+        log_warning("llm_api_key_missing", error=f"API key missing for provider (is_google={is_google_model})")
     else:
         brain_state.llm = ChatOpenAI(
             model=GROQ_MODEL,
             temperature=0,
-            api_key=g_key,
-            base_url="https://api.groq.com/openai/v1",
+            api_key=active_key,
+            base_url=active_base_url,
         )
 
         if VISION_ENABLED:
             brain_state.llm_vision = ChatOpenAI(
                 model=GROQ_VISION_MODEL,
                 temperature=0,
-                api_key=g_key,
-                base_url="https://api.groq.com/openai/v1",
+                api_key=active_key,
+                base_url=active_base_url,
             )
 
     services.llm = brain_state.llm

@@ -49,10 +49,16 @@ DEFAULT_TOOL_POLICIES: dict[str, ToolPolicy] = {
     "crear_plan_acciones": ToolPolicy("crear_plan_acciones", "elevated", ("admin",), False, True),
     "ver_plan_acciones": ToolPolicy("ver_plan_acciones", "elevated", ("admin",), False, True),
     "ejecutar_plan_acciones": ToolPolicy("ejecutar_plan_acciones", "critical", ("admin",), True, True),
+    "crear_archivo_texto": ToolPolicy("crear_archivo_texto", "elevated", ("admin",), False, True),
+    "ejecutar_comando_terminal": ToolPolicy("ejecutar_comando_terminal", "elevated", ("admin",), False, True),
 }
 
 
 def _profile_role(profile_id: str | None, authorized: bool) -> str:
+    pid = str(profile_id or "").strip().lower()
+    from core.jarvis_config import resolve_runtime_features
+    if not resolve_runtime_features().allow_guest_mode and not pid.startswith("guest_") and pid != "guest":
+        return "admin"
     if authorized:
         return "admin"
     pid = str(profile_id or "").strip().lower()

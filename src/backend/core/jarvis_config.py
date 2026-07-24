@@ -23,6 +23,7 @@ os.environ.setdefault("WANDB_SILENT", "true")
 class RuntimeFeatures:
     core_mode: bool
     voice_id_enabled: bool
+    allow_guest_mode: bool
     rag_enabled: bool
     vision_enabled: bool
     plugins_enabled: bool
@@ -127,9 +128,14 @@ def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFea
     source = os.environ if env is None else env
     core_mode = _read_bool(source, "JARVIS_CORE_MODE", True)
     optional_default = not core_mode
+    allow_guest = _read_bool(source, "JARVIS_ALLOW_GUEST_MODE", True)
+    if _read_bool(source, "JARVIS_DISABLE_GUEST_MODE", False) or _read_bool(source, "JARVIS_SINGLE_USER_MODE", False):
+        allow_guest = False
+
     return RuntimeFeatures(
         core_mode=core_mode,
         voice_id_enabled=_read_bool(source, "JARVIS_VOICE_ID_ENABLED", optional_default),
+        allow_guest_mode=allow_guest,
         rag_enabled=_read_bool(source, "JARVIS_RAG_ENABLED", optional_default),
         vision_enabled=_read_bool(source, "JARVIS_VISION_ENABLED", optional_default),
         plugins_enabled=_read_bool(source, "JARVIS_PLUGINS_ENABLED", optional_default),

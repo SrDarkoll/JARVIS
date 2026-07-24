@@ -32,6 +32,7 @@ def autorizar_por_biometria(profile_id: str, nombre: str) -> None:
         _auth_state["nombre"] = nombre
         _auth_state["timestamp"] = datetime.now().timestamp()
         _auth_state["metodo"] = "biometria"
+        _auth_state["revoked_explicitly"] = False
 
 
 def revocar_autorizacion(profile_id: str | None = None) -> None:
@@ -43,15 +44,20 @@ def revocar_autorizacion(profile_id: str | None = None) -> None:
             _auth_state["nombre"] = None
             _auth_state["timestamp"] = 0.0
             _auth_state["metodo"] = None
+            _auth_state["revoked_explicitly"] = True
 
 
 def verificar_autorizacion(profile_id: str | None = None) -> bool:
     """
     Retorna True si el perfil activo está autorizado.
     Si se pasa profile_id, verifica que sea ese perfil específicamente.
+    Si el modo invitado está desactivado (allow_guest_mode=False), el admin está autorizado por defecto a menos que se revoque explícitamente.
     """
+    from core.jarvis_config import resolve_runtime_features
     with _auth_lock:
         if not _auth_state["autorizado"]:
+            if not resolve_runtime_features().allow_guest_mode and _auth_state.get("revoked_explicitly") is not True:
+                return True
             return False
         # Verificar TTL
         age = datetime.now().timestamp() - float(_auth_state.get("timestamp", 0))
@@ -89,6 +95,9 @@ def es_guest(profile_id: str | None) -> bool:
     Guests: guest_*, tg_*, web_test*, etc.
     Owner: admin (único perfil con acceso completo)
     """
+    from core.jarvis_config import resolve_runtime_features
+    if not resolve_runtime_features().allow_guest_mode:
+        return False
     if not profile_id:
         return True
     pid = str(profile_id).strip().lower()

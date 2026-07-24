@@ -408,8 +408,22 @@ def _voice_text(en: str, es: str) -> str:
     return en if _voice_is_english() else es
 
 
+def _allow_guest_mode() -> bool:
+    try:
+        from core.jarvis_config import resolve_runtime_features
+        return resolve_runtime_features().allow_guest_mode
+    except Exception:
+        return True
+
+
+def _effective_unverified_pid() -> str:
+    return _UNVERIFIED_GUEST_PID if _allow_guest_mode() else _OWNER_PID
+
+
 def _voice_display_name(profile_id: str | None) -> str:
-    return _voice_text("Administrator", "Administrador") if profile_id == _brain.DEFAULT_PROFILE_ID else _voice_text("Guest", "Invitado")
+    if not _allow_guest_mode() or profile_id in {_OWNER_PID, "admin"}:
+        return _voice_text("Administrator", "Administrador")
+    return _voice_text("Guest", "Invitado")
 
 
 _NAME_INTRO_RE = re.compile(
@@ -659,12 +673,12 @@ def _clasificar_peticion_voz(texto: str) -> dict:
 
 
 def _resolver_perfil_rapido(client_profile_id_norm: str, owner_session_active: bool) -> tuple[str, str]:
-    if owner_session_active:
-        pid = _brain.DEFAULT_PROFILE_ID
-    elif client_profile_id_norm and client_profile_id_norm != _brain.DEFAULT_PROFILE_ID:
+    if not _allow_guest_mode() or owner_session_active:
+        pid = _OWNER_PID
+    elif client_profile_id_norm and client_profile_id_norm != _OWNER_PID:
         pid = client_profile_id_norm
     else:
-        pid = _UNVERIFIED_GUEST_PID
+        pid = _effective_unverified_pid()
     nombre = _voice_display_name(pid)
     return pid, nombre
 
@@ -1237,7 +1251,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             print(f"[AUTH] Transcript looks like a question ('{tl}'), skipping voice registration.")
             _pop_pending(ip)
             pending_question = _reparar_unicode(str(pending.get("pending_question") or "").strip())
-            pid_resp = _brain.DEFAULT_PROFILE_ID if owner_session_active else _UNVERIFIED_GUEST_PID
+            pid_resp = _brain.DEFAULT_PROFILE_ID if owner_session_active else _effective_unverified_pid()
             nombre_resp = _voice_display_name(pid_resp)
             respuesta, sl = _brain.procesar_mensaje(texto_nombre, profile_id=pid_resp)
             _set_voice_identity(source="question_during_registration", profile=pid_resp, display_name=nombre_resp, similarity_value=similitud)
@@ -1405,14 +1419,22 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             return _voice_response(
                 {"response": reply, "profile_id": None, "nueva_voz": True, "identity_source": "soft_match_pending", "should_listen": True}
             )
+        if not _allow_guest_mode():
+            _autorizar_por_biometria(_brain.DEFAULT_PROFILE_ID, "Administrador")
+            reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
+            _set_voice_identity(source="single_user_admin_mode", profile=_brain.DEFAULT_PROFILE_ID, display_name="Administrador", similarity_value=similitud)
+            return _voice_response(
+                {"response": reply, "profile_id": _brain.DEFAULT_PROFILE_ID, "nombre": "Administrador", "identity_source": "single_user_admin_mode", "should_listen": bool(sl)}
+            )
         tl = texto.lower()
         es_pregunta_simple = _intent_es_pregunta_simple_voz(texto)
         if es_pregunta_simple:
             print(f"[AUTH] Unknown voice but simple question ('{tl}'), responding without registration.")
-            reply, sl = _brain.procesar_mensaje(texto, profile_id=_UNVERIFIED_GUEST_PID)
-            _set_voice_identity(source="unknown_direct_response", profile=_UNVERIFIED_GUEST_PID, display_name=_voice_display_name(_UNVERIFIED_GUEST_PID), similarity_value=similitud)
+            unverified_pid = _effective_unverified_pid()
+            reply, sl = _brain.procesar_mensaje(texto, profile_id=unverified_pid)
+            _set_voice_identity(source="unknown_direct_response", profile=unverified_pid, display_name=_voice_display_name(unverified_pid), similarity_value=similitud)
             return _voice_response(
-                {"response": reply, "profile_id": _UNVERIFIED_GUEST_PID, "nombre": _voice_display_name(_UNVERIFIED_GUEST_PID), "identity_source": "unknown_direct_response", "should_listen": bool(sl)}
+                {"response": reply, "profile_id": unverified_pid, "nombre": _voice_display_name(unverified_pid), "identity_source": "unknown_direct_response", "should_listen": bool(sl)}
             )
         _pending_voice_registration[ip] = {
             "audio": wav_purificado,
@@ -1431,8 +1453,8 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         )
 
     # Procesar mensaje
-    pid_final = profile_id or _UNVERIFIED_GUEST_PID
-    nombre_final = nombre or ("Administrador" if pid_final == _brain.DEFAULT_PROFILE_ID else "Invitado")
+    pid_final = profile_id or _effective_unverified_pid()
+    nombre_final = nombre or _voice_display_name(pid_final)
     reply, sl = _brain.procesar_mensaje(texto, profile_id=pid_final)
     _set_voice_identity(source=identity_source, profile=pid_final, display_name=nombre_final, similarity_value=similitud)
     return _voice_response(

@@ -108,7 +108,7 @@ export const translations = {
         "env_title": "ENTORNO",
         "sync_sensors": "Sincronizando sensores...",
         "default_transcript": "\"A la espera de sus órdenes, Administrador.\"",
-        "conversation_panel_title": "CONVERSACION",
+        "conversation_panel_title": "CONVERSACIÓN",
         "conversation_empty": "Aqui aparecera la conversacion por segmentos.",
         "conversation_user": "USTED",
         "conversation_jarvis": "JARVIS",

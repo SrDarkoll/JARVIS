@@ -1,4 +1,5 @@
 import ast
+import math
 import re
 import unicodedata
 from collections.abc import Mapping
@@ -520,8 +521,8 @@ def _plan_compound(request: CommandRequest) -> ActionPlan | None:
 
 _ARITHMETIC_RE = re.compile(
     r"(?<![\w.])"
-    r"(?P<expression>[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
-    r"(?:\s*(?:\*\*|[+\-*/%])\s*[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+))+)",
+    r"(?P<expression>(?:\b(?:sqrt|cbrt|sin|cos|tan|log|ln|abs|floor|ceil|round|pi|e|tau)\b|√|∛|[-+*/%^()0-9.,\s])+)",
+    re.IGNORECASE,
 )
 _SQUARE_ROOT_RE = re.compile(
     r"\b(?:square root of|raiz cuadrada de)\s+"
@@ -534,31 +535,85 @@ def _evaluate_arithmetic_node(node: ast.AST) -> Decimal:
         return _evaluate_arithmetic_node(node.body)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return Decimal(str(node.value))
+    if isinstance(node, ast.Name):
+        var = node.id.lower()
+        if var in ("pi", "π"):
+            return Decimal(str(math.pi))
+        if var == "e":
+            return Decimal(str(math.e))
+        if var == "tau":
+            return Decimal(str(math.tau))
+        raise ValueError(f"unsupported variable {node.id}")
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         value = _evaluate_arithmetic_node(node.operand)
         return value if isinstance(node.op, ast.UAdd) else -value
-    if not isinstance(node, ast.BinOp):
-        raise ValueError("unsupported arithmetic expression")
-
-    left = _evaluate_arithmetic_node(node.left)
-    right = _evaluate_arithmetic_node(node.right)
-    if isinstance(node.op, ast.Add):
-        return left + right
-    if isinstance(node.op, ast.Sub):
-        return left - right
-    if isinstance(node.op, ast.Mult):
-        return left * right
-    if isinstance(node.op, ast.Div):
-        return left / right
-    if isinstance(node.op, ast.FloorDiv):
-        return left // right
-    if isinstance(node.op, ast.Mod):
-        return left % right
-    if isinstance(node.op, ast.Pow):
-        if right != right.to_integral_value() or abs(right) > 10:
-            raise ValueError("unsafe exponent")
-        return left ** int(right)
-    raise ValueError("unsupported arithmetic operator")
+    if isinstance(node, ast.BinOp):
+        left = _evaluate_arithmetic_node(node.left)
+        right = _evaluate_arithmetic_node(node.right)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            if right == 0:
+                raise ZeroDivisionError("division by zero")
+            return left / right
+        if isinstance(node.op, ast.FloorDiv):
+            if right == 0:
+                raise ZeroDivisionError("division by zero")
+            return left // right
+        if isinstance(node.op, ast.Mod):
+            return left % right
+        if isinstance(node.op, ast.Pow):
+            if abs(right) > 100:
+                raise ValueError("unsafe exponent")
+            if right == right.to_integral_value():
+                return left ** int(right)
+            return Decimal(str(float(left) ** float(right)))
+        raise ValueError("unsupported arithmetic operator")
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        fn = node.func.id.lower()
+        args = [_evaluate_arithmetic_node(arg) for arg in node.args]
+        if len(args) == 1:
+            val = float(args[0])
+            if fn in ("sqrt", "raiz"):
+                if val < 0:
+                    raise ValueError("negative sqrt")
+                return Decimal(str(math.sqrt(val)))
+            if fn == "cbrt":
+                return Decimal(str(math.cbrt(val)))
+            if fn == "abs":
+                return abs(args[0])
+            if fn == "sin":
+                return Decimal(str(math.sin(val)))
+            if fn == "cos":
+                return Decimal(str(math.cos(val)))
+            if fn == "tan":
+                return Decimal(str(math.tan(val)))
+            if fn == "log":
+                if val <= 0:
+                    raise ValueError("invalid log arg")
+                return Decimal(str(math.log10(val)))
+            if fn == "ln":
+                if val <= 0:
+                    raise ValueError("invalid ln arg")
+                return Decimal(str(math.log(val)))
+            if fn == "exp":
+                return Decimal(str(math.exp(val)))
+            if fn == "floor":
+                return Decimal(str(math.floor(val)))
+            if fn == "ceil":
+                return Decimal(str(math.ceil(val)))
+            if fn == "round":
+                return Decimal(str(round(val)))
+        elif len(args) == 2 and fn == "round":
+            return Decimal(str(round(float(args[0]), int(args[1]))))
+        elif len(args) == 2 and fn == "log":
+            return Decimal(str(math.log(float(args[0]), float(args[1]))))
+        raise ValueError(f"unsupported function {fn}")
+    raise ValueError("unsupported arithmetic node")
 
 
 def _format_arithmetic_number(value: Decimal) -> str:
@@ -631,17 +686,50 @@ def _try_arithmetic_reply(
     if square_root_reply is not None:
         return square_root_reply
 
+    raw_text = reparar_unicode(str(text or "")).strip()
+    if not any(ch.isdigit() for ch in raw_text):
+        return None
+
+    # Normalizar símbolos y palabras matemáticas comunes antes del parseo
     normalized = (
-        reparar_unicode(str(text or ""))
+        raw_text.replace("multiplicado por", "*")
+        .replace("multiplied by", "*")
+        .replace("dividido entre", "/")
+        .replace("dividido por", "/")
+        .replace("divided by", "/")
+        .replace("por la", "*")
+        .replace("por el", "*")
+        .replace(" por ", " * ")
+        .replace(" times ", " * ")
+        .replace(" entre ", " / ")
+        .replace(" over ", " / ")
+        .replace(" mas ", " + ")
+        .replace(" más ", " + ")
+        .replace(" plus ", " + ")
+        .replace(" menos ", " - ")
+        .replace(" minus ", " - ")
         .replace("\u00d7", "*")
         .replace("\u00f7", "/")
+        .replace("^", "**")
+        .replace("π", "pi")
     )
+    # Reemplazar √X o √ X por sqrt(X)
+    normalized = re.sub(
+        r"√\s*(\d+(?:\.\d+)?|\([^)]+\))",
+        r"sqrt(\1)",
+        normalized,
+    )
+    normalized = normalized.replace("√", "sqrt").replace("∛", "cbrt")
+
     match = _ARITHMETIC_RE.search(normalized)
     if not match:
         return None
-    display_expression = re.sub(r"\s+", " ", match.group("expression")).strip()
+    display_expression = re.sub(r"\s+", " ", match.group("expression")).strip().rstrip(".")
+    if not any(op in display_expression for op in ["+", "-", "*", "/", "%", "**", "^", "sqrt", "cbrt", "sin", "cos", "tan", "log", "ln", "abs"]):
+        return None
+
     expression = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", display_expression)
-    if len(expression) > 100:
+    if len(expression) > 200:
         return None
     try:
         parsed = ast.parse(expression, mode="eval")
@@ -649,7 +737,7 @@ def _try_arithmetic_reply(
             context.prec = 28
             value = _evaluate_arithmetic_node(parsed)
         return f"{display_expression} = {_format_arithmetic_number(value)}."
-    except (ArithmeticError, InvalidOperation, SyntaxError, ValueError):
+    except (ArithmeticError, InvalidOperation, SyntaxError, ValueError, ZeroDivisionError, OverflowError):
         return None
 
 

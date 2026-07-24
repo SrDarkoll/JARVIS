@@ -68,6 +68,9 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
 
     _pid_activo = pid
     _pid_es_owner = _pid_activo == jarvis_state.DEFAULT_PROFILE_ID
+    from core.jarvis_config import resolve_runtime_features
+    if not resolve_runtime_features().allow_guest_mode:
+        _pid_es_owner = True
     _nombre_activo = bt["profile_administrator"] if _pid_es_owner else bt["profile_guest"]
     perfil_activo = f"{_nombre_activo} ({bt['profile_label']}: {_pid_activo})"
     try:

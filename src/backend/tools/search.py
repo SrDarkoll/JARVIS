@@ -141,15 +141,15 @@ def _buscar_en_brave(query: str) -> str:
                     if not results:
                         return f"Sin resultados para '{query_mod}' en la red."
                     res = []
-                    for it in results:
+                    for it in results[:5]:
                         title = _clean_search_field(it.get("title"))
                         description = _clean_search_field(it.get("description"))
-                        result_url = str(it.get("url") or "").strip()
                         if not title:
                             continue
-                        res.append(
-                            f"- {title}: {description} ({result_url})"
-                        )
+                        if description:
+                            res.append(f"- {title}: {description}")
+                        else:
+                            res.append(f"- {title}")
                     resultado = "\n".join(res)
                     return resultado
                 elif r.status_code == 429: # Rate limit

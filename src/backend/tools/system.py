@@ -217,3 +217,81 @@ def borrar_memoria() -> str:
     except Exception as e:
         services.log_event("memory_clear_db_error", error=str(e)[:200])
     return "Borrado total de bancos de memoria completado, Administrador."
+
+
+@tool
+def crear_archivo_texto(nombre_o_ruta: str, contenido: str) -> str:
+    """Crea o escribe un archivo de texto en el sistema (por ejemplo en el Escritorio, Documentos o ruta específica)."""
+    pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
+    if not verificar_autorizacion(pid):
+        return "ACCESO_DENEGADO: Requiere autorización del Administrador."
+
+    try:
+        path_norm = str(nombre_o_ruta or "").strip()
+        if not path_norm:
+            path_norm = "nota_jarvis.txt"
+
+        home = os.path.expanduser("~")
+        desktop = os.path.join(home, "Desktop")
+        if not os.path.exists(desktop):
+            desktop = os.path.join(home, "Escritorio")
+
+        if path_norm.lower().startswith("escritorio/") or path_norm.lower().startswith("desktop/"):
+            rel = re.sub(r"^(escritorio|desktop)[/\\]", "", path_norm, flags=re.IGNORECASE)
+            full_path = os.path.join(desktop, rel)
+        elif not os.path.isabs(path_norm):
+            full_path = os.path.join(desktop, path_norm)
+        else:
+            full_path = path_norm
+
+        os.makedirs(os.path.dirname(os.path.abspath(full_path)), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(contenido)
+
+        return f"Archivo creado exitosamente en '{full_path}'."
+    except Exception as e:
+        return f"Error al crear el archivo: {e}"
+
+
+@tool
+def ejecutar_comando_terminal(comando: str) -> str:
+    """Ejecuta un comando en la consola/terminal o PowerShell del sistema operativo (por ejemplo dir, mkdir, echo, scripts, etc.)."""
+    pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
+    if not verificar_autorizacion(pid):
+        return "ACCESO_DENEGADO: Requiere autorización del Administrador."
+
+    try:
+        cmd_str = str(comando or "").strip()
+        if not cmd_str:
+            return "Comando vacío."
+
+        if IS_WINDOWS:
+            proc = subprocess.run(
+                ["powershell", "-Command", cmd_str],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                shell=True,
+            )
+        else:
+            proc = subprocess.run(
+                cmd_str,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                shell=True,
+            )
+
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+
+        if proc.returncode == 0:
+            res = stdout if stdout else "Comando ejecutado con éxito."
+            return f"Salida:\n{res[:1000]}"
+        else:
+            err = stderr if stderr else stdout
+            return f"Comando finalizó con código {proc.returncode}:\n{err[:1000]}"
+    except subprocess.TimeoutExpired:
+        return "El comando superó el tiempo límite de ejecución (20s)."
+    except Exception as e:
+        return f"Error al ejecutar el comando: {e}"

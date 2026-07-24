@@ -186,6 +186,15 @@ def _debe_buscar_en_web(text: str) -> bool:
     if _contiene_frase(t_norm, social_local):
         return False
 
+    negation_patterns = [
+        r"\bno\s+(?:quiero|busques|busque|hagas|digas|muestres)\b",
+        r"\bno\s+que\s+busques\b",
+        r"\bdon't\s+search\b",
+        r"\bdo\s+not\s+search\b",
+    ]
+    if any(re.search(pat, t_norm) for pat in negation_patterns):
+        return False
+
     static_definition = bool(
         re.search(r"\b(?:what is|what are|que es|que son)\b", t_norm)
     )

@@ -534,3 +534,35 @@ def test_router_source_does_not_import_processor_or_invoke_tools():
 
     assert "core.brain.processor" not in source
     assert "_invocar_tool_wrapper" not in source
+
+
+def test_router_evaluates_complex_radical_math(monkeypatch):
+    from core.command_pipeline.deterministic import DeterministicPlanner
+    from core.command_pipeline.models import CommandRequest
+
+    monkeypatch.setattr(
+        "core.brain.tool_manager._invocar_tool_entry",
+        lambda *_args, **_kwargs: pytest.fail("math must stay local"),
+    )
+    request = CommandRequest.create(
+        text="√28 * 4 / 20 * 5 / 5 * 8 * 9 * 6 / 5 - 8 * 828.",
+        profile_id="admin",
+        channel="chat",
+        language="es",
+        request_id="math-radical-1",
+    )
+
+    plan = DeterministicPlanner().plan(request)
+
+    assert plan is not None
+    assert plan.steps == ()
+    assert "-6,532.56" in plan.direct_response
+
+
+def test_evaluar_expresion_matematica_tool():
+    from tools.utilities import evaluar_expresion_matematica
+
+    res = evaluar_expresion_matematica.invoke(
+        {"expresion": "√28 * 4 / 20 * 5 / 5 * 8 * 9 * 6 / 5 - 8 * 828."}
+    )
+    assert "-6532.56" in res
