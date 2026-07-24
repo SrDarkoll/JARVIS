@@ -72,6 +72,11 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                     duration = vr.get("lengthText", {}).get("simpleText", "")
                     views = vr.get("viewCountText", {}).get("simpleText", "")
 
+                    # Filter out short meme clips/shorts under 30s unless explicitly requested
+                    if duration and (duration.count(":") == 0 or (duration.startswith("0:") and int(duration.split(":")[1]) < 30)):
+                        if "short" not in clean_query.lower():
+                            continue
+
                     if vid_id and title:
                         from utils.jarvis_i18n import reparar_unicode
                         safe_title = reparar_unicode(title)
@@ -89,24 +94,6 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
         except Exception:
             pass
 
-    # Fallback to regex matching if JSON parsing yielded no items
-    if not candidates:
-        vids = re.findall(r"watch\?v=([a-zA-Z0-9_-]{11})", html)
-        titles = re.findall(r'"title":\{"runs":\[\{"text":"([^"]+)"\}', html)
-        channels = re.findall(r'"ownerText":\{"runs":\[\{"text":"([^"]+)"\}', html)
-        count = min(len(vids), len(titles))
-        for i in range(count):
-            candidates.append(
-                YouTubeCandidate(
-                    id=vids[i],
-                    title=titles[i],
-                    channel=channels[i] if i < len(channels) else "",
-                    duration="",
-                    views="",
-                    url=f"https://www.youtube.com/watch?v={vids[i]}",
-                )
-            )
-
     return candidates
 
 
@@ -117,9 +104,10 @@ def rank_best_match(query: str, candidates: list[YouTubeCandidate]) -> YouTubeCa
 
     query_lower = query.lower()
     q_words = set(re.findall(r"\w+", query_lower))
+    numbers_in_query = set(re.findall(r"\b\d+\b", query_lower))
 
     best_candidate = None
-    best_score = -1.0
+    best_score = -10.0
 
     for cand in candidates:
         cand_str = f"{cand.title} {cand.channel}".lower()
@@ -128,8 +116,17 @@ def rank_best_match(query: str, candidates: list[YouTubeCandidate]) -> YouTubeCa
         c_words = set(re.findall(r"\w+", cand_str))
         overlap = len(q_words & c_words) / max(1, len(q_words)) if q_words else 0.0
 
-        # Weighted score: 60% word overlap, 40% sequence similarity
-        score = (seq_ratio * 0.4) + (overlap * 0.6)
+        # Episode/Number match evaluation
+        cand_numbers = set(re.findall(r"\b\d+\b", cand_str))
+        number_bonus = 0.0
+        if numbers_in_query:
+            if numbers_in_query.issubset(cand_numbers):
+                number_bonus = 0.4
+            else:
+                number_bonus = -0.3
+
+        # Weighted score: word overlap (40%), sequence similarity (30%), number match (bonus/penalty)
+        score = (seq_ratio * 0.3) + (overlap * 0.4) + number_bonus
 
         if score > best_score:
             best_score = score
