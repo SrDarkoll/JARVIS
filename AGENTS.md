@@ -114,7 +114,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-574 passed, 1 skipped
+603 passed, 1 skipped in 48.01s
 ```
 
 Python syntax/import compilation:
@@ -192,6 +192,12 @@ Single command pipeline, exactly-once execution, and state isolation:
 
 ```powershell
 pytest tests\test_command_orchestrator.py tests\test_command_pipeline_e2e.py tests\test_processor_pipeline.py tests\test_tool_execution_service.py tests\test_tool_registry.py tests\test_memory_concurrency.py tests\test_voice_session_store.py -q
+```
+
+Reasoning policy, tool-free response synthesis, and deterministic corrections:
+
+```powershell
+pytest tests\test_reasoning_policy.py tests\test_groq_planner.py tests\test_response_synthesis.py tests\test_router.py tests\test_i18n_regressions.py -q
 ```
 
 Capabilities, setup, and runtime-path regressions:

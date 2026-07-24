@@ -189,16 +189,33 @@ mode. Installing APScheduler does not enable background jobs by itself.
 Chat, streaming chat, and voice commands use the same five-stage pipeline:
 
 1. normalize and understand the request;
-2. build one deterministic or Groq-generated action plan;
+2. build a deterministic candidate and let the configured reasoning policy
+   validate or replace it;
 3. validate every planned operation;
 4. execute each unique operation through one tool boundary;
-5. compose and persist one user-facing response.
+5. synthesize verified results with a tool-free model, then persist one
+   user-facing response.
 
 Routers and the Groq planner cannot execute tools. `ToolExecutionService` owns
 all side effects and deduplicates request/step identifiers, so retries cannot
 silently run the same planned action twice. `/api/status` exposes each major
 feature as `available`, `unconfigured`, `degraded`, `failed`, or `disabled`;
 missing optional integrations do not prevent stable core startup.
+
+`JARVIS_REASONING_MODE` controls the planning policy:
+
+- `always` (default): Groq reviews every deterministic candidate. Successful
+  tool results may use a second, tool-free Groq call to produce a concise
+  response suitable for TTS.
+- `hybrid`: deterministic commands use the lower-latency local path and Groq
+  handles only unresolved requests.
+- `offline`: Groq is never called. Supported local commands continue to work;
+  unresolved requests return a controlled clarification.
+
+In `always` mode, a Groq outage falls back to a valid deterministic candidate.
+It never converts an unplanned action into a claimed success. Blocked,
+unavailable, failed, and duplicate tool receipts bypass AI synthesis so their
+security and diagnostic messages remain exact.
 
 Strongly recommended before LAN access or shared-machine use:
 
@@ -218,6 +235,7 @@ Environment groups:
 | Group | Required? | Variables |
 | --- | --- | --- |
 | LLM core | Required for real chat | `GROQ_API_KEY` |
+| Reasoning policy | Optional; defaults to `always` | `JARVIS_REASONING_MODE` |
 | Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS` |
 | Spotify | Optional | `SPOTIFY_PLAYBACK_MODE`, `SPOTIFY_DESKTOP_START_TIMEOUT`, `SPOTIFY_DESKTOP_ACTION_TIMEOUT`, `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
 | Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
