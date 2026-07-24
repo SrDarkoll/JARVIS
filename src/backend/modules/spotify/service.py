@@ -191,16 +191,25 @@ def _spotify_control_desktop(action: str) -> str:
         )
 
     result = _get_desktop_controller().control(canonical)
+    messages = {
+        "pause": _spotify_text("Playback paused.", "Reproduccion pausada."),
+        "resume": _spotify_text("Playback resumed.", "Reproduccion reanudada."),
+        "next": _spotify_text("Next track.", "Siguiente cancion."),
+        "previous": _spotify_text("Previous track.", "Cancion anterior."),
+        "shuffle_on": _spotify_text("Shuffle enabled.", "Shuffle activado."),
+        "shuffle_off": _spotify_text("Shuffle disabled.", "Shuffle desactivado."),
+    }
     if result.status is DesktopResultStatus.SUCCESS:
-        messages = {
-            "pause": _spotify_text("Playback paused.", "Reproduccion pausada."),
-            "resume": _spotify_text("Playback resumed.", "Reproduccion reanudada."),
-            "next": _spotify_text("Next track.", "Siguiente cancion."),
-            "previous": _spotify_text("Previous track.", "Cancion anterior."),
-            "shuffle_on": _spotify_text("Shuffle enabled.", "Shuffle activado."),
-            "shuffle_off": _spotify_text("Shuffle disabled.", "Shuffle desactivado."),
-        }
         return messages[canonical]
+
+    # Windows Media Key Fallback when desktop UI automation is unavailable
+    if result.status is DesktopResultStatus.UNAVAILABLE:
+        try:
+            from modules.spotify.desktop.windows import send_media_key_event
+            if send_media_key_event(canonical) and canonical in messages:
+                return messages[canonical]
+        except Exception:
+            pass
     if result.message_key == "spotify_focus_lost":
         return _spotify_text(
             "Spotify lost focus before I could safely complete that action.",

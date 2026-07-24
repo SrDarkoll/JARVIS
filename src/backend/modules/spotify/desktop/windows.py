@@ -573,3 +573,22 @@ class SpotifyUIAutomationAdapter:
             if title.strip() and artist.strip():
                 return title.strip(), artist.strip()
         return None
+
+
+def send_media_key_event(action: str) -> bool:
+    """Envia una tecla de medios nativa de Windows (play/pause, next, prev) independientemente del foco."""
+    if not IS_WINDOWS:
+        return False
+    user32 = ctypes.windll.user32
+    key_map = {
+        "pause": 0xB3,
+        "resume": 0xB3,
+        "next": 0xB0,
+        "previous": 0xB1,
+    }
+    vk_code = key_map.get(str(action or "").lower())
+    if not vk_code:
+        return False
+    user32.keybd_event(vk_code, 0, 0, 0)
+    user32.keybd_event(vk_code, 0, 2, 0)
+    return True
