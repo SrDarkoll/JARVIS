@@ -337,19 +337,19 @@ def _extract_music_request(text: str) -> str:
     )
 
     play_patterns = [
-        r"^(?:pon|ponme|reproduce|play|toca)\s+(.+)$",
+        r"^(?:pon|ponme|reproduce|play|toca|open|show)\s+(.+)$",
         r"^(?:reproducir|reproduzcas)\s+(.+)$",
         r"^(?:no,?\s+)?(?:es|es la de|es el tema|es la cancion|es un video de|es el video de|me refiero a|hablo de)\s+(.+)$",
         r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar|escuchemos)?\s*(.+)$",
         r"^(?:put\s+on|put)\s+(.+)$",
         r"\b(?:puedes\s+(?:reproducir|poner|tocar)|"
         r"puedes\s+que\s+(?:reproduzcas|pongas)|"
-        r"can\s+you\s+(?:play|put(?:\s+on)?))\s+(.+)$",
-        r"\b(?:i\s+(?:want|need)\s+(?:you\s+to\s+)?(?:play|put(?:\s+on)?)|"
+        r"can\s+(?:you\s+)?(?:play|reproduce|put(?:\s+on)?|open|show|start|launch))\s+(.+)$",
+        r"\b(?:i\s+(?:want|need)\s+(?:you\s+to\s+)?(?:play|reproduce|put(?:\s+on)?|open|show)|"
         r"quiero\s+(?:que\s+)?(?:pongas|reproduzcas|escuchar)|"
         r"necesito\s+(?:que\s+)?(?:pongas|reproduzcas))\s+(.+)$",
         r"\b(?:(?:can|could)\s+you|you\s+can)?\s*"
-        r"(?:sing|play)\s+(?:to\s+)?me\s+(.+)$",
+        r"(?:sing|play|reproduce)\s+(?:to\s+)?me\s+(.+)$",
         r"\b(?:canta|cantame|c.ntame)\s+(.+)$",
     ]
     for pattern in play_patterns:
