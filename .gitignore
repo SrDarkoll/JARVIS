@@ -93,11 +93,13 @@ src/backend/.cache-jarvis/
 desktop_session.json
 WebView2/
 
-# IDEs
+# IDEs & Agent Skills / Assistant files
 .vscode/
 .idea/
-.claude/settings.local.json
-.claude/*.local.json
+.agents/
+.claude/
+.gemini/
+skills-lock.json
 *.swp
 *.swo
 
