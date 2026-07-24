@@ -527,6 +527,14 @@ def get_status_full():
     except Exception:
         pass
 
+    if _services.weather_cache.get("temp") == "--" or "Sincronizando" in str(_services.weather_cache.get("desc", "")):
+        try:
+            import threading
+            from tools.utilities import _auto_init_weather
+            threading.Thread(target=_auto_init_weather, daemon=True).start()
+        except Exception:
+            pass
+
     payload = {
         "status": "online",
         "llm_ok": llm_ok,

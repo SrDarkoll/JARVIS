@@ -102,7 +102,58 @@ def _mapear_weather_code_openmeteo(code: int, lang: str = "es") -> str:
     return tabla.get(int(code), default_desc)
 
 
+_DETECTED_IP_GEO = None
+
+
+def _auto_detect_ip_location() -> dict | None:
+    """Detecta automáticamente la ciudad y coordenadas del usuario vía IP pública."""
+    global _DETECTED_IP_GEO
+    if _DETECTED_IP_GEO is not None:
+        return _DETECTED_IP_GEO
+
+    providers = [
+        "http://ip-api.com/json/",
+        "https://ipapi.co/json/",
+    ]
+    for url in providers:
+        try:
+            r = http_requests.get(url, timeout=3)
+            if r.status_code == 200:
+                data = r.json() or {}
+                city = data.get("city") or data.get("region")
+                lat = data.get("lat") or data.get("latitude")
+                lon = data.get("lon") or data.get("longitude")
+                country = data.get("country_name") or data.get("country")
+                if lat and lon:
+                    _DETECTED_IP_GEO = {
+                        "city": str(city or ""),
+                        "lat": str(lat),
+                        "lon": str(lon),
+                        "country": str(country or ""),
+                    }
+                    return _DETECTED_IP_GEO
+        except Exception:
+            pass
+    return None
+
+
+def _auto_init_weather() -> None:
+    """Inicializa automáticamente el clima local por IP al arrancar la app."""
+    try:
+        geo = _auto_detect_ip_location()
+        city = geo.get("city") if geo else None
+        desc, temp = _obtener_clima_logic(ciudad=city)
+        if services.weather_cache and geo and geo.get("city") and desc and desc != "Sincronizando...":
+            if not str(services.weather_cache.get("desc", "")).startswith(geo["city"]):
+                services.weather_cache["desc"] = f"{geo['city']} ({desc})"
+    except Exception as e:
+        _warn_once("auto_weather_init", f"Auto weather init error: {e}")
+
+
 def _get_default_location() -> str:
+    geo = _auto_detect_ip_location()
+    if geo and geo.get("city"):
+        return geo["city"]
     return get_default_location()
 
 
@@ -111,6 +162,13 @@ def _resolve_openmeteo_coords(
     *,
     use_configured_coordinates: bool,
 ) -> tuple[str, str] | None:
+    geo = _auto_detect_ip_location()
+    loc = str(location or "").strip().lower()
+
+    if geo and geo.get("lat") and geo.get("lon"):
+        if not loc or loc == get_default_location().lower() or (geo.get("city") and loc == geo["city"].lower()):
+            return geo["lat"], geo["lon"]
+
     if use_configured_coordinates:
         env_lat = (os.getenv("JARVIS_DEFAULT_LAT") or "").strip()
         env_lon = (os.getenv("JARVIS_DEFAULT_LON") or "").strip()
