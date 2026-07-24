@@ -317,6 +317,7 @@ def _clean_music_query(value: str) -> str:
         flags=re.IGNORECASE,
     )
     q = re.sub(r"\s+", " ", q).strip(" \t\r\n,.;:!?")
+    q = re.sub(r"\b6\s+a\s+m\b", "6 AM", q, flags=re.IGNORECASE)
     if q in {"music", "musica", "song", "a song", "algo", "something", "like"}:
         return ""
     return q
@@ -332,7 +333,7 @@ def _extract_music_request(text: str) -> str:
         r"called|named|se\s+llama|llamada|llamado|nombre\s+es)\s+(.+)$"
     )
     if "spotify" in raw or any(
-        k in raw for k in ["play", "reproduce", "pon", "toca", "put"]
+        k in raw for k in ["play", "reproduce", "pon", "toca", "put", "es "]
     ):
         match = re.search(name_pattern, raw, flags=re.IGNORECASE)
         if match:
@@ -343,6 +344,8 @@ def _extract_music_request(text: str) -> str:
     play_patterns = [
         r"^(?:pon|ponme|reproduce|play|toca)\s+(.+)$",
         r"^(?:reproducir|reproduzcas)\s+(.+)$",
+        r"^(?:es|es la de|es el tema|es la cancion)\s+(.+)$",
+        r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar)\s+(.+)$",
         r"^(?:put\s+on|put)\s+(.+)$",
         r"\b(?:puedes\s+(?:reproducir|poner|tocar)|"
         r"puedes\s+que\s+(?:reproduzcas|pongas)|"
