@@ -790,10 +790,7 @@ def _spotify_followup_plan(request: CommandRequest) -> ActionPlan | None:
         return None
 
     from modules.spotify.desktop.models import SpotifyCandidate
-    from modules.spotify.followup import (
-        PendingSpotifySelections,
-        SpotifySelectionStatus,
-    )
+    from modules.spotify.followup import SpotifySelectionStatus
 
     candidates: list[SpotifyCandidate] = []
     for index, item in enumerate(raw_choices[:3], start=1):
