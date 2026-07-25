@@ -16,9 +16,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND = os.path.join(ROOT, "src", "backend")
 
 
-def _make_test_wav(
-    duration_s: float = 1.0, sample_rate: int = 16000, amplitude: int = 400
-) -> bytes:
+def _make_test_wav(duration_s: float = 1.0, sample_rate: int = 16000, amplitude: int = 400) -> bytes:
     total_frames = max(int(duration_s * sample_rate), 1)
     frame = struct.pack("<h", amplitude)
     with io.BytesIO() as buf:
@@ -815,7 +813,7 @@ def test_chat_returns_503_when_llm_is_unconfigured(monkeypatch):
     assert response.status_code == 503
     assert response.get_json() == {
         "error": "llm_unconfigured",
-        "message": "Configure GROQ_API_KEY to enable AI responses.",
+        "message": ("Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses."),
     }
 
 
@@ -896,7 +894,7 @@ def test_chat_stream_reports_unconfigured_llm(monkeypatch):
 
     assert response.status_code == 200
     assert '"code": "llm_unconfigured"' in body
-    assert "Configure GROQ_API_KEY to enable AI responses." in body
+    assert ("Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses.") in body
 
 
 def test_chat_stream_hides_internal_exception_text(monkeypatch, capsys):
@@ -1018,6 +1016,7 @@ def test_processor_direct_failure_raises_sanitized_service_error(monkeypatch, ca
     assert "provider-secret-response" not in str(exc_info.value)
     assert "provider-secret-response" not in captured.out + captured.err
 
+
 def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
     from core.brain import brain_state, processor
 
@@ -1047,6 +1046,7 @@ def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
         "message": "The AI service is temporarily unavailable.",
     }
     assert "upstream-secret-response" not in captured.out + captured.err
+
 
 def test_chat_rejects_empty_message():
     import jarvis_backend  # pyright: ignore[reportMissingImports]
@@ -1296,9 +1296,7 @@ def test_memory_rag_store():
     from engines import memory_rag  # pyright: ignore[reportMissingImports]
 
     # agregar_interaccion uses 'profile_id' not 'perfil'
-    memory_rag.rag_motor.agregar_interaccion(
-        "test entry smoke", "response smoke", profile_id="test_profile"
-    )
+    memory_rag.rag_motor.agregar_interaccion("test entry smoke", "response smoke", profile_id="test_profile")
     # FAISS may not be initialized in test env, so buscar_contexto may return empty string
     results = memory_rag.rag_motor.buscar_contexto("test entry smoke", top_k=1)
     assert isinstance(results, str)
@@ -1391,9 +1389,7 @@ def test_reminder_crud():
 
     # Add a reminder
     when = datetime.now() + timedelta(minutes=30)
-    jarvis_state._recordatorios.append(
-        {"texto": "test reminder smoke", "cuando": when, "profile_id": "test"}
-    )
+    jarvis_state._recordatorios.append({"texto": "test reminder smoke", "cuando": when, "profile_id": "test"})
 
     reminders = jarvis_state._recordatorios
     assert any(r["texto"] == "test reminder smoke" for r in reminders)

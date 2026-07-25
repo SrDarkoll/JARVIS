@@ -27,12 +27,8 @@ def test_spotify_api_mode_requires_client_credentials():
 
 
 def test_spotify_auto_mode_uses_whichever_backend_is_available():
-    assert _status({"SPOTIFY_PLAYBACK_MODE": "auto"})["items"]["spotify"][
-        "configured"
-    ]
-    assert not _status(
-        {"SPOTIFY_PLAYBACK_MODE": "auto"}, platform_name="linux"
-    )["items"]["spotify"]["configured"]
+    assert _status({"SPOTIFY_PLAYBACK_MODE": "auto"})["items"]["spotify"]["configured"]
+    assert not _status({"SPOTIFY_PLAYBACK_MODE": "auto"}, platform_name="linux")["items"]["spotify"]["configured"]
     assert _status(
         {
             "SPOTIFY_PLAYBACK_MODE": "auto",
@@ -70,7 +66,7 @@ def test_core_mode_does_not_require_optional_voice_or_api_token():
     assert status["complete"] is True
 
 
-def test_missing_groq_key_keeps_functional_setup_incomplete():
+def test_missing_llm_key_keeps_functional_setup_incomplete():
     status = build_setup_status(
         env={"JARVIS_CORE_MODE": "true"},
         language="en",
@@ -81,11 +77,11 @@ def test_missing_groq_key_keeps_functional_setup_incomplete():
 
     assert status["items"]["llm"]["configured"] is False
     assert status["items"]["llm"]["state"] == "unconfigured"
-    assert status["items"]["llm"]["code"] == "groq_key_missing"
+    assert status["items"]["llm"]["code"] == "llm_key_missing"
     assert status["complete"] is False
 
 
-def test_full_mode_requires_admin_voice_enrollment():
+def test_full_mode_keeps_admin_voice_enrollment_disabled_by_default():
     status = build_setup_status(
         env={
             "JARVIS_CORE_MODE": "false",
@@ -97,9 +93,38 @@ def test_full_mode_requires_admin_voice_enrollment():
         platform_name="win32",
     )
 
-    assert status["items"]["admin_voice"]["optional"] is False
-    assert status["items"]["admin_voice"]["code"] == "admin_voice_missing"
-    assert status["complete"] is False
+    assert status["items"]["admin_voice"]["optional"] is True
+    assert status["items"]["admin_voice"]["code"] == "voice_id_disabled"
+    assert status["complete"] is True
+
+
+def test_gemini_only_configuration_is_valid():
+    status = _status(
+        {
+            "GEMINI_API_KEY": "configured",
+            "JARVIS_LLM_PROVIDER": "gemini",
+        }
+    )
+
+    llm = status["items"]["llm"]
+    assert llm["configured"] is True
+    assert llm["code"] == "gemini_configured"
+    assert llm["primary_provider"] == "gemini"
+    assert llm["fallback_provider"] == ""
+
+
+def test_default_provider_uses_gemini_primary_and_groq_fallback():
+    status = _status(
+        {
+            "GEMINI_API_KEY": "gemini-key",
+            "GROQ_API_KEY": "groq-key",
+        }
+    )
+
+    llm = status["items"]["llm"]
+    assert llm["configured"] is True
+    assert llm["primary_provider"] == "gemini"
+    assert llm["fallback_provider"] == "groq"
 
 
 def test_unconfigured_setup_items_use_matching_diagnostic_codes():
@@ -115,8 +140,6 @@ def test_unconfigured_setup_items_use_matching_diagnostic_codes():
     )
 
     assert status["items"]["language"]["code"] == "language_missing"
-    assert status["items"]["admin_voice"]["code"] == "admin_voice_missing"
+    assert status["items"]["admin_voice"]["code"] == "voice_id_disabled"
     assert status["items"]["telegram"]["code"] == "telegram_unconfigured"
-    assert status["items"]["weather_location"]["code"] == (
-        "weather_location_missing"
-    )
+    assert status["items"]["weather_location"]["code"] == ("weather_location_missing")

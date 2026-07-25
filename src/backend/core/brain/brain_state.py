@@ -23,6 +23,8 @@ llm: Any = None
 llm_vision: Any = None
 llm_fallback: Any = None
 llm_with_tools: Any = None
+llm_primary_provider = ""
+llm_fallback_provider = ""
 
 # Tool Registry
 tools_list: list = []
@@ -31,11 +33,11 @@ _BASE_TOOLS: list = []
 tool_registry = ToolRegistryService()
 
 
-def get_tooling_snapshot(
-) -> tuple[Any, Any, ToolRegistrySnapshot]:
+def get_tooling_snapshot() -> tuple[Any, Any, ToolRegistrySnapshot]:
     """Return a coherent model and tool registry view."""
     with PLUGIN_LOCK:
         return llm_with_tools, llm, tool_registry.snapshot()
+
 
 # Plugin Management
 PLUGIN_STATE: dict[str, Any] = {

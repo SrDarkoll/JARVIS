@@ -1,5 +1,3 @@
-import ast
-import math
 import re
 import unicodedata
 from collections.abc import Mapping
@@ -25,6 +23,11 @@ from core.command_pipeline.models import (
 )
 from core.jarvis_observability import obs_inc
 from utils.jarvis_i18n import get_current_language
+from utils.math_expression import (
+    evaluate_math_expression,
+    format_math_number as _format_arithmetic_number,
+    normalize_math_expression,
+)
 from utils.jarvis_text import reparar_unicode
 
 _ROUTER_WEB_DIRECTO = {
@@ -230,9 +233,7 @@ def _extract_weather_city(text: str, default_city: str | None = None) -> str:
             match.group(1),
         )
         candidate = re.sub(r"\s+", " ", candidate).strip(" ,.-")
-        candidate = re.sub(
-            r"^(?:in|at|for|en|de|del|para)\s+", "", candidate
-        ).strip(" ,.-")
+        candidate = re.sub(r"^(?:in|at|for|en|de|del|para)\s+", "", candidate).strip(" ,.-")
         region = re.sub(
             r"^(?:el|la|los|las|the)\s+",
             "",
@@ -247,15 +248,56 @@ def _extract_weather_city(text: str, default_city: str | None = None) -> str:
 
 def _has_actionable_marker(t_ascii: str) -> bool:
     markers = [
-        "clima", "temperatura", "pronostico", "weather", "temperature", "forecast",
-        "nba", "basket", "basketball", "partido", "partidos", "score", "scores",
-        "game", "games", "playing", "resultado", "marcador",
-        "pon ", "ponme", "reproduce", "play", "toca", "put ", "spotify",
-        "musica", "music", "song", "cancion",
-        "busca", "buscar", "search", "consulta", "internet", "web",
-        "abre", "abrir", "open", "navega", "ve a",
-        "volumen", "volume", "pausa", "reanuda", "siguiente", "anterior",
-        "apaga", "reinicia", "hiberna", "bloquea",
+        "clima",
+        "temperatura",
+        "pronostico",
+        "weather",
+        "temperature",
+        "forecast",
+        "nba",
+        "basket",
+        "basketball",
+        "partido",
+        "partidos",
+        "score",
+        "scores",
+        "game",
+        "games",
+        "playing",
+        "resultado",
+        "marcador",
+        "pon ",
+        "ponme",
+        "reproduce",
+        "play",
+        "toca",
+        "put ",
+        "spotify",
+        "musica",
+        "music",
+        "song",
+        "cancion",
+        "busca",
+        "buscar",
+        "search",
+        "consulta",
+        "internet",
+        "web",
+        "abre",
+        "abrir",
+        "open",
+        "navega",
+        "ve a",
+        "volumen",
+        "volume",
+        "pausa",
+        "reanuda",
+        "siguiente",
+        "anterior",
+        "apaga",
+        "reinicia",
+        "hiberna",
+        "bloquea",
     ]
     return any(marker in t_ascii for marker in markers)
 
@@ -453,15 +495,9 @@ def _compound_clarification(
 ) -> ActionPlan:
     missing = "; ".join(unhandled)
     if _language_is_english(request.language):
-        response = (
-            f"I could not understand this part: {missing}. "
-            "Please rephrase it before I run any action."
-        )
+        response = f"I could not understand this part: {missing}. Please rephrase it before I run any action."
     else:
-        response = (
-            f"No pude entender esta parte: {missing}. "
-            "Reformulela antes de que ejecute alguna accion."
-        )
+        response = f"No pude entender esta parte: {missing}. Reformulela antes de que ejecute alguna accion."
     return _direct_plan(request, response, should_listen=True)
 
 
@@ -501,8 +537,7 @@ def _plan_compound(request: CommandRequest) -> ActionPlan | None:
         )
     if collected_steps:
         stable_steps = tuple(
-            replace(step, step_id=f"step-{index}")
-            for index, step in enumerate(collected_steps, start=1)
+            replace(step, step_id=f"step-{index}") for index, step in enumerate(collected_steps, start=1)
         )
         return ActionPlan(
             request_id=request.request_id,
@@ -528,103 +563,6 @@ _SQUARE_ROOT_RE = re.compile(
 )
 
 
-def _evaluate_arithmetic_node(node: ast.AST) -> Decimal:
-    if isinstance(node, ast.Expression):
-        return _evaluate_arithmetic_node(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return Decimal(str(node.value))
-    if isinstance(node, ast.Name):
-        var = node.id.lower()
-        if var in ("pi", "π"):
-            return Decimal(str(math.pi))
-        if var == "e":
-            return Decimal(str(math.e))
-        if var == "tau":
-            return Decimal(str(math.tau))
-        raise ValueError(f"unsupported variable {node.id}")
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        value = _evaluate_arithmetic_node(node.operand)
-        return value if isinstance(node.op, ast.UAdd) else -value
-    if isinstance(node, ast.BinOp):
-        left = _evaluate_arithmetic_node(node.left)
-        right = _evaluate_arithmetic_node(node.right)
-        if isinstance(node.op, ast.Add):
-            return left + right
-        if isinstance(node.op, ast.Sub):
-            return left - right
-        if isinstance(node.op, ast.Mult):
-            return left * right
-        if isinstance(node.op, ast.Div):
-            if right == 0:
-                raise ZeroDivisionError("division by zero")
-            return left / right
-        if isinstance(node.op, ast.FloorDiv):
-            if right == 0:
-                raise ZeroDivisionError("division by zero")
-            return left // right
-        if isinstance(node.op, ast.Mod):
-            return left % right
-        if isinstance(node.op, ast.Pow):
-            if abs(right) > 100:
-                raise ValueError("unsafe exponent")
-            if right == right.to_integral_value():
-                return left ** int(right)
-            return Decimal(str(float(left) ** float(right)))
-        raise ValueError("unsupported arithmetic operator")
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        fn = node.func.id.lower()
-        args = [_evaluate_arithmetic_node(arg) for arg in node.args]
-        if len(args) == 1:
-            val = float(args[0])
-            if fn in ("sqrt", "raiz"):
-                if val < 0:
-                    raise ValueError("negative sqrt")
-                return Decimal(str(math.sqrt(val)))
-            if fn == "cbrt":
-                return Decimal(str(math.cbrt(val)))
-            if fn == "abs":
-                return abs(args[0])
-            if fn == "sin":
-                return Decimal(str(math.sin(val)))
-            if fn == "cos":
-                return Decimal(str(math.cos(val)))
-            if fn == "tan":
-                return Decimal(str(math.tan(val)))
-            if fn == "log":
-                if val <= 0:
-                    raise ValueError("invalid log arg")
-                return Decimal(str(math.log10(val)))
-            if fn == "ln":
-                if val <= 0:
-                    raise ValueError("invalid ln arg")
-                return Decimal(str(math.log(val)))
-            if fn == "exp":
-                return Decimal(str(math.exp(val)))
-            if fn == "floor":
-                return Decimal(str(math.floor(val)))
-            if fn == "ceil":
-                return Decimal(str(math.ceil(val)))
-            if fn == "round":
-                return Decimal(str(round(val)))
-        elif len(args) == 2 and fn == "round":
-            return Decimal(str(round(float(args[0]), int(args[1]))))
-        elif len(args) == 2 and fn == "log":
-            return Decimal(str(math.log(float(args[0]), float(args[1]))))
-        raise ValueError(f"unsupported function {fn}")
-    raise ValueError("unsupported arithmetic node")
-
-
-def _format_arithmetic_number(value: Decimal) -> str:
-    if not value.is_finite():
-        raise ValueError("non-finite arithmetic result")
-    if value == value.to_integral_value():
-        return f"{int(value):,}"
-    rendered = format(value.normalize(), "f").rstrip("0").rstrip(".")
-    integer, dot, fraction = rendered.partition(".")
-    integer = f"{int(integer):,}"
-    return integer + (dot + fraction if fraction else "")
-
-
 def _try_square_root_reply(
     text: str,
     language: str | None = None,
@@ -638,11 +576,7 @@ def _try_square_root_reply(
     number = display_number
     if "," in number and "." not in number:
         integer, fraction = number.rsplit(",", 1)
-        number = (
-            integer + fraction
-            if len(fraction) == 3
-            else integer + "." + fraction
-        )
+        number = integer + fraction if len(fraction) == 3 else integer + "." + fraction
     else:
         number = number.replace(",", "")
 
@@ -665,15 +599,9 @@ def _try_square_root_reply(
 
     if _language_is_english(language):
         qualifier = "approximately " if approximate else ""
-        return (
-            f"The square root of {display_number} is "
-            f"{qualifier}{rendered}."
-        )
+        return f"The square root of {display_number} is {qualifier}{rendered}."
     qualifier = "aproximadamente " if approximate else ""
-    return (
-        f"La raiz cuadrada de {display_number} es "
-        f"{qualifier}{rendered}."
-    )
+    return f"La raiz cuadrada de {display_number} es {qualifier}{rendered}."
 
 
 def _try_arithmetic_reply(
@@ -688,52 +616,23 @@ def _try_arithmetic_reply(
     if not any(ch.isdigit() for ch in raw_text):
         return None
 
-    # Normalizar símbolos y palabras matemáticas comunes antes del parseo
-    normalized = (
-        raw_text.replace("multiplicado por", "*")
-        .replace("multiplied by", "*")
-        .replace("dividido entre", "/")
-        .replace("dividido por", "/")
-        .replace("divided by", "/")
-        .replace("por la", "*")
-        .replace("por el", "*")
-        .replace(" por ", " * ")
-        .replace(" times ", " * ")
-        .replace(" entre ", " / ")
-        .replace(" over ", " / ")
-        .replace(" mas ", " + ")
-        .replace(" más ", " + ")
-        .replace(" plus ", " + ")
-        .replace(" menos ", " - ")
-        .replace(" minus ", " - ")
-        .replace("\u00d7", "*")
-        .replace("\u00f7", "/")
-        .replace("^", "**")
-        .replace("π", "pi")
-    )
-    # Reemplazar √X o √ X por sqrt(X)
-    normalized = re.sub(
-        r"√\s*(\d+(?:\.\d+)?|\([^)]+\))",
-        r"sqrt(\1)",
-        normalized,
-    )
-    normalized = normalized.replace("√", "sqrt").replace("∛", "cbrt")
+    normalized = normalize_math_expression(raw_text)
 
     match = _ARITHMETIC_RE.search(normalized)
     if not match:
         return None
     display_expression = re.sub(r"\s+", " ", match.group("expression")).strip().rstrip(".")
-    if not any(op in display_expression for op in ["+", "-", "*", "/", "%", "**", "^", "sqrt", "cbrt", "sin", "cos", "tan", "log", "ln", "abs"]):
+    if not any(
+        op in display_expression
+        for op in ["+", "-", "*", "/", "%", "**", "^", "sqrt", "cbrt", "sin", "cos", "tan", "log", "ln", "abs"]
+    ):
         return None
 
     expression = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", display_expression)
     if len(expression) > 200:
         return None
     try:
-        parsed = ast.parse(expression, mode="eval")
-        with localcontext() as context:
-            context.prec = 28
-            value = _evaluate_arithmetic_node(parsed)
+        value = evaluate_math_expression(expression)
         return f"{display_expression} = {_format_arithmetic_number(value)}."
     except (ArithmeticError, InvalidOperation, SyntaxError, ValueError, ZeroDivisionError, OverflowError):
         return None
@@ -741,9 +640,7 @@ def _try_arithmetic_reply(
 
 def _extraer_objetivo_apertura(texto: str) -> tuple[str, bool]:
     raw = reparar_unicode(str(texto or ""))
-    normalized = "".join(
-        ch for ch in unicodedata.normalize("NFKD", raw) if not unicodedata.combining(ch)
-    )
+    normalized = "".join(ch for ch in unicodedata.normalize("NFKD", raw) if not unicodedata.combining(ch))
     normalized = re.sub(r"\s+", " ", normalized).strip().lower()
     m_open = re.match(r"^(?:abre|abrir|abras|abraz|inicia|ejecuta|lanza)[\s,.:;-]+(.+)$", normalized)
     if not m_open:
@@ -752,9 +649,7 @@ def _extraer_objetivo_apertura(texto: str) -> tuple[str, bool]:
     objetivo = re.sub(r"\s+en\s+el\s+navegador$", "", objetivo).strip()
     objetivo = re.sub(r"\s+en\s+navegador$", "", objetivo).strip()
     objetivo = re.sub(r"\s+en\s+internet$", "", objetivo).strip()
-    objetivo_sin_pref = re.sub(
-        r"^(?:la|el|una|un)?\s*(?:aplic\w*|app|programa)\s+", "", objetivo
-    ).strip()
+    objetivo_sin_pref = re.sub(r"^(?:la|el|una|un)?\s*(?:aplic\w*|app|programa)\s+", "", objetivo).strip()
     if not objetivo_sin_pref:
         objetivo_sin_pref = re.sub(r"^(?:el|la|un|una)\s+", "", objetivo).strip()
     return objetivo_sin_pref or objetivo, objetivo_sin_pref != objetivo
@@ -770,10 +665,7 @@ def _sports_arguments(t_ascii: str) -> dict[str, str]:
         sport, league = "football", "nfl"
     elif any(key in t_ascii for key in ["mlb", "baseball", "beisbol"]):
         sport, league = "baseball", "mlb"
-    elif any(
-        key in t_ascii
-        for key in ["champions", "premier", "liga", "futbol", "soccer"]
-    ):
+    elif any(key in t_ascii for key in ["champions", "premier", "liga", "futbol", "soccer"]):
         sport = "soccer"
         if "champions" in t_ascii:
             league = "uefa.champions"
@@ -810,6 +702,7 @@ def _spotify_followup_plan(request: CommandRequest) -> ActionPlan | None:
             )
         )
     from modules.spotify.followup import pending_spotify_selections
+
     if candidates:
         pending_spotify_selections.remember(request.profile_id, candidates)
 
@@ -830,15 +723,12 @@ def _spotify_followup_plan(request: CommandRequest) -> ActionPlan | None:
         return _direct_plan(request, response)
     if resolution.status is SpotifySelectionStatus.CLARIFY:
         choices = "; ".join(
-            f"{index}: {item.title} de {item.artist}"
-            for index, item in enumerate(resolution.choices, start=1)
+            f"{index}: {item.title} de {item.artist}" for index, item in enumerate(resolution.choices, start=1)
         )
         response = (
-            "I could not identify the selection. "
-            f"Say first, second, or the title: {choices}. Which one?"
+            f"I could not identify the selection. Say first, second, or the title: {choices}. Which one?"
             if _language_is_english(request.language)
-            else "No pude identificar la seleccion. "
-            f"Di primera, segunda o el titulo: {choices}. Cual?"
+            else f"No pude identificar la seleccion. Di primera, segunda o el titulo: {choices}. Cual?"
         )
         return _direct_plan(request, response, should_listen=True)
 
@@ -953,9 +843,7 @@ def plan_hybrid(
         "how is it going",
         "how are you doing",
     ]
-    if any(key in text_ascii for key in status_markers) and not _has_actionable_marker(
-        text_ascii
-    ):
+    if any(key in text_ascii for key in status_markers) and not _has_actionable_marker(text_ascii):
         is_admin = request.profile_id == jarvis_state.DEFAULT_PROFILE_ID
         if _language_is_english(request.language):
             response = (
@@ -1058,19 +946,14 @@ def plan_hybrid(
         "games",
         "playing",
     ]
-    if any(key in text_ascii for key in sports_markers) and any(
-        key in text_ascii for key in sports_intent_markers
-    ):
+    if any(key in text_ascii for key in sports_markers) and any(key in text_ascii for key in sports_intent_markers):
         return _tool_plan(
             request,
             "obtener_deportes_espn",
             _sports_arguments(text_ascii),
         )
 
-    is_reminder = any(
-        key in text_ascii
-        for key in ["recuerdame", "recordatorio", "remind me", "reminder"]
-    )
+    is_reminder = any(key in text_ascii for key in ["recuerdame", "recordatorio", "remind me", "reminder"])
     cancel_markers = [
         "cancela apagado",
         "cancelar apagado",
@@ -1106,18 +989,21 @@ def plan_hybrid(
 
     song = _extract_music_request(text)
     if song:
-        is_youtube = any(
-            k in text
-            for k in [
-                "youtube",
-                "video",
-                "canal",
-                "creador",
-                "yt",
-                "vdeo",
-                "bideo",
-            ]
-        ) or request.metadata.get("last_media_source") == "youtube"
+        is_youtube = (
+            any(
+                k in text
+                for k in [
+                    "youtube",
+                    "video",
+                    "canal",
+                    "creador",
+                    "yt",
+                    "vdeo",
+                    "bideo",
+                ]
+            )
+            or request.metadata.get("last_media_source") == "youtube"
+        )
         if is_youtube:
             return _tool_plan(
                 request,
@@ -1187,9 +1073,7 @@ def plan_hybrid(
             if not city:
                 return _weather_clarification(request)
             return _tool_plan(request, "obtener_clima", {"ciudad": city})
-        if any(key in text_ascii for key in sports_markers) or any(
-            key in text_ascii for key in sports_intent_markers
-        ):
+        if any(key in text_ascii for key in sports_markers) or any(key in text_ascii for key in sports_intent_markers):
             return _tool_plan(
                 request,
                 "obtener_deportes_espn",
@@ -1225,10 +1109,7 @@ def plan_hybrid(
     ]
     if any(key in text for key in routine_markers):
         routine = "trabajo"
-        if any(
-            key in text
-            for key in ["gaming", "game", "gamer", "juego", "jugar"]
-        ):
+        if any(key in text for key in ["gaming", "game", "gamer", "juego", "jugar"]):
             routine = "gaming"
         elif any(key in text for key in ["buenos dias", "buen dia"]):
             routine = "buenos dias"
@@ -1255,12 +1136,10 @@ def plan_hybrid(
         "spotify",
         "chatgpt",
     }
-    tech_definition = any(
-        f"es {entity}" in text for entity in tech_entities
+    tech_definition = any(f"es {entity}" in text for entity in tech_entities)
+    tech_behavior = any(key in text for key in ["funcion", "funciona", "funcionar"]) and any(
+        entity in text for entity in tech_entities
     )
-    tech_behavior = any(
-        key in text for key in ["funcion", "funciona", "funcionar"]
-    ) and any(entity in text for entity in tech_entities)
     if tech_definition or tech_behavior:
         return _tool_plan(
             request,
@@ -1278,11 +1157,7 @@ def plan_hybrid(
         r"(?:jarvis\s+)?(?:stop|para)(?:\s+(?:please|por favor))?",
         text_ascii,
     ):
-        response = (
-            "No action taken."
-            if _language_is_english(request.language)
-            else "No ejecute ninguna accion."
-        )
+        response = "No action taken." if _language_is_english(request.language) else "No ejecute ninguna accion."
         return _direct_plan(request, response)
 
     pause_markers = [
@@ -1334,29 +1209,20 @@ def plan_hybrid(
             destination_raw,
         ).strip(" \t\r\n.,;:!?")
         destination_normalized = destination_raw.lower()
-        is_url = bool(
-            re.match(r"^(?:https?://|www\.)", destination_normalized)
-        )
+        is_url = bool(re.match(r"^(?:https?://|www\.)", destination_normalized))
         looks_like_domain = bool(
             re.match(
                 r"^[a-z0-9.-]+\.[a-z]{2,}(/.*)?$",
                 destination_normalized,
             )
         )
-        if (
-            destination_normalized
-            and destination_normalized in _ROUTER_APP_CANDIDATOS
-            and not is_url
-        ):
+        if destination_normalized and destination_normalized in _ROUTER_APP_CANDIDATOS and not is_url:
             return _tool_plan(
                 request,
                 "abrir_aplicacion",
                 {"nombre_app": destination_raw},
             )
-        if (
-            "youtube" in destination_raw
-            and destination_normalized not in {"youtube", "www.youtube.com"}
-        ):
+        if "youtube" in destination_raw and destination_normalized not in {"youtube", "www.youtube.com"}:
             query = destination_raw.replace("youtube", "").strip()
             return _tool_plan(request, "abrir_youtube", {"query": query})
 
@@ -1412,9 +1278,7 @@ def _router_hibrido(
     request = _legacy_request(user_input)
     if request is None:
         return None
-    return _legacy_plan_result(
-        plan_hybrid(request, allow_compound=allow_compound)
-    )
+    return _legacy_plan_result(plan_hybrid(request, allow_compound=allow_compound))
 
 
 def _router_compuesto(user_input: str) -> str | None:

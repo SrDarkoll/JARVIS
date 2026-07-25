@@ -55,9 +55,7 @@ def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     return default
 
 
-def _read_float(
-    env: Mapping[str, str], name: str, default: float, minimum: float, maximum: float
-) -> float:
+def _read_float(env: Mapping[str, str], name: str, default: float, minimum: float, maximum: float) -> float:
     try:
         value = float(str(env.get(name, default)).strip())
     except (TypeError, ValueError):
@@ -109,18 +107,13 @@ def resolve_speech_to_text_config(
     return SpeechToTextConfig(
         provider=provider,
         groq_model=str(
-            source.get("JARVIS_GROQ_STT_MODEL", "whisper-large-v3-turbo")
-            or "whisper-large-v3-turbo"
+            source.get("JARVIS_GROQ_STT_MODEL", "whisper-large-v3-turbo") or "whisper-large-v3-turbo"
         ).strip(),
         local_enabled=_read_bool(source, "JARVIS_LOCAL_STT_ENABLED", True),
         local_model=str(source.get("JARVIS_WHISPER_MODEL", "medium") or "medium").strip(),
         local_device=str(source.get("JARVIS_WHISPER_DEVICE", "cpu") or "cpu").strip(),
-        local_compute_type=str(
-            source.get("JARVIS_WHISPER_COMPUTE_TYPE", "int8") or "int8"
-        ).strip(),
-        timeout_seconds=_read_float(
-            source, "JARVIS_STT_TIMEOUT_SECONDS", 20.0, 5.0, 60.0
-        ),
+        local_compute_type=str(source.get("JARVIS_WHISPER_COMPUTE_TYPE", "int8") or "int8").strip(),
+        timeout_seconds=_read_float(source, "JARVIS_STT_TIMEOUT_SECONDS", 20.0, 5.0, 60.0),
     )
 
 
@@ -128,13 +121,14 @@ def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFea
     source = os.environ if env is None else env
     core_mode = _read_bool(source, "JARVIS_CORE_MODE", True)
     optional_default = not core_mode
-    allow_guest = _read_bool(source, "JARVIS_ALLOW_GUEST_MODE", True)
+    allow_guest = _read_bool(source, "JARVIS_ALLOW_GUEST_MODE", False)
     if _read_bool(source, "JARVIS_DISABLE_GUEST_MODE", False) or _read_bool(source, "JARVIS_SINGLE_USER_MODE", False):
         allow_guest = False
 
     return RuntimeFeatures(
         core_mode=core_mode,
-        voice_id_enabled=_read_bool(source, "JARVIS_VOICE_ID_ENABLED", optional_default),
+        # Voice biometrics are experimental and never enabled implicitly.
+        voice_id_enabled=_read_bool(source, "JARVIS_VOICE_ID_ENABLED", False),
         allow_guest_mode=allow_guest,
         rag_enabled=_read_bool(source, "JARVIS_RAG_ENABLED", optional_default),
         vision_enabled=_read_bool(source, "JARVIS_VISION_ENABLED", optional_default),
@@ -165,12 +159,8 @@ load_dotenv(os.path.join(ROOT_DIR, ".env"))
 RUNTIME_PATHS = ensure_runtime_paths(resolve_runtime_paths())
 RUNTIME_DIR = _normalize_fs_path(str(RUNTIME_PATHS.home))
 MEMORY_DIR = _normalize_fs_path(str(RUNTIME_PATHS.memory))
-CACHE_DIR = _normalize_fs_path(
-    os.getenv("JARVIS_CACHE_DIR") or str(RUNTIME_PATHS.cache)
-)
-OBS_DIR = _normalize_fs_path(
-    os.getenv("JARVIS_LOG_DIR") or str(RUNTIME_PATHS.logs)
-)
+CACHE_DIR = _normalize_fs_path(os.getenv("JARVIS_CACHE_DIR") or str(RUNTIME_PATHS.cache))
+OBS_DIR = _normalize_fs_path(os.getenv("JARVIS_LOG_DIR") or str(RUNTIME_PATHS.logs))
 for _runtime_directory in (MEMORY_DIR, CACHE_DIR, OBS_DIR):
     os.makedirs(_runtime_directory, exist_ok=True)
 
@@ -248,12 +238,8 @@ SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "")
 SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 SPOTIFY_PLAYBACK_MODE = resolve_spotify_playback_mode()
-SPOTIFY_DESKTOP_START_TIMEOUT = _read_float(
-    os.environ, "SPOTIFY_DESKTOP_START_TIMEOUT", 20.0, 5.0, 60.0
-)
-SPOTIFY_DESKTOP_ACTION_TIMEOUT = _read_float(
-    os.environ, "SPOTIFY_DESKTOP_ACTION_TIMEOUT", 8.0, 2.0, 30.0
-)
+SPOTIFY_DESKTOP_START_TIMEOUT = _read_float(os.environ, "SPOTIFY_DESKTOP_START_TIMEOUT", 20.0, 5.0, 60.0)
+SPOTIFY_DESKTOP_ACTION_TIMEOUT = _read_float(os.environ, "SPOTIFY_DESKTOP_ACTION_TIMEOUT", 8.0, 2.0, 30.0)
 SPOTIFY_MODO_SIMILARES = os.getenv("SPOTIFY_MODO_SIMILARES", "hybrid").strip().lower()
 SPOTIFY_AUTO_SHUFFLE = _read_bool(os.environ, "SPOTIFY_AUTO_SHUFFLE", False)
 SPOTIFY_EXTENDED_QUOTA_MODE = _read_bool(os.environ, "SPOTIFY_EXTENDED_QUOTA_MODE", False)

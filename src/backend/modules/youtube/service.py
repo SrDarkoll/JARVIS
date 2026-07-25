@@ -6,6 +6,8 @@ import re
 import urllib.parse
 import urllib.request
 
+from core import jarvis_state
+from core.media_state import set_last_media_source
 from modules.youtube.messages import text as _yt_text
 from modules.youtube.messages import video_label as _yt_label
 from modules.youtube.models import YouTubeCandidate
@@ -14,6 +16,14 @@ from tools.browser import (
     _browser_prefers_system,
     _ensure_pw_worker,
     _pw_goto,
+)
+from utils.jarvis_text import reparar_unicode
+
+_MAX_SEARCH_RESPONSE_BYTES = 4 * 1024 * 1024
+_MINIMUM_MATCH_SCORE = 0.30
+_INITIAL_DATA_MARKERS = (
+    re.compile(r"(?:var\s+)?ytInitialData\s*=\s*"),
+    re.compile(r"window\[\s*[\"']ytInitialData[\"']\s*\]\s*=\s*"),
 )
 
 
@@ -33,6 +43,23 @@ def _es_short_clip(duration: str) -> bool:
     return False
 
 
+def _extract_yt_initial_data(html: str) -> dict | None:
+    """Decode the first balanced ytInitialData JSON object."""
+    decoder = json.JSONDecoder()
+    for marker in _INITIAL_DATA_MARKERS:
+        for match in marker.finditer(str(html or "")):
+            remainder = html[match.end() :].lstrip()
+            if not remainder.startswith("{"):
+                continue
+            try:
+                payload, _end = decoder.raw_decode(remainder)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                return payload
+    return None
+
+
 def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
     """Busca en YouTube y extrae candidatos estructurados con título, canal, vistas y duración."""
     clean_query = str(query or "").strip()
@@ -47,10 +74,7 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
         flags=re.IGNORECASE,
     )
 
-    search_url = (
-        "https://www.youtube.com/results?search_query="
-        + urllib.parse.quote(clean_query)
-    )
+    search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(clean_query)
     req = urllib.request.Request(
         search_url,
         headers={
@@ -58,24 +82,30 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
-            )
+            ),
+            "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
         },
     )
 
     try:
-        html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8")
+        raw_html = urllib.request.urlopen(req, timeout=5).read(_MAX_SEARCH_RESPONSE_BYTES + 1)
+        if len(raw_html) > _MAX_SEARCH_RESPONSE_BYTES:
+            return []
+        html = raw_html.decode("utf-8", errors="replace")
     except Exception:
         return []
 
-    match = re.search(r"ytInitialData\s*=\s*(\{.*?\});</script>", html)
-    if not match:
-        match = re.search(r"window\[\"ytInitialData\"\] = (\{.*?\});</script>", html)
-
+    data = _extract_yt_initial_data(html)
     candidates: list[YouTubeCandidate] = []
-    if match:
+    if data:
         try:
-            data = json.loads(match.group(1))
-            contents = data.get("contents", {}).get("twoColumnSearchResultsRenderer", {}).get("primaryContents", {}).get("sectionListRenderer", {}).get("contents", [])
+            contents = (
+                data.get("contents", {})
+                .get("twoColumnSearchResultsRenderer", {})
+                .get("primaryContents", {})
+                .get("sectionListRenderer", {})
+                .get("contents", [])
+            )
             for section in contents:
                 item_section = section.get("itemSectionRenderer", {})
                 for item in item_section.get("contents", []):
@@ -83,14 +113,8 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                     if not vr:
                         continue
                     vid_id = vr.get("videoId")
-                    title = "".join(
-                        r.get("text", "")
-                        for r in vr.get("title", {}).get("runs", [])
-                    )
-                    channel = "".join(
-                        r.get("text", "")
-                        for r in vr.get("ownerText", {}).get("runs", [])
-                    )
+                    title = "".join(r.get("text", "") for r in vr.get("title", {}).get("runs", []))
+                    channel = "".join(r.get("text", "") for r in vr.get("ownerText", {}).get("runs", []))
                     duration = vr.get("lengthText", {}).get("simpleText", "")
                     views = vr.get("viewCountText", {}).get("simpleText", "")
 
@@ -99,7 +123,6 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                         continue
 
                     if vid_id and title:
-                        from utils.jarvis_i18n import reparar_unicode
                         safe_title = reparar_unicode(title)
                         safe_channel = reparar_unicode(channel)
                         candidates.append(
@@ -112,8 +135,8 @@ def get_youtube_search_candidates(query: str) -> list[YouTubeCandidate]:
                                 url=f"https://www.youtube.com/watch?v={vid_id}",
                             )
                         )
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError):
+            return []
 
     return candidates
 
@@ -153,7 +176,37 @@ def rank_best_match(query: str, candidates: list[YouTubeCandidate]) -> YouTubeCa
             best_score = score
             best_candidate = cand
 
-    return best_candidate or candidates[0]
+    if best_score < _MINIMUM_MATCH_SCORE:
+        return None
+    return best_candidate
+
+
+def _opened_youtube_response(
+    query: str,
+    candidate: YouTubeCandidate | None,
+    *,
+    via_playwright: bool = False,
+) -> str:
+    set_last_media_source(
+        jarvis_state.get_active_profile_id(),
+        "youtube",
+    )
+    if candidate is None:
+        return _yt_text(
+            f"I opened YouTube search results for '{query}' because I could not identify a reliable exact match.",
+            f"Abri los resultados de busqueda de YouTube para '{query}' porque no pude identificar una coincidencia confiable.",
+        )
+
+    label = _yt_label(candidate.title, candidate.channel)
+    if via_playwright:
+        return _yt_text(
+            f"Opened {label} on YouTube via Playwright.",
+            f"Abri {label} en YouTube mediante Playwright.",
+        )
+    return _yt_text(
+        f"Opened {label} on YouTube.",
+        f"Abri {label} en YouTube.",
+    )
 
 
 def play(query: str) -> str:
@@ -168,20 +221,15 @@ def play(query: str) -> str:
     candidates = get_youtube_search_candidates(clean_query)
     best = rank_best_match(clean_query, candidates)
 
-    if not best:
-        # Fallback to search results URL if no candidate could be parsed
+    opened_search_results = best is None
+    if opened_search_results:
         video_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(clean_query)}"
-        label = f"'{clean_query}'"
     else:
         video_url = best.url
-        label = _yt_label(best.title, best.channel)
 
     if _browser_prefers_system():
         if _abrir_en_navegador_sistema(video_url, require_policy=False):
-            return _yt_text(
-                f"Playing {label} on YouTube.",
-                f"Reproduciendo {label} en YouTube.",
-            )
+            return _opened_youtube_response(clean_query, best)
         return _yt_text(
             "Could not open YouTube in system browser.",
             "No se pudo abrir YouTube en el navegador.",
@@ -189,14 +237,15 @@ def play(query: str) -> str:
     try:
         worker = _ensure_pw_worker()
         worker.execute(_pw_goto, video_url)
-        return _yt_text(
-            f"Playing {label} on YouTube via Playwright.",
-            f"Reproduciendo {label} en YouTube mediante Playwright.",
+        return _opened_youtube_response(
+            clean_query,
+            best,
+            via_playwright=True,
         )
-    except Exception as e:
+    except Exception:
         if _abrir_en_navegador_sistema(video_url):
-            return _yt_text(
-                f"Playing {label} on YouTube.",
-                f"Reproduciendo {label} en YouTube.",
-            )
-        return f"Error: {e}"
+            return _opened_youtube_response(clean_query, best)
+        return _yt_text(
+            "Could not open YouTube.",
+            "No se pudo abrir YouTube.",
+        )

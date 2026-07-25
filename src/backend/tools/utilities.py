@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import threading
 import time as _uti_time
 from datetime import datetime, timedelta
 
@@ -12,6 +13,11 @@ from core.app_config import get_default_location
 from core.service_container import services
 from langchain_core.tools import tool
 from utils.jarvis_auth import verificar_autorizacion
+from utils.math_expression import (
+    evaluate_math_expression,
+    format_math_number,
+    normalize_math_expression,
+)
 
 from tools._common import (
     BASE_DIR,
@@ -52,6 +58,7 @@ def _bloqueo_si_no_autorizado() -> str | None:
         return "ACCESO_DENEGADO: Requiere autorización explícita del Administrador."
     return None
 
+
 TEMAS_NEWSAPI = [
     "technology OR artificial intelligence",
     "football OR NBA OR sports",
@@ -78,24 +85,64 @@ TEMAS_NEWSAPI_ES = [
 # ─────────────────────────────────────────
 def _mapear_weather_code_openmeteo(code: int, lang: str = "es") -> str:
     tabla_es = {
-        0: "Despejado", 1: "Mayormente despejado", 2: "Parcialmente nublado",
-        3: "Nublado", 45: "Niebla", 48: "Niebla",
-        51: "Llovizna", 53: "Llovizna", 55: "Llovizna", 56: "Llovizna", 57: "Llovizna",
-        61: "Lluvia", 63: "Lluvia", 65: "Lluvia fuerte", 66: "Lluvia", 67: "Lluvia",
-        71: "Nieve", 73: "Nieve", 75: "Nieve", 77: "Nieve",
-        80: "Chubascos", 81: "Chubascos", 82: "Chubascos fuertes",
-        85: "Nieve", 86: "Nieve",
-        95: "Tormenta", 96: "Tormenta", 99: "Tormenta fuerte",
+        0: "Despejado",
+        1: "Mayormente despejado",
+        2: "Parcialmente nublado",
+        3: "Nublado",
+        45: "Niebla",
+        48: "Niebla",
+        51: "Llovizna",
+        53: "Llovizna",
+        55: "Llovizna",
+        56: "Llovizna",
+        57: "Llovizna",
+        61: "Lluvia",
+        63: "Lluvia",
+        65: "Lluvia fuerte",
+        66: "Lluvia",
+        67: "Lluvia",
+        71: "Nieve",
+        73: "Nieve",
+        75: "Nieve",
+        77: "Nieve",
+        80: "Chubascos",
+        81: "Chubascos",
+        82: "Chubascos fuertes",
+        85: "Nieve",
+        86: "Nieve",
+        95: "Tormenta",
+        96: "Tormenta",
+        99: "Tormenta fuerte",
     }
     tabla_en = {
-        0: "Clear", 1: "Mostly clear", 2: "Partly cloudy",
-        3: "Cloudy", 45: "Fog", 48: "Fog",
-        51: "Drizzle", 53: "Drizzle", 55: "Drizzle", 56: "Drizzle", 57: "Drizzle",
-        61: "Rain", 63: "Rain", 65: "Heavy rain", 66: "Rain", 67: "Rain",
-        71: "Snow", 73: "Snow", 75: "Snow", 77: "Snow",
-        80: "Showers", 81: "Showers", 82: "Heavy showers",
-        85: "Snow", 86: "Snow",
-        95: "Storm", 96: "Storm", 99: "Strong storm",
+        0: "Clear",
+        1: "Mostly clear",
+        2: "Partly cloudy",
+        3: "Cloudy",
+        45: "Fog",
+        48: "Fog",
+        51: "Drizzle",
+        53: "Drizzle",
+        55: "Drizzle",
+        56: "Drizzle",
+        57: "Drizzle",
+        61: "Rain",
+        63: "Rain",
+        65: "Heavy rain",
+        66: "Rain",
+        67: "Rain",
+        71: "Snow",
+        73: "Snow",
+        75: "Snow",
+        77: "Snow",
+        80: "Showers",
+        81: "Showers",
+        82: "Heavy showers",
+        85: "Snow",
+        86: "Snow",
+        95: "Storm",
+        96: "Storm",
+        99: "Strong storm",
     }
     tabla = tabla_en if str(lang or "").lower().startswith("en") else tabla_es
     default_desc = "Clear" if tabla is tabla_en else "Despejado"
@@ -103,42 +150,73 @@ def _mapear_weather_code_openmeteo(code: int, lang: str = "es") -> str:
 
 
 _DETECTED_IP_GEO = None
+_IP_GEO_LAST_ATTEMPT = 0.0
+_IP_GEO_LOCK = threading.Lock()
+
+
+def _ip_geolocation_enabled() -> bool:
+    return str(os.getenv("JARVIS_IP_GEOLOCATION_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ip_geolocation_cooldown_seconds() -> float:
+    try:
+        value = float(str(os.getenv("JARVIS_IP_GEOLOCATION_COOLDOWN_SECONDS") or "300").strip())
+    except (TypeError, ValueError):
+        value = 300.0
+    return max(30.0, min(value, 3600.0))
 
 
 def _auto_detect_ip_location() -> dict | None:
-    """Detecta automáticamente la ciudad y coordenadas del usuario vía IP pública."""
-    global _DETECTED_IP_GEO
-    if _DETECTED_IP_GEO is not None:
-        return _DETECTED_IP_GEO
+    """Detect the public-IP location only after explicit opt-in."""
+    global _DETECTED_IP_GEO, _IP_GEO_LAST_ATTEMPT
+    if not _ip_geolocation_enabled():
+        return None
 
-    providers = [
-        "http://ip-api.com/json/",
-        "https://ipapi.co/json/",
-    ]
-    for url in providers:
-        try:
-            r = http_requests.get(url, timeout=3)
-            if r.status_code == 200:
-                data = r.json() or {}
+    with _IP_GEO_LOCK:
+        if _DETECTED_IP_GEO is not None:
+            return dict(_DETECTED_IP_GEO)
+
+        now = _uti_time.monotonic()
+        if _IP_GEO_LAST_ATTEMPT and now - _IP_GEO_LAST_ATTEMPT < _ip_geolocation_cooldown_seconds():
+            return None
+        _IP_GEO_LAST_ATTEMPT = now
+
+        providers = (
+            "https://ipapi.co/json/",
+            "https://ipwho.is/",
+        )
+        for url in providers:
+            try:
+                response = http_requests.get(url, timeout=3)
+                if response.status_code != 200:
+                    continue
+                data = response.json() or {}
+                if data.get("success") is False:
+                    continue
                 city = data.get("city") or data.get("region")
-                lat = data.get("lat") or data.get("latitude")
-                lon = data.get("lon") or data.get("longitude")
+                latitude = data.get("lat")
+                if latitude is None:
+                    latitude = data.get("latitude")
+                longitude = data.get("lon")
+                if longitude is None:
+                    longitude = data.get("longitude")
                 country = data.get("country_name") or data.get("country")
-                if lat and lon:
-                    _DETECTED_IP_GEO = {
-                        "city": str(city or ""),
-                        "lat": str(lat),
-                        "lon": str(lon),
-                        "country": str(country or ""),
-                    }
-                    return _DETECTED_IP_GEO
-        except Exception:
-            pass
+                if latitude is None or longitude is None:
+                    continue
+                _DETECTED_IP_GEO = {
+                    "city": str(city or ""),
+                    "lat": str(latitude),
+                    "lon": str(longitude),
+                    "country": str(country or ""),
+                }
+                return dict(_DETECTED_IP_GEO)
+            except Exception:
+                continue
     return None
 
 
 def _auto_init_weather() -> None:
-    """Inicializa automáticamente el clima local por IP al arrancar la app."""
+    """Initialize weather from configured location or opted-in IP lookup."""
     try:
         geo = _auto_detect_ip_location()
         city = geo.get("city") if geo else None
@@ -187,9 +265,7 @@ def _resolve_openmeteo_coords(
         timeout=5,
     )
     if response.status_code != 200:
-        raise http_requests.RequestException(
-            f"Open-Meteo geocoding returned HTTP {response.status_code}"
-        )
+        raise http_requests.RequestException(f"Open-Meteo geocoding returned HTTP {response.status_code}")
     results = (response.json() or {}).get("results") or []
     if not results:
         return None
@@ -285,22 +361,17 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
         import time
 
         from requests.exceptions import RequestException
+
         explicit_location = bool(str(ciudad or "").strip())
         use_configured_coordinates = (
-            not explicit_location
-            or str(ciudad_actual).strip().casefold()
-            == str(default_location).strip().casefold()
+            not explicit_location or str(ciudad_actual).strip().casefold() == str(default_location).strip().casefold()
         )
         coordinates = _resolve_openmeteo_coords(
             ciudad_actual or default_location,
             use_configured_coordinates=use_configured_coordinates,
         )
         if coordinates is None:
-            not_found = (
-                "Location not found"
-                if lang.startswith("en")
-                else "Ubicación no encontrada"
-            )
+            not_found = "Location not found" if lang.startswith("en") else "Ubicación no encontrada"
             return not_found, "--"
         lat, lon = coordinates
         max_retries = 2
@@ -324,7 +395,7 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
                         code = cur.get("weathercode")
                         desc = _mapear_weather_code_openmeteo(code, lang=lang)
                         return _sync_cache(desc, str(temp))
-                    break # Si status 200 pero la info no esta, no seguir iterando
+                    break  # Si status 200 pero la info no esta, no seguir iterando
                 elif r.status_code == 429:
                     if attempt < max_retries:
                         time.sleep(1)
@@ -344,9 +415,7 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
         from tools.search import buscar_en_internet
 
         weather_query = (
-            f"current weather in {ciudad_actual}"
-            if lang.startswith("en")
-            else f"clima actual en {ciudad_actual}"
+            f"current weather in {ciudad_actual}" if lang.startswith("en") else f"clima actual en {ciudad_actual}"
         )
         res = str(buscar_en_internet.invoke({"query": weather_query}))
         temp = _extract_celsius_from_weather_text(res)
@@ -382,7 +451,9 @@ def obtener_clima(ciudad: str = "Madrid") -> str:
 # NBA
 # ─────────────────────────────────────────
 @tool
-def obtener_deportes_espn(deporte: str = "basketball", liga: str = "nba", consulta: str = "hoy", event_id: str = "") -> str:
+def obtener_deportes_espn(
+    deporte: str = "basketball", liga: str = "nba", consulta: str = "hoy", event_id: str = ""
+) -> str:
     """Obtiene marcadores o detalles de cualquier deporte vía ESPN (nba, nfl, mlb, soccer/eng.1, etc).
     Si event_id no está vacío, trae stats detallados de ese partido."""
     try:
@@ -393,17 +464,24 @@ def obtener_deportes_espn(deporte: str = "basketball", liga: str = "nba", consul
         # Validar y normalizar parámetros
         deporte = str(deporte).lower().strip()
         liga = str(liga).lower().strip()
-        if not deporte: deporte = "basketball"
-        if not liga: liga = "nba"
+        if not deporte:
+            deporte = "basketball"
+        if not liga:
+            liga = "nba"
 
         # Mapas comunes si el usuario sólo dice la liga
-        if liga == "nfl" and deporte != "football": deporte = "football"
-        if liga == "mlb" and deporte != "baseball": deporte = "baseball"
+        if liga == "nfl" and deporte != "football":
+            deporte = "football"
+        if liga == "mlb" and deporte != "baseball":
+            deporte = "baseball"
         if liga in ["premier", "eng.1", "liga", "esp.1", "champions", "uefa.champions"]:
             deporte = "soccer"
-            if liga == "premier": liga = "eng.1"
-            if liga == "liga": liga = "esp.1"
-            if liga == "champions": liga = "uefa.champions"
+            if liga == "premier":
+                liga = "eng.1"
+            if liga == "liga":
+                liga = "esp.1"
+            if liga == "champions":
+                liga = "uefa.champions"
 
         base_url = f"https://site.api.espn.com/apis/site/v2/sports/{deporte}/{liga}"
 
@@ -480,6 +558,7 @@ def obtener_deportes_espn(deporte: str = "basketball", liga: str = "nba", consul
                             )
 
                     import json
+
                     widget_msg = f"\n\n<WIDGET>{json.dumps({'type': 'nba', 'data': {'games': games_json}})}</WIDGET>"
                     return f"Resumen {liga.upper()}:\n" + "\n".join(res) + widget_msg
 
@@ -558,6 +637,7 @@ def frase_motivacional() -> str:
         return res.content.strip()
     except Exception as e:
         import logging
+
         logging.getLogger("JARVIS").warning(f"Error generando frase: {e}")
         return "El éxito es la mejor venganza, Administrador."
 
@@ -595,9 +675,7 @@ def analizar_pantalla() -> str:
         edges = gray.filter(ImageFilter.FIND_EDGES)
         eh = edges.histogram()
         edge_ratio = sum(eh[40:]) / float(total_px)
-        densidad_ui = (
-            "alta" if edge_ratio > 0.22 else "media" if edge_ratio > 0.11 else "baja"
-        )
+        densidad_ui = "alta" if edge_ratio > 0.22 else "media" if edge_ratio > 0.11 else "baja"
 
         import base64
 
@@ -659,6 +737,7 @@ def recargar_plugins() -> str:
     if services.recargar_plugins:
         try:
             from core.brain.tool_manager import _recargar_plugins_runtime
+
             return _recargar_plugins_runtime()
         except Exception as e:
             services.log_event("plugin_reload_error", error=str(e)[:300])
@@ -677,10 +756,16 @@ def ejecutar_rutina(nombre: str) -> str:
         return "Indique una rutina: trabajo, gaming o buenos días."
 
     alias = {
-        "modo trabajo": "trabajo", "trabajo": "trabajo", "work": "trabajo",
-        "modo gaming": "gaming", "gaming": "gaming", "jugar": "gaming",
-        "buenos dias": "buenos_dias", "buenos días": "buenos_dias",
-        "inicio del dia": "buenos_dias", "inicio del día": "buenos_dias",
+        "modo trabajo": "trabajo",
+        "trabajo": "trabajo",
+        "work": "trabajo",
+        "modo gaming": "gaming",
+        "gaming": "gaming",
+        "jugar": "gaming",
+        "buenos dias": "buenos_dias",
+        "buenos días": "buenos_dias",
+        "inicio del dia": "buenos_dias",
+        "inicio del día": "buenos_dias",
     }
     key = alias.get(n, n.replace(" ", "_"))
 
@@ -693,7 +778,7 @@ def ejecutar_rutina(nombre: str) -> str:
 
     def _run(tool_name: str, args: dict):
         nonlocal auth_blocked
-        print(f'    [ROUTINE] Step: {tool_name} args={args}')
+        print(f"    [ROUTINE] Step: {tool_name} args={args}")
         if not services.invocar_tool:
             errores.append(f"{tool_name}: Sistema de invocación no available.")
             return
@@ -703,11 +788,7 @@ def ejecutar_rutina(nombre: str) -> str:
             txt = str(res)
             if "acceso_denegado" in txt.lower():
                 auth_blocked = True
-            if (
-                txt.lower().startswith("error")
-                or "no pude" in txt.lower()
-                or "acceso_denegado" in txt.lower()
-            ):
+            if txt.lower().startswith("error") or "no pude" in txt.lower() or "acceso_denegado" in txt.lower():
                 print(f"    [ROUTINE] ERROR in {tool_name}: {txt[:200]}")
                 errores.append(f"{tool_name}: {txt}")
             else:
@@ -732,11 +813,7 @@ def ejecutar_rutina(nombre: str) -> str:
         _run("ajustar_volumen", {"nivel": 35})
         desc, temp = _obtener_clima_logic()
         nc = services.noticias_cache
-        resumen = (
-            nc["resumen"]
-            if nc.get("listo")
-            else "Briefing aún generándose."
-        )
+        resumen = nc["resumen"] if nc.get("listo") else "Briefing aún generándose."
         ejecutadas.append(f"clima: {desc}, {temp}°C")
         ejecutadas.append(f"briefing: {resumen[:180]}")
 
@@ -802,16 +879,14 @@ def _cargar_briefing_persistido():
         try:
             with open(bf, encoding="utf-8") as f:
                 data = json.load(f)
-                if (
-                    data.get("fecha") == datetime.now().strftime("%Y-%m-%d")
-                    and data.get("language") == lang
-                ):
+                if data.get("fecha") == datetime.now().strftime("%Y-%m-%d") and data.get("language") == lang:
                     resumen_raw = data.get("resumen") or ""
                     resumen_limpio = re.sub(r"<think>.*?</think>", "", resumen_raw, flags=re.DOTALL)
                     resumen_limpio = re.sub(r"\s+", " ", resumen_limpio).strip()
                     data["resumen"] = resumen_limpio
                     nc.update(data)
                     from utils.jarvis_i18n import get_bt
+
                     bt = get_bt()
                     print(bt["log_briefing_recovered"])
         except Exception:
@@ -830,12 +905,7 @@ def generar_resumen_noticias(forzar: bool = False):
     lang = get_current_language()
     bt = get_bt()
     hoy_str = datetime.now().strftime("%Y-%m-%d")
-    if (
-        not forzar
-        and nc.get("fecha") == hoy_str
-        and nc.get("language") == lang
-        and nc.get("resumen")
-    ):
+    if not forzar and nc.get("fecha") == hoy_str and nc.get("language") == lang and nc.get("resumen"):
         print(bt["log_briefing_already_generated"])
         return
 
@@ -899,9 +969,7 @@ def generar_resumen_noticias(forzar: bool = False):
         nc["language"] = lang
 
         try:
-            with open(
-                os.path.join(BASE_DIR, "ultimo_briefing.json"), "w", encoding="utf-8"
-            ) as f:
+            with open(os.path.join(BASE_DIR, "ultimo_briefing.json"), "w", encoding="utf-8") as f:
                 json.dump(nc, f, ensure_ascii=False, indent=2)
         except Exception as ep:
             print(f"[WARN] Could not persist briefing: {ep}")
@@ -909,9 +977,7 @@ def generar_resumen_noticias(forzar: bool = False):
         print(bt["log_briefing_ready"])
     except Exception as e:
         nc["resumen"] = (
-            "I could not generate the briefing."
-            if lang.startswith("en")
-            else "No fue posible obtener el briefing."
+            "I could not generate the briefing." if lang.startswith("en") else "No fue posible obtener el briefing."
         )
         nc["listo"] = True
         nc["language"] = lang
@@ -923,158 +989,17 @@ def evaluar_expresion_matematica(expresion: str) -> str:
     """Evalúa una expresión matemática compuesta (aritmética, raíces, potencias, trigonometría, logaritmos).
     Ejemplos: 'sqrt(28) * 4 / 20 * 5 / 5 * 8 * 9 * 6 / 5 - 8 * 828', '2^8 + sqrt(144)', 'sin(pi/2)'
     """
-    import ast
-    import math
-    from decimal import Decimal, localcontext
-
     if not expresion or not isinstance(expresion, str):
         return "Error: expresión vacía."
 
-    limpio = re.sub(
-        r"^(?:cuanto\s+es|cuánto\s+es|calcula|calculame|dime\s+cuanto\s+es|cuanto\s+da|what\s+is|calculate|compute)\s+",
-        "",
-        str(expresion).strip(),
-        flags=re.IGNORECASE,
-    )
-    limpio = (
-        limpio.replace("multiplicado por", "*")
-        .replace("multiplied by", "*")
-        .replace("dividido entre", "/")
-        .replace("dividido por", "/")
-        .replace("divided by", "/")
-        .replace("por la", "*")
-        .replace("por el", "*")
-        .replace(" por ", " * ")
-        .replace(" times ", " * ")
-        .replace(" entre ", " / ")
-        .replace(" over ", " / ")
-        .replace(" mas ", " + ")
-        .replace(" más ", " + ")
-        .replace(" plus ", " + ")
-        .replace(" menos ", " - ")
-        .replace(" minus ", " - ")
-        .replace("×", "*")
-        .replace("÷", "/")
-        .replace("π", "pi")
-        .replace("^", "**")
-    )
-    limpio = re.sub(
-        r"√\s*(\d+(?:\.\d+)?|\([^)]+\))",
-        r"sqrt(\1)",
-        limpio,
-    )
-    limpio = re.sub(
-        r"∛\s*(\d+(?:\.\d+)?|\([^)]+\))",
-        r"cbrt(\1)",
-        limpio,
-    )
-    limpio = limpio.replace("√", "sqrt").replace("∛", "cbrt").strip("?. \t\r\n")
-
-    def _eval_node(node: ast.AST) -> Decimal:
-        if isinstance(node, ast.Expression):
-            return _eval_node(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return Decimal(str(node.value))
-        if isinstance(node, ast.Name):
-            var = node.id.lower()
-            if var in ("pi", "π"):
-                return Decimal(str(math.pi))
-            if var == "e":
-                return Decimal(str(math.e))
-            if var == "tau":
-                return Decimal(str(math.tau))
-            raise ValueError(f"variable no soportada: {node.id}")
-        if isinstance(node, ast.UnaryOp):
-            val = _eval_node(node.operand)
-            if isinstance(node.op, ast.UAdd):
-                return val
-            if isinstance(node.op, ast.USub):
-                return -val
-            raise ValueError("operador unario no soportado")
-        if isinstance(node, ast.BinOp):
-            left = _eval_node(node.left)
-            right = _eval_node(node.right)
-            if isinstance(node.op, ast.Add):
-                return left + right
-            if isinstance(node.op, ast.Sub):
-                return left - right
-            if isinstance(node.op, ast.Mult):
-                return left * right
-            if isinstance(node.op, ast.Div):
-                if right == 0:
-                    raise ZeroDivisionError("división por cero")
-                return left / right
-            if isinstance(node.op, ast.FloorDiv):
-                if right == 0:
-                    raise ZeroDivisionError("división por cero")
-                return left // right
-            if isinstance(node.op, ast.Mod):
-                return left % right
-            if isinstance(node.op, ast.Pow):
-                if abs(right) > 100:
-                    raise ValueError("exponente demasiado grande")
-                if right == right.to_integral_value():
-                    return left ** int(right)
-                return Decimal(str(float(left) ** float(right)))
-            raise ValueError("operador binario no soportado")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            fn = node.func.id.lower()
-            args = [_eval_node(arg) for arg in node.args]
-            if len(args) == 1:
-                val = float(args[0])
-                if fn in ("sqrt", "raiz"):
-                    if val < 0:
-                        raise ValueError("raíz de número negativo")
-                    return Decimal(str(math.sqrt(val)))
-                if fn == "cbrt":
-                    return Decimal(str(math.cbrt(val)))
-                if fn == "abs":
-                    return abs(args[0])
-                if fn == "sin":
-                    return Decimal(str(math.sin(val)))
-                if fn == "cos":
-                    return Decimal(str(math.cos(val)))
-                if fn == "tan":
-                    return Decimal(str(math.tan(val)))
-                if fn == "log":
-                    if val <= 0:
-                        raise ValueError("logaritmo de número <= 0")
-                    return Decimal(str(math.log10(val)))
-                if fn == "ln":
-                    if val <= 0:
-                        raise ValueError("logaritmo de número <= 0")
-                    return Decimal(str(math.log(val)))
-                if fn == "exp":
-                    return Decimal(str(math.exp(val)))
-                if fn == "floor":
-                    return Decimal(str(math.floor(val)))
-                if fn == "ceil":
-                    return Decimal(str(math.ceil(val)))
-                if fn == "round":
-                    return Decimal(str(round(val)))
-            elif len(args) == 2 and fn == "round":
-                return Decimal(str(round(float(args[0]), int(args[1]))))
-            elif len(args) == 2 and fn == "log":
-                return Decimal(str(math.log(float(args[0]), float(args[1]))))
-            raise ValueError(f"función matemática no soportada: {fn}")
-        raise ValueError("expresión matemática inválida")
+    limpio = normalize_math_expression(expresion, strip_prompt=True)
 
     try:
-        parsed = ast.parse(limpio, mode="eval")
-        with localcontext() as ctx:
-            ctx.prec = 28
-            res = _eval_node(parsed)
-
-        if res == res.to_integral_value():
-            rendered = f"{int(res):,}"
-        else:
-            rendered = format(res.normalize(), "f").rstrip("0").rstrip(".")
-            if rendered.endswith("."):
-                rendered = rendered[:-1]
-
+        result = evaluate_math_expression(limpio)
+        rendered = format_math_number(
+            result,
+            group_thousands=False,
+        )
         return f"El resultado de '{expresion}' es {rendered}."
     except Exception as e:
         return f"Error al evaluar la expresión matemática: {e}"
-
-
-

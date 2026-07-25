@@ -576,8 +576,8 @@ class SpotifyUIAutomationAdapter:
 
 
 def send_media_key_event(action: str) -> bool:
-    """Envia una tecla de medios nativa de Windows (play/pause, next, prev) independientemente del foco."""
-    if not IS_WINDOWS:
+    """Send a global media key only while the Spotify process is running."""
+    if not IS_WINDOWS or not _spotify_process_ids():
         return False
     user32 = ctypes.windll.user32
     key_map = {

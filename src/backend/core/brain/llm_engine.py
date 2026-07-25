@@ -15,6 +15,7 @@ from core.jarvis_config import (
     PLUGINS_ENABLED,
     VISION_ENABLED,
 )
+from core.llm_providers import provider_base_url, resolve_llm_provider_config
 from core.runtime_logger import log_warning
 from core.service_container import services
 from langchain_core.messages import AIMessage
@@ -100,9 +101,7 @@ def _tool_schema_from_langchain_tool(tool) -> dict:
         for arg_name, arg_meta in (getattr(tool, "args", None) or {}).items():
             if isinstance(arg_meta, dict):
                 prop = {
-                    key: value
-                    for key, value in arg_meta.items()
-                    if key in {"type", "description", "enum", "items"}
+                    key: value for key, value in arg_meta.items() if key in {"type", "description", "enum", "items"}
                 }
                 prop.setdefault("type", "string")
             else:
@@ -289,6 +288,7 @@ class _OpenAICompatibleChatOpenAI:
 
 def _load_chat_openai():
     if (os.getenv("JARVIS_TEST_MODE") or "").strip().lower() in {"1", "true", "yes"}:
+
         class _TestModeChatOpenAI:
             def __new__(cls, *args, **kwargs):
                 return None
@@ -307,89 +307,89 @@ def _load_chat_openai():
 def init_brain(app_ref):
     """Initializes LLM, plugins, and tool maps."""
     brain_state._app_ref = app_ref
-    bt = get_bt()
-    print(bt["log_brain_init"].format(model=GROQ_MODEL))
 
     # Dependency injection in core_tools (shim)
-    core_tools.inject_dependencies({
-        "_invocar_tool": tool_manager._invocar_tool_entry,
-        "_recargar_plugins_runtime": tool_manager._recargar_plugins_runtime,
-        "noticias_cache": services.noticias_cache,
-        "weather_cache": services.weather_cache,
-    })
+    core_tools.inject_dependencies(
+        {
+            "_invocar_tool": tool_manager._invocar_tool_entry,
+            "_recargar_plugins_runtime": tool_manager._recargar_plugins_runtime,
+            "noticias_cache": services.noticias_cache,
+            "weather_cache": services.weather_cache,
+        }
+    )
 
     # Load base tools
     base_tools = core_tools.get_base_tools()
 
     # Clean key configuration (avoids issues with literal quotes in .env)
-    g_key = (getattr(sys.modules[__name__], "GROQ_API_KEY", None) or GROQ_API_KEY or "").strip().replace('"', "").replace("'", "")
-    google_key = (getattr(sys.modules[__name__], "GOOGLE_API_KEY", None) or GOOGLE_API_KEY or "").strip().replace('"', "").replace("'", "")
+    g_key = (
+        (getattr(sys.modules[__name__], "GROQ_API_KEY", None) or GROQ_API_KEY or "")
+        .strip()
+        .replace('"', "")
+        .replace("'", "")
+    )
+    google_key = (
+        (getattr(sys.modules[__name__], "GOOGLE_API_KEY", None) or GOOGLE_API_KEY or "")
+        .strip()
+        .replace('"', "")
+        .replace("'", "")
+    )
 
-    # Provider resolution: Google Gemini is primary when available, Groq is fallback.
-    provider = (os.getenv("JARVIS_LLM_PROVIDER") or "").strip().lower()
-    use_google_primary = bool(google_key and provider != "groq") or provider in {"gemini", "google"} or GROQ_MODEL.startswith("gemini")
+    provider_env = dict(os.environ)
+    provider_env["GROQ_API_KEY"] = g_key
+    provider_env["GOOGLE_API_KEY"] = google_key
+    provider_env["JARVIS_GROQ_MODEL"] = GROQ_MODEL
+    provider_config = resolve_llm_provider_config(provider_env)
+    bt = get_bt()
+    print(bt["log_brain_init"].format(model=provider_config.primary_model or "unconfigured"))
 
     ChatOpenAI = _load_chat_openai()
     brain_state.llm = None
     brain_state.llm_vision = None
     brain_state.llm_fallback = None
+    brain_state.llm_primary_provider = ""
+    brain_state.llm_fallback_provider = ""
 
-    if use_google_primary and google_key:
-        gemini_model = os.getenv("JARVIS_GEMINI_MODEL", "gemini-2.5-flash") if not GROQ_MODEL.startswith("gemini") else GROQ_MODEL
+    if provider_config.configured:
         brain_state.llm = ChatOpenAI(
-            model=gemini_model,
+            model=provider_config.primary_model,
             temperature=0,
-            api_key=google_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=provider_config.primary_api_key,
+            base_url=provider_base_url(provider_config.primary_provider),
         )
+        brain_state.llm_primary_provider = provider_config.primary_provider
         if VISION_ENABLED:
+            vision_model = (
+                os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash")
+                if provider_config.primary_provider == "gemini"
+                else GROQ_VISION_MODEL
+            )
             brain_state.llm_vision = ChatOpenAI(
-                model=os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+                model=vision_model,
                 temperature=0,
-                api_key=google_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                api_key=provider_config.primary_api_key,
+                base_url=provider_base_url(provider_config.primary_provider),
             )
-        if g_key:
+        if provider_config.fallback_provider:
             brain_state.llm_fallback = ChatOpenAI(
-                model=GROQ_MODEL,
+                model=provider_config.fallback_model,
                 temperature=0,
-                api_key=g_key,
-                base_url="https://api.groq.com/openai/v1",
+                api_key=provider_config.fallback_api_key,
+                base_url=provider_base_url(provider_config.fallback_provider),
             )
-    elif g_key:
-        brain_state.llm = ChatOpenAI(
-            model=GROQ_MODEL,
-            temperature=0,
-            api_key=g_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
-        if VISION_ENABLED:
-            brain_state.llm_vision = ChatOpenAI(
-                model=GROQ_VISION_MODEL,
-                temperature=0,
-                api_key=g_key,
-                base_url="https://api.groq.com/openai/v1",
-            )
-        if google_key:
-            brain_state.llm_fallback = ChatOpenAI(
-                model=os.getenv("JARVIS_GEMINI_MODEL", "gemini-2.5-flash"),
-                temperature=0,
-                api_key=google_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            )
+            brain_state.llm_fallback_provider = provider_config.fallback_provider
     else:
-        log_warning("llm_api_key_missing", error="API keys missing for both Google Gemini and Groq")
+        log_warning(
+            "llm_api_key_missing",
+            error="API keys missing for both Google Gemini and Groq",
+        )
 
     services.llm = brain_state.llm
     services.llm_vision = brain_state.llm_vision
     services.llm_fallback = brain_state.llm_fallback
 
     # Load plugins
-    plugin_tools = (
-        tool_manager._cargar_plugins_dinamicos(app_ref, base_tools)
-        if PLUGINS_ENABLED
-        else []
-    )
+    plugin_tools = tool_manager._cargar_plugins_dinamicos(app_ref, base_tools) if PLUGINS_ENABLED else []
 
     # Final tooling construction
     _rebuild_tooling(base_tools, plugin_tools)
@@ -404,12 +404,9 @@ def init_brain(app_ref):
     )
 
     # Launch news briefing after initialization
-    if (
-        BRIEFING_ENABLED
-        and brain_state.llm is not None
-        and hasattr(core_tools, "generar_resumen_noticias")
-    ):
+    if BRIEFING_ENABLED and brain_state.llm is not None and hasattr(core_tools, "generar_resumen_noticias"):
         threading.Thread(target=core_tools.generar_resumen_noticias, daemon=True).start()
+
 
 def _rebuild_tooling(base_tools: list, plugin_tools: list) -> None:
     new_base_tools = list(base_tools)

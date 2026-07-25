@@ -7,6 +7,7 @@ import sys
 from collections.abc import Mapping
 
 from core.capabilities import CapabilityState
+from core.llm_providers import resolve_llm_provider_config
 
 
 def _env_has(env: Mapping[str, str], *names: str) -> bool:
@@ -62,7 +63,7 @@ def build_setup_status(
     voice_id_enabled = _env_bool(
         source,
         "JARVIS_VOICE_ID_ENABLED",
-        not core_mode,
+        False,
     )
     telegram_enabled = _env_bool(
         source,
@@ -72,10 +73,10 @@ def build_setup_status(
     spotify_mode = str(source.get("SPOTIFY_PLAYBACK_MODE") or "auto").strip().lower()
     if spotify_mode not in {"auto", "api", "desktop"}:
         spotify_mode = "auto"
-    spotify_api_configured = _env_has(
-        source, "SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET"
-    ) or _env_has(source, "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET")
-    groq_configured = _env_has(source, "GROQ_API_KEY")
+    spotify_api_configured = _env_has(source, "SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET") or _env_has(
+        source, "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"
+    )
+    llm_config = resolve_llm_provider_config(source)
     language_configured = bool(str(language or "").strip())
     admin_voice_configured = int(admin_voice_profiles or 0) > 0
     telegram_configured = _env_has(
@@ -94,25 +95,21 @@ def build_setup_status(
         spotify_configured = spotify_api_configured or spotify_desktop_available
     items = {
         "llm": _setup_item(
-            configured=groq_configured,
+            configured=llm_config.configured,
             optional=False,
-            label="Groq",
-            code=(
-                "groq_configured"
-                if groq_configured
-                else "groq_key_missing"
-            ),
-            action="Configure GROQ_API_KEY",
+            label=(llm_config.primary_provider.title() if llm_config.primary_provider else "AI provider"),
+            code=(f"{llm_config.primary_provider}_configured" if llm_config.configured else "llm_key_missing"),
+            action="Configure GEMINI_API_KEY or GROQ_API_KEY",
+            primary_provider=llm_config.primary_provider,
+            primary_model=llm_config.primary_model,
+            fallback_provider=llm_config.fallback_provider,
+            fallback_model=llm_config.fallback_model,
         ),
         "language": _setup_item(
             configured=language_configured,
             optional=False,
             label="Language",
-            code=(
-                "language_configured"
-                if language_configured
-                else "language_missing"
-            ),
+            code=("language_configured" if language_configured else "language_missing"),
             action="Select a language",
         ),
         "admin_voice": _setup_item(
@@ -122,11 +119,7 @@ def build_setup_status(
             code=(
                 "voice_id_disabled"
                 if not voice_id_enabled
-                else (
-                    "admin_voice_configured"
-                    if admin_voice_configured
-                    else "admin_voice_missing"
-                )
+                else ("admin_voice_configured" if admin_voice_configured else "admin_voice_missing")
             ),
             action="Register the administrator voice",
             enabled=voice_id_enabled,
@@ -135,11 +128,7 @@ def build_setup_status(
             configured=spotify_configured,
             optional=True,
             label="Spotify",
-            code=(
-                "spotify_configured"
-                if spotify_configured
-                else "spotify_unconfigured"
-            ),
+            code=("spotify_configured" if spotify_configured else "spotify_unconfigured"),
             action="Configure Spotify or use Windows desktop playback",
             mode=spotify_mode,
             desktop_available=spotify_desktop_available,
@@ -152,11 +141,7 @@ def build_setup_status(
             code=(
                 "telegram_disabled"
                 if not telegram_enabled
-                else (
-                    "telegram_configured"
-                    if telegram_configured
-                    else "telegram_unconfigured"
-                )
+                else ("telegram_configured" if telegram_configured else "telegram_unconfigured")
             ),
             action="Configure TELEGRAM_TOKEN and TELEGRAM_CHAT_ID",
             enabled=telegram_enabled,
@@ -165,27 +150,17 @@ def build_setup_status(
             configured=weather_configured,
             optional=False,
             label="Weather location",
-            code=(
-                "weather_location_configured"
-                if weather_configured
-                else "weather_location_missing"
-            ),
+            code=("weather_location_configured" if weather_configured else "weather_location_missing"),
             action="Configure the default weather location",
         ),
         "api_token": _setup_item(
             configured=api_token_configured,
             optional=True,
             label="API token",
-            code=(
-                "api_token_configured"
-                if api_token_configured
-                else "api_token_missing"
-            ),
+            code=("api_token_configured" if api_token_configured else "api_token_missing"),
             action="Configure JARVIS_API_TOKEN for remote access",
             recommended_for_remote_access=True,
         ),
     }
-    required_complete = all(
-        item["configured"] for item in items.values() if not item.get("optional")
-    )
+    required_complete = all(item["configured"] for item in items.values() if not item.get("optional"))
     return {"complete": required_complete, "items": items}

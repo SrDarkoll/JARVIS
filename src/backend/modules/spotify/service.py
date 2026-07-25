@@ -6,6 +6,7 @@ import re
 import threading
 
 from core import jarvis_config, jarvis_state
+from core.media_state import set_last_media_source
 
 from modules.spotify import config
 from modules.spotify.api.client import _spotify_has_valid_cached_token
@@ -81,9 +82,7 @@ def _get_desktop_controller():
 
 def _parse_spotify_desktop_query(song: str) -> tuple[str, str]:
     clean_song = _PREFIJOS_SPOTIFY.sub("", str(song or "")).strip()
-    connectors = list(
-        re.finditer(r"\s+(de|by|of|del|por)\s+", clean_song, flags=re.IGNORECASE)
-    )
+    connectors = list(re.finditer(r"\s+(de|by|of|del|por)\s+", clean_song, flags=re.IGNORECASE))
     if not connectors:
         return clean_song.lower(), ""
 
@@ -94,8 +93,7 @@ def _parse_spotify_desktop_query(song: str) -> tuple[str, str]:
     artist_words = normalize_text(artist).split()
     ambiguous_tail = bool(
         not artist_words
-        or artist_words[0]
-        in {"a", "al", "el", "la", "las", "los", "me", "mi", "mis", "my", "the", "ti"}
+        or artist_words[0] in {"a", "al", "el", "la", "las", "los", "me", "mi", "mis", "my", "the", "ti"}
     )
     single_weak_connector = len(connectors) == 1 and connector in {"de", "del", "of"}
     if not title or not artist or (single_weak_connector and ambiguous_tail):
@@ -125,19 +123,15 @@ def _spotify_play_desktop(song: str) -> str:
     profile_id = jarvis_state.get_active_profile_id()
     if result.status is DesktopResultStatus.SUCCESS:
         pending_spotify_selections.clear(profile_id)
-        set_last_requested_track(
-            _spotify_track_plain_label(result.title, result.artist)
-        )
+        set_last_media_source(profile_id, "spotify")
+        set_last_requested_track(_spotify_track_plain_label(result.title, result.artist))
         return _spotify_text(
             f"Playing {_spotify_track_label(result.title, result.artist)} through Spotify Desktop.",
             f"Reproduciendo {_spotify_track_label(result.title, result.artist)} mediante Spotify Desktop.",
         )
     if result.status is DesktopResultStatus.AMBIGUOUS:
         pending_spotify_selections.remember(profile_id, result.choices)
-        choices = "; ".join(
-            _spotify_track_plain_label(item.title, item.artist)
-            for item in result.choices
-        )
+        choices = "; ".join(_spotify_track_plain_label(item.title, item.artist) for item in result.choices)
         return _spotify_text(
             f"I found several close matches: {choices}. Which one should I play?",
             f"Encontre varias coincidencias: {choices}. Cual debo reproducir?",
@@ -211,8 +205,12 @@ def _spotify_control_desktop(action: str) -> str:
     if result.status is DesktopResultStatus.UNAVAILABLE:
         try:
             from modules.spotify.desktop.windows import send_media_key_event
+
             if send_media_key_event(canonical) and canonical in messages:
-                return messages[canonical]
+                return _spotify_text(
+                    "I sent a global media key, but I could not verify which application handled it.",
+                    "Envie una tecla multimedia global, pero no pude verificar que aplicacion la recibio.",
+                )
         except Exception:
             pass
     if result.message_key == "spotify_focus_lost":
@@ -245,13 +243,17 @@ def play(song: str) -> str:
     pending_spotify_selections.clear(jarvis_state.get_active_profile_id())
     if SPOTIFY_PLAYBACK_MODE == "desktop":
         return _spotify_play_desktop(clean_song)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_capability_failed or not _spotify_has_valid_cached_token()
-    ):
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (_spotify_api_capability_failed or not _spotify_has_valid_cached_token()):
         return _spotify_play_desktop(clean_song)
 
     api_result = _spotify_play_api(clean_song)
-    if api_result.ok or SPOTIFY_PLAYBACK_MODE == "api":
+    if api_result.ok:
+        set_last_media_source(
+            jarvis_state.get_active_profile_id(),
+            "spotify",
+        )
+        return api_result.message
+    if SPOTIFY_PLAYBACK_MODE == "api":
         return api_result.message
     if api_result.capability_failure:
         _spotify_api_capability_failed = True
@@ -272,12 +274,14 @@ def play_mix(seed: str) -> str:
             "Dime un artista, genero, playlist o cancion para construir el mix.",
         )
     response = _play_spotify_seed(clean_seed)
-    if "Spotify Desktop" in response and (
-        "Playing " in response or "Reproduciendo " in response
-    ):
-        return response + " " + _spotify_text(
-            "Spotify Desktop will continue the mix using its own autoplay and recommendations.",
-            "Spotify Desktop continuara el mix con su reproduccion automatica y recomendaciones.",
+    if "Spotify Desktop" in response and ("Playing " in response or "Reproduciendo " in response):
+        return (
+            response
+            + " "
+            + _spotify_text(
+                "Spotify Desktop will continue the mix using its own autoplay and recommendations.",
+                "Spotify Desktop continuara el mix con su reproduccion automatica y recomendaciones.",
+            )
         )
     return response
 
@@ -293,9 +297,7 @@ def control(action: str) -> str:
         )
     if SPOTIFY_PLAYBACK_MODE == "desktop":
         return _spotify_control_desktop(clean_action)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_capability_failed or not _spotify_has_valid_cached_token()
-    ):
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (_spotify_api_capability_failed or not _spotify_has_valid_cached_token()):
         return _spotify_control_desktop(clean_action)
 
     api_result = _spotify_control_api(clean_action)

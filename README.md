@@ -6,11 +6,11 @@ J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend a
 
 ## Project Status
 
-J.A.R.V.I.S. is currently a technical beta for local development and power users. A clean clone installs and starts when Git LFS model files are present. An AI provider key (`GOOGLE_API_KEY` for Google Gemini primary, or `GROQ_API_KEY` for Groq fallback) is required for AI-generated replies, but setup diagnostics and local-only features remain available without it.
+J.A.R.V.I.S. is currently an alpha for local development and power users. A clean clone installs and starts when Git LFS model files are present. An AI provider key (`GEMINI_API_KEY` for Google Gemini or `GROQ_API_KEY` for Groq) is required for AI-generated replies, but setup diagnostics and local-only features remain available without it.
 
-Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, WebView2, and voice biometrics. Windows is the primary supported desktop target.
+Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, and WebView2. Windows is the primary supported desktop target.
 
-## 🚀 Quick Start Guide (Paso a Paso)
+## Quick Start Guide
 
 Follow these 4 simple steps to get Jarvis running:
 
@@ -39,9 +39,9 @@ Copy `.env.example` to `.env`:
 - **Windows:** `Copy-Item .env.example .env`
 - **Linux/macOS:** `cp .env.example .env`
 
-Open `.env` and add your **Google Gemini API Key** (or Groq key):
+Open `.env` and add your **Google Gemini API Key** (or a Groq key):
 ```env
-GOOGLE_API_KEY="tu_api_key_de_gemini"
+GEMINI_API_KEY="tu_api_key_de_gemini"
 ```
 
 ### 4. Launch Jarvis
@@ -56,13 +56,12 @@ python start_app.py
 
 - Voice chat with browser speech hints, optional Whisper fallback, and Piper TTS.
 - English/Spanish UI and response mode.
-- Admin voice enrollment and guest voice profile registration.
 - Per-profile memory and shared memory facts.
-- Local reminders, weather (with automatic IP geolocation resolution on startup), news summaries, time/date answers, and dynamic web search routing.
+- Local reminders, weather, optional IP geolocation, news summaries, time/date answers, and dynamic web search routing.
 - Spotify playback and controls through either the Windows desktop client or an eligible Web API account, plus API-backed AutoMix and dynamic recommendations when the account permits them.
-- YouTube direct video search, structured candidate extraction, title similarity ranking, and automated playback.
+- YouTube video search, structured candidate extraction, similarity ranking, and truthful best-match/search-result opening.
 - Telegram bot integration with `TELEGRAM_CHAT_ID` filtering.
-- Local desktop/system tools gated by authorization and security policy.
+- Local desktop tools gated by security policy. Arbitrary terminal execution and text-file writes are disabled by default.
 - Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
 - Optional desktop shell through `pywebview` with persistent WebView2 storage.
 
@@ -90,7 +89,7 @@ If you prefer manual virtual environment setup or full optional ML dependencies:
 
 ### Advanced Windows Flags
 - Standard dev setup: `.\setup.ps1 -Dev`
-- Complete optional dependencies (Voice ID, RAG, Vision): `.\setup.ps1 -Dev -Full`
+- Complete optional dependencies (experimental Voice ID, RAG, Vision): `.\setup.ps1 -Dev -Full`
 
 ### Advanced Linux/macOS Flags
 - Standard dev setup: `./setup.sh --dev`
@@ -131,10 +130,10 @@ The complete list of supported environment variables lives in `.env.example`. Ke
 
 Minimum for real LLM responses:
 
-- `GOOGLE_API_KEY` (Google Gemini - Primary LLM)
-- `GROQ_API_KEY` (Groq - Fallback LLM)
+- `GEMINI_API_KEY` (Google Gemini)
+- `GROQ_API_KEY` (Groq)
 
-When `GOOGLE_API_KEY` is provided, Jarvis uses Google Gemini (`gemini-2.5-flash`) as the primary LLM provider, with Groq acting as an automatic fallback provider when both keys are present.
+When both keys are present, Jarvis uses Gemini (`gemini-2.5-flash`) as primary and Groq as automatic fallback. Set `JARVIS_LLM_PROVIDER=groq` to reverse that order. `GOOGLE_API_KEY` remains a compatibility alias for Gemini but is also used by Google search integrations, so new installations should prefer the dedicated `GEMINI_API_KEY`.
 
 Without an API key, status and setup diagnostics, Piper TTS, and local preflight tools continue to work. Chat requests that need an AI provider return the controlled `llm_unconfigured` error with HTTP 503.
 
@@ -151,14 +150,33 @@ Core mode skips the subsystems most likely to make startup slow or fragile:
 - Startup news briefing
 - Telegram and proactive background behavior
 
-To enable the complete feature set, set `JARVIS_CORE_MODE=false`. Individual
-features can also be enabled with `JARVIS_VOICE_ID_ENABLED`,
+To enable the complete optional feature set, set `JARVIS_CORE_MODE=false`.
+Voice biometrics remain disabled in every mode unless
+`JARVIS_VOICE_ID_ENABLED=true` is explicitly configured. Other features can be
+enabled with
 `JARVIS_RAG_ENABLED`, `JARVIS_VISION_ENABLED`, `JARVIS_PLUGINS_ENABLED`,
 `JARVIS_BRIEFING_ENABLED`, `JARVIS_TELEGRAM_ENABLED`, and
 `JARVIS_MONITORING_ENABLED`.
 
 `JARVIS_MONITORING_ENABLED` defaults to `false` in core mode and `true` in full
 mode. Installing APScheduler does not enable background jobs by itself.
+
+## Safe Local Defaults
+
+Voice biometrics are experimental and are not used for authorization in the
+stable configuration. Browser microphone capture remains optional input for
+speech-to-text; text input always remains available.
+
+`JARVIS_SYSTEM_TOOLS_ENABLED=false` removes arbitrary terminal execution and
+text-file creation from the LLM tool catalog. Advanced users can opt in, but
+both tools remain critical and require explicit confirmation. File writes are
+confined to `JARVIS_FILE_WRITE_ROOTS`; when it is empty, Jarvis uses
+`JARVIS_DESKTOP_HOME` or the current user's Desktop.
+
+Public-IP geolocation is also disabled by default. Configure a location
+normally, or set `JARVIS_IP_GEOLOCATION_ENABLED=true` to opt in. IP lookups use
+HTTPS providers, one in-flight request, and a failure cooldown controlled by
+`JARVIS_IP_GEOLOCATION_COOLDOWN_SECONDS`.
 
 ## Reliable Command Pipeline
 
@@ -172,7 +190,7 @@ Chat, streaming chat, and voice commands use the same five-stage pipeline:
 5. synthesize verified results with a tool-free model, then persist one
    user-facing response.
 
-Routers and the Groq planner cannot execute tools. `ToolExecutionService` owns
+Routers and the LLM planner cannot execute tools. `ToolExecutionService` owns
 all side effects and deduplicates request/step identifiers, so retries cannot
 silently run the same planned action twice. `/api/status` exposes each major
 feature as `available`, `unconfigured`, `degraded`, `failed`, or `disabled`;
@@ -180,16 +198,17 @@ missing optional integrations do not prevent stable core startup.
 
 `JARVIS_REASONING_MODE` controls the planning policy:
 
-- `always` (default): Groq reviews every deterministic candidate. Successful
-  tool results may use a second, tool-free Groq call to produce a concise
+- `always` (default): the configured primary LLM reviews every deterministic
+  candidate. Successful tool results may use a second, tool-free LLM call to produce a concise
   response suitable for TTS.
-- `hybrid`: deterministic commands use the lower-latency local path and Groq
+- `hybrid`: deterministic commands use the lower-latency local path and the LLM
   handles only unresolved requests.
-- `offline`: Groq is never called. Supported local commands continue to work;
+- `offline`: no LLM is called. Supported local commands continue to work;
   unresolved requests return a controlled clarification.
 
-In `always` mode, a Groq outage falls back to a valid deterministic candidate.
-It never converts an unplanned action into a claimed success. Blocked,
+In `always` mode, provider failures try the configured fallback once before
+using a valid deterministic candidate. The pipeline never converts an
+unplanned action into a claimed success. Blocked,
 unavailable, failed, and duplicate tool receipts bypass AI synthesis so their
 security and diagnostic messages remain exact.
 
@@ -210,12 +229,13 @@ Environment groups:
 
 | Group | Required? | Variables |
 | --- | --- | --- |
-| LLM core | Required for real chat | `GROQ_API_KEY` |
+| LLM core | One provider required for real chat | `GEMINI_API_KEY`, `GROQ_API_KEY`, `JARVIS_LLM_PROVIDER`, `JARVIS_GEMINI_MODEL`, `JARVIS_GROQ_MODEL` |
 | Reasoning policy | Optional; defaults to `always` | `JARVIS_REASONING_MODE` |
-| Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS` |
+| Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS`, `JARVIS_SYSTEM_TOOLS_ENABLED`, `JARVIS_FILE_WRITE_ROOTS` |
 | Spotify | Optional | `SPOTIFY_PLAYBACK_MODE`, `SPOTIFY_DESKTOP_START_TIMEOUT`, `SPOTIFY_DESKTOP_ACTION_TIMEOUT`, `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
 | Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
 | Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
+| Weather location | Optional; IP lookup disabled by default | `JARVIS_IP_GEOLOCATION_ENABLED`, `JARVIS_IP_GEOLOCATION_COOLDOWN_SECONDS`, `JARVIS_DEFAULT_LAT`, `JARVIS_DEFAULT_LON` |
 | Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
 | Runtime paths | Optional relocation | `JARVIS_DATA_DIR`, `JARVIS_RUNTIME_DIR` (legacy alias), `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR`, `JARVIS_LOG_DIR` |
 | Readable logging | Optional tuning | `JARVIS_UNIFIED_LOG_ENABLED`, `JARVIS_UNIFIED_LOG_MAX_BYTES`, `JARVIS_UNIFIED_LOG_BACKUP_COUNT` |
@@ -328,7 +348,7 @@ pytest -q
 Current verified baseline:
 
 ```text
-574 passed, 1 skipped
+638 passed, 1 skipped
 ```
 
 Release checks:
@@ -407,6 +427,9 @@ control may hold foreground focus for a few seconds, bounded by
 `SPOTIFY_DESKTOP_ACTION_TIMEOUT`; switching to another window cancels the click
 instead of sending input to the wrong application. Desktop mix requests start
 the requested seed and then rely on Spotify's own autoplay and recommendations.
+When UI Automation is unavailable, Jarvis may send a Windows global media key
+only while Spotify is running. Because Windows does not identify which
+application consumed that key, Jarvis reports this fallback as unverified.
 
 Deterministic UI Automation is always attempted first and does not use fixed
 screen coordinates. Optional visual recovery requires full mode, Pillow, and a

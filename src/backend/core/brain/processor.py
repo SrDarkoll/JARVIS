@@ -39,6 +39,7 @@ from core.errors import (
 from core.jarvis_config import REASONING_MODE
 from core.jarvis_observability import obs_event, obs_inc
 from core.jarvis_state import DEFAULT_PROFILE_ID
+from core.media_state import get_last_media_source
 from core.service_container import services
 from core.unified_log import write_conversation
 from engines.memory_rag import rag_motor
@@ -53,9 +54,7 @@ from utils.jarvis_i18n import get_current_language
 from utils.jarvis_text import reparar_unicode
 
 
-def _invocar_tool_wrapper(
-    tool_name: str, args: dict, user_input: str, source: str = "wrapper"
-) -> str:
+def _invocar_tool_wrapper(tool_name: str, args: dict, user_input: str, source: str = "wrapper") -> str:
     """Wrapper to invoke tools from the router."""
     return str(
         tool_manager._invocar_tool_entry(
@@ -108,9 +107,7 @@ def _reply_needs_strict_web_retry(
     return brain_utils._respuesta_necesita_web_forzarla(user_input, reply, messages)
 
 
-def _finalize_reply(
-    reply: str, messages: list, user_input: str, pid: str, path: str
-) -> tuple[str, bool]:
+def _finalize_reply(reply: str, messages: list, user_input: str, pid: str, path: str) -> tuple[str, bool]:
     # Post-check: if STRICT_WEB_SEARCH and dynamic topic without tool → force retry
     if _reply_needs_strict_web_retry(
         user_input,
@@ -120,6 +117,7 @@ def _finalize_reply(
     ):
         obs_event("strict_web_forced_retry", user_input=user_input[:100], path=path)
         from core.brain import tool_manager
+
         web_result = tool_manager._invocar_tool_entry(
             "buscar_en_internet",
             {"query": user_input},
@@ -130,11 +128,7 @@ def _finalize_reply(
         reply = brain_utils._compactar_resumen_busqueda(str(web_result))
         obs_event("strict_web_retry_ok", reply=reply[:120])
 
-    should_listen = any(
-        "ACCESO_DENEGADO" in str(m.content)
-        for m in messages
-        if isinstance(m, ToolMessage)
-    )
+    should_listen = any("ACCESO_DENEGADO" in str(m.content) for m in messages if isinstance(m, ToolMessage))
     if security_engine._es_bloqueo_autorizacion(reply):
         should_listen = True
     if not should_listen:
@@ -143,11 +137,7 @@ def _finalize_reply(
     reply = brain_utils._formatear_reply_por_perfil(reply, pid)
     reply = core_tools._limpiar_respuesta(reply)
 
-    tool_results_summary = [
-        str(m.content or "").strip()[:600]
-        for m in messages
-        if isinstance(m, ToolMessage)
-    ]
+    tool_results_summary = [str(m.content or "").strip()[:600] for m in messages if isinstance(m, ToolMessage)]
 
     history_manager._append_to_profile_history(
         pid,
@@ -158,13 +148,9 @@ def _finalize_reply(
 
     from core.core_tools import guardar_memoria_async
 
-    guardar_memoria_async(
-        history_manager._get_history_for_profile(pid), jarvis_state.DATOS_CURIOSOS, pid
-    )
+    guardar_memoria_async(history_manager._get_history_for_profile(pid), jarvis_state.DATOS_CURIOSOS, pid)
 
-    obs_event(
-        "reply_sent", path=path, should_listen=bool(should_listen), reply=reply[:220]
-    )
+    obs_event("reply_sent", path=path, should_listen=bool(should_listen), reply=reply[:220])
     write_conversation("JARVIS", reply, profile_id=pid, channel=path)
     print(f"[JARVIS] {reply}")
 
@@ -218,15 +204,10 @@ def _resolve_pending_spotify_selection(
 
     english = get_current_language().startswith("en")
     if resolution.status is SpotifySelectionStatus.CANCELLED:
-        return (
-            "Spotify selection cancelled."
-            if english
-            else "Selección de Spotify cancelada."
-        ), False
+        return ("Spotify selection cancelled." if english else "Selección de Spotify cancelada."), False
     if resolution.status is SpotifySelectionStatus.CLARIFY:
         choices = "; ".join(
-            f"{index + 1}: {item.title} de {item.artist}"
-            for index, item in enumerate(resolution.choices)
+            f"{index + 1}: {item.title} de {item.artist}" for index, item in enumerate(resolution.choices)
         )
         return (
             f"I could not identify the selection. Say first, second, or the title: {choices}. Which one?"
@@ -289,9 +270,7 @@ def _preflight(
 
     user_input_norm = reparar_unicode(str(user_input or "")).strip()
     if allow_compound:
-        compound_reply, compound_should_listen = _preflight_compuesto(
-            user_input_norm, pid
-        )
+        compound_reply, compound_should_listen = _preflight_compuesto(user_input_norm, pid)
         if compound_reply is not None:
             return compound_reply, compound_should_listen
 
@@ -308,11 +287,7 @@ def _preflight(
         if nc and nc.get("resumen") and nc.get("listo"):
             resumen = re.sub(r"<think>.*?</think>", "", nc["resumen"], flags=re.DOTALL)
             resumen = re.sub(r"\s+", " ", resumen).strip()
-            prefix = (
-                "Daily news briefing"
-                if get_current_language().startswith("en")
-                else "Resumen diario de noticias"
-            )
+            prefix = "Daily news briefing" if get_current_language().startswith("en") else "Resumen diario de noticias"
             return f"{prefix}: {resumen}", False
         return (
             "The briefing is still being generated. One moment."
@@ -346,11 +321,7 @@ def _preflight(
     m_vol, v_vol = brain_utils.parsear_comando_volumen(user_input_norm)
     if m_vol and v_vol is not None:
         try:
-            res = (
-                _ajustar_volumen_relativo(v_vol)
-                if m_vol == "relative"
-                else _ajustar_volumen_absoluto(v_vol)
-            )
+            res = _ajustar_volumen_relativo(v_vol) if m_vol == "relative" else _ajustar_volumen_absoluto(v_vol)
             return str(res), False
         except Exception as exc:
             obs_event("volume_adjustment_error", error=type(exc).__name__)
@@ -359,9 +330,7 @@ def _preflight(
     # 5. Hybrid router
     router_reply = router._router_hibrido(user_input_norm)
     if router_reply is not None:
-        return str(router_reply), security_engine._es_bloqueo_autorizacion(
-            str(router_reply)
-        )
+        return str(router_reply), security_engine._es_bloqueo_autorizacion(str(router_reply))
 
     # 6. Music fast-path
     ultima = get_last_requested_track()
@@ -388,9 +357,7 @@ def _preflight(
             else "Please provide a title or artist and I will play it."
         ), False
 
-    if music_engine._es_posible_titulo_cancion(
-        user_input_norm
-    ) and music_engine._contexto_musica_activo(
+    if music_engine._es_posible_titulo_cancion(user_input_norm) and music_engine._contexto_musica_activo(
         history_manager._get_history_for_profile(pid)
     ):
         res = tool_manager._invocar_tool_entry(
@@ -438,9 +405,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
         msg_counter = int(jarvis_state._msg_counter_by_profile.get(pid, 0)) + 1
         jarvis_state._msg_counter_by_profile[pid] = msg_counter
         if msg_counter == 1 or msg_counter % 3 == 0:
-            jarvis_state.DATOS_CURIOSOS = extraer_datos_criticos(
-                user_input, jarvis_state.DATOS_CURIOSOS
-            )
+            jarvis_state.DATOS_CURIOSOS = extraer_datos_criticos(user_input, jarvis_state.DATOS_CURIOSOS)
             core_tools.DATOS_CURIOSOS = jarvis_state.DATOS_CURIOSOS
 
     messages = (
@@ -497,9 +462,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
                 result = tool_manager._invocar_tool_entry(
                     tc0["name"], tc0.get("args") or {}, user_input, "llm_shortcut", pid
                 )
-                return _finalize_reply(
-                    str(result), messages, user_input, pid, "llm_shortcut"
-                )
+                return _finalize_reply(str(result), messages, user_input, pid, "llm_shortcut")
 
         iterations = 0
         while response.tool_calls and iterations < 3:
@@ -508,7 +471,9 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
 
             if len(tcs) == 1:
                 tc = tcs[0]
-                result = tool_manager._invocar_tool(tc, brain_state.tool_map, {"user_input": user_input, "source": "llm_loop", "profile_id": pid})
+                result = tool_manager._invocar_tool(
+                    tc, brain_state.tool_map, {"user_input": user_input, "source": "llm_loop", "profile_id": pid}
+                )
                 messages.append(
                     ToolMessage(
                         content=core_tools._limpiar_respuesta(
@@ -521,9 +486,17 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
             else:
                 futures = []
                 for tc in tcs:
-                    futures.append((tc, tool_manager.tool_executor.submit(
-                        tool_manager._invocar_tool, tc, brain_state.tool_map, {"user_input": user_input, "source": "llm_parallel_loop", "profile_id": pid}
-                    )))
+                    futures.append(
+                        (
+                            tc,
+                            tool_manager.tool_executor.submit(
+                                tool_manager._invocar_tool,
+                                tc,
+                                brain_state.tool_map,
+                                {"user_input": user_input, "source": "llm_parallel_loop", "profile_id": pid},
+                            ),
+                        )
+                    )
 
                 for tc, f in futures:
                     try:
@@ -531,9 +504,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
                         messages.append(
                             ToolMessage(
                                 content=core_tools._limpiar_respuesta(
-                                    brain_utils._formatear_reply_por_perfil(
-                                        str(result), pid
-                                    )
+                                    brain_utils._formatear_reply_por_perfil(str(result), pid)
                                 ),
                                 tool_call_id=tc["id"],
                                 name=tc.get("name"),
@@ -575,9 +546,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
     return _finalize_reply(reply, messages, user_input, pid, "final")
 
 
-def _stream_procesar_mensaje_events_legacy(
-    user_input: str, profile_id: str = DEFAULT_PROFILE_ID
-) -> Iterator[dict]:
+def _stream_procesar_mensaje_events_legacy(user_input: str, profile_id: str = DEFAULT_PROFILE_ID) -> Iterator[dict]:
     # (Streaming with 100% parity including heartbeats)
     user_input = reparar_unicode(str(user_input or "")).strip()
     yield {"type": "status", "text": "connecting to AI cores"}
@@ -639,9 +608,7 @@ def _stream_procesar_mensaje_events_legacy(
                     continue
 
                 yield {"type": "token", "text": c}
-            final = brain_utils._formatear_reply_por_perfil(
-                brain_utils._limpiar_thinking("".join(acc)), pid
-            )
+            final = brain_utils._formatear_reply_por_perfil(brain_utils._limpiar_thinking("".join(acc)), pid)
             _finalize_reply(final, messages, user_input, pid, "no_tools_stream")
             yield {"type": "done", "response": final, "should_listen": False}
             return
@@ -684,7 +651,7 @@ def _legacy_pipeline_enabled() -> bool:
 
 
 class _RuntimeGroqPlanner:
-    """Build a planner from the latest atomically published Groq model."""
+    """Build a planner from the latest primary and fallback LLMs."""
 
     def plan(
         self,
@@ -700,32 +667,53 @@ class _RuntimeGroqPlanner:
                 direct_response="Brain not initialized.",
             )
 
-        bound_model, plain_model, registry = (
-            brain_state.get_tooling_snapshot()
-        )
+        bound_model, plain_model, registry = brain_state.get_tooling_snapshot()
         model = bound_model or plain_model
         if model is None:
             raise LLMUnavailableError
 
-        allowed_tools = (
-            tuple(registry.by_name)
-            if bound_model is not None
-            else ()
-        )
+        allowed_tools = tuple(registry.by_name) if bound_model is not None else ()
         try:
-            return GroqPlanner(
-                model,
-                allowed_tools=allowed_tools,
+            return GroqPlanner(model, allowed_tools=allowed_tools).plan(
+                request,
+                messages,
+                candidate_plan=candidate_plan,
+            )
+        except Exception as exc:
+            obs_event(
+                "primary_planner_failed",
+                error=type(exc).__name__,
+                request_id=request.request_id,
+            )
+
+        fallback_model = brain_state.llm_fallback
+        if fallback_model is None:
+            raise LLMServiceError from None
+        fallback_allowed_tools: tuple[str, ...] = ()
+        try:
+            if registry.tools and hasattr(fallback_model, "bind_tools"):
+                fallback_model = fallback_model.bind_tools(
+                    list(registry.tools),
+                    tool_choice="auto",
+                )
+                fallback_allowed_tools = tuple(registry.by_name)
+            plan = GroqPlanner(
+                fallback_model,
+                allowed_tools=fallback_allowed_tools,
             ).plan(
                 request,
                 messages,
                 candidate_plan=candidate_plan,
             )
-        except (LLMUnavailableError, LLMServiceError):
-            raise
+            obs_event(
+                "llm_fallback_succeeded",
+                stage="planner",
+                request_id=request.request_id,
+            )
+            return plan
         except Exception as exc:
             obs_event(
-                "groq_planner_failed",
+                "fallback_planner_failed",
                 error=type(exc).__name__,
                 request_id=request.request_id,
             )
@@ -733,7 +721,7 @@ class _RuntimeGroqPlanner:
 
 
 class _RuntimeResponseSynthesizer:
-    """Use the latest plain Groq model without exposing execution tools."""
+    """Use plain primary and fallback models without execution tools."""
 
     def synthesize(
         self,
@@ -745,9 +733,7 @@ class _RuntimeResponseSynthesizer:
         if _llm_calls_disabled_for_tests():
             return fallback_text
 
-        _bound_model, plain_model, _registry = (
-            brain_state.get_tooling_snapshot()
-        )
+        _bound_model, plain_model, _registry = brain_state.get_tooling_snapshot()
         if plain_model is None:
             return fallback_text
 
@@ -760,11 +746,34 @@ class _RuntimeResponseSynthesizer:
             )
         except Exception as exc:
             obs_event(
-                "response_synthesis_failed",
+                "primary_response_synthesis_failed",
                 error=type(exc).__name__,
                 request_id=request.request_id,
             )
-            raise
+
+        fallback_model = brain_state.llm_fallback
+        if fallback_model is None:
+            raise LLMServiceError from None
+        try:
+            response = GroqResponseSynthesizer(fallback_model).synthesize(
+                request,
+                plan,
+                receipts,
+                fallback_text,
+            )
+            obs_event(
+                "llm_fallback_succeeded",
+                stage="response_synthesis",
+                request_id=request.request_id,
+            )
+            return response
+        except Exception as exc:
+            obs_event(
+                "fallback_response_synthesis_failed",
+                error=type(exc).__name__,
+                request_id=request.request_id,
+            )
+            raise LLMServiceError from None
 
 
 def _build_planner_messages(
@@ -808,9 +817,7 @@ def _get_command_orchestrator() -> CommandOrchestrator:
                 deterministic=DeterministicPlanner(),
                 groq=_RuntimeGroqPlanner(),
                 executor=executor,
-                responses=ResponseComposer(
-                    synthesizer=_RuntimeResponseSynthesizer()
-                ),
+                responses=ResponseComposer(synthesizer=_RuntimeResponseSynthesizer()),
                 history=memory_manager,
                 message_factory=_build_planner_messages,
                 reasoning_mode=REASONING_MODE,
@@ -836,6 +843,7 @@ def _build_command_request(
         metadata={
             "default_location": get_default_location(),
             "spotify_pending_choices": pending_spotify_selections.snapshot(pid),
+            "last_media_source": get_last_media_source(pid),
         },
     )
 
@@ -845,20 +853,12 @@ def _record_pipeline_response(
     response: CommandResponse,
 ) -> None:
     pending_choices = request.metadata.get("spotify_pending_choices")
-    spotify_selection_consumed = any(
-        receipt.tool_name == "reproducir_en_spotify"
-        for receipt in response.receipts
-    )
-    spotify_selection_cancelled = (
-        response.text.strip().lower()
-        in {
-            "spotify selection cancelled.",
-            "seleccion de spotify cancelada.",
-        }
-    )
-    if pending_choices and (
-        spotify_selection_consumed or spotify_selection_cancelled
-    ):
+    spotify_selection_consumed = any(receipt.tool_name == "reproducir_en_spotify" for receipt in response.receipts)
+    spotify_selection_cancelled = response.text.strip().lower() in {
+        "spotify selection cancelled.",
+        "seleccion de spotify cancelada.",
+    }
+    if pending_choices and (spotify_selection_consumed or spotify_selection_cancelled):
         pending_spotify_selections.clear(request.profile_id)
 
     write_conversation(

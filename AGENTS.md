@@ -19,7 +19,7 @@ Fresh clone:
 ```powershell
 git lfs install
 git clone https://github.com/SrDarkoll/JARVIS.git
-cd J.A.R.V.I.S
+cd JARVIS
 git lfs pull
 ```
 
@@ -71,12 +71,23 @@ Environment setup:
 Copy-Item .env.example .env
 ```
 
-Minimum real LLM usage requires `GROQ_API_KEY`. For shared machines, LAN exposure, or browser access beyond the local trusted UI, prefer setting `JARVIS_API_TOKEN`.
+Minimum real LLM usage requires `GEMINI_API_KEY` or `GROQ_API_KEY`. When both
+are configured, Gemini is primary and Groq is the automatic fallback unless
+`JARVIS_LLM_PROVIDER=groq` reverses the order. For shared machines, LAN
+exposure, or browser access beyond the local trusted UI, prefer setting
+`JARVIS_API_TOKEN`.
 
 `JARVIS_CORE_MODE=true` is the stable default. It keeps chat, local voice input,
 Piper TTS, basic memory, Spotify, base tools, and the web UI while skipping
 voice biometrics, RAG, vision, plugins, briefing, and Telegram. Use
-`JARVIS_CORE_MODE=false` only when validating the complete optional feature set.
+`JARVIS_CORE_MODE=false` only when validating the complete optional feature
+set. Voice biometrics remain disabled unless `JARVIS_VOICE_ID_ENABLED=true` is
+set explicitly.
+
+`JARVIS_SYSTEM_TOOLS_ENABLED=false` is the stable default. Arbitrary terminal
+execution and text-file writes must remain absent from the normal tool catalog.
+When explicitly enabled, both tools are critical, require confirmation, and
+text writes are confined to `JARVIS_FILE_WRITE_ROOTS` or the desktop fallback.
 
 Run a setup script before the launcher. `start_app.py` automatically re-executes
 through the project `venv` when it exists, which prevents global Python package
@@ -114,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-603 passed, 1 skipped in 48.01s
+638 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -182,6 +193,12 @@ LLM OpenAI-compatible fallback regression:
 pytest tests\test_llm_engine_fallback.py -q
 ```
 
+Provider selection, runtime fallback, and status/setup regressions:
+
+```powershell
+pytest tests\test_llm_engine_fallback.py tests\test_llm_provider_status.py tests\test_processor_pipeline.py tests\test_setup_wizard.py -q
+```
+
 Router/tool routing smoke regression:
 
 ```powershell
@@ -209,7 +226,19 @@ pytest tests\test_capabilities.py tests\test_setup_wizard.py tests\test_runtime_
 Spotify recommendation regressions:
 
 ```powershell
-pytest tests\test_spotify_desktop_matching.py tests\test_spotify_desktop_windows.py tests\test_spotify_desktop_controller.py tests\test_spotify_followup.py tests\test_spotify_recs.py -q
+pytest tests\test_spotify_desktop_matching.py tests\test_spotify_desktop_windows.py tests\test_spotify_desktop_controller.py tests\test_spotify_followup.py tests\test_spotify_recs.py tests\test_spotify_media_fallback.py -q
+```
+
+YouTube selection and truthful playback-status regressions:
+
+```powershell
+pytest tests\test_youtube_service.py tests\test_router.py -q
+```
+
+Stable security defaults, math, media state, and weather privacy:
+
+```powershell
+pytest tests\test_stable_security_defaults.py tests\test_math_expression.py tests\test_media_state.py tests\test_weather_geolocation.py -q
 ```
 
 Adaptive voice transcription regressions:
@@ -233,7 +262,8 @@ related-artist, artist-top-track, and public-playlist-content endpoints. Enable
 an authorization flow during a playback command. Windows desktop automation
 must revalidate the foreground Spotify handle before keyboard or mouse input,
 avoid fixed coordinates on the deterministic path, and delete visual-recovery
-captures after every attempt.
+captures after every attempt. A global Windows media-key fallback is
+unverified and must never be reported as a confirmed Spotify state change.
 
 Spotify implementation code belongs under `src/backend/modules/spotify/`.
 Keep `src/backend/tools/spotify.py` as a public compatibility facade only:
@@ -247,6 +277,8 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - Critical backend routes must not rely only on loopback detection when an untrusted `Origin` or `Referer` is present.
 - If `JARVIS_API_TOKEN` is absent, trusted local browser origins may still be allowed, but hostile origins should receive a controlled 403.
 - Authorization and explicit user confirmation are separate concepts. Do not treat an authorized source as confirmation for destructive or sensitive actions.
+- Do not add terminal execution or arbitrary file writing back to the default
+  tool registry. File destinations must remain confined to configured roots.
 - Network/provider failures should return generic user-facing messages. Do not expose proxy details, local IPs, tokens, stack traces, or raw exception text.
 - Logs may include exception class names for diagnosis, but avoid raw credential-bearing URLs or headers.
 - The runtime `logs/log.txt` contains plaintext conversation history. Its
@@ -263,7 +295,7 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - Use controlled JSON errors for bad input instead of silent failures.
 - Keep rate-limit buckets separate when endpoint behavior differs.
 - Chat, streaming, and voice must enter the same `CommandOrchestrator`.
-- Routers and Groq planners may only produce immutable plans. They must not
+- Routers and LLM planners may only produce immutable plans. They must not
   invoke tools.
 - `ToolExecutionService` is the only side-effect boundary. Preserve
   request/step idempotency so one planned operation executes at most once.
@@ -276,7 +308,12 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - `JARVIS_TEST_MODE=1` must disable the unified runtime log even when
   `.env.example` enables logging for normal runs.
 - `JARVIS_MONITORING_ENABLED` defaults off in core mode and on in full mode. Installing APScheduler does not enable jobs by itself.
-- Without `GROQ_API_KEY`, AI-backed routes must return controlled `llm_unconfigured` errors while setup/status and local preflight paths remain usable.
+- Without both `GEMINI_API_KEY` and `GROQ_API_KEY`, AI-backed routes must return
+  controlled `llm_unconfigured` errors while setup/status and local preflight
+  paths remain usable.
+- Public-IP geolocation is opt-in through
+  `JARVIS_IP_GEOLOCATION_ENABLED=true`. Keep providers HTTPS-only, preserve
+  single-flight behavior, and cache failures for a cooldown period.
 
 ## Linting Notes
 

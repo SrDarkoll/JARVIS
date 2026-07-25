@@ -11,6 +11,7 @@ from core.capabilities import (
     CapabilityReport,
     CapabilityState,
 )
+from core.llm_providers import resolve_llm_provider_config
 from core.jarvis_config import RUNTIME_FEATURES
 from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
 from core.operator_status import build_operator_status
@@ -123,11 +124,7 @@ def _admin_voice_profile_count() -> int:
         from api import voice_routes
 
         motor = getattr(voice_routes, "_voice_id_motor", None)
-        profiles = (
-            getattr(motor, "voice_profiles", None)
-            or getattr(motor, "perfiles_voz", None)
-            or {}
-        )
+        profiles = getattr(motor, "voice_profiles", None) or getattr(motor, "perfiles_voz", None) or {}
         return 1 if DEFAULT_PROFILE_ID in profiles else 0
     except Exception:
         return 0
@@ -158,29 +155,31 @@ def _runtime_capabilities(
             )
         )
 
-    groq_configured = bool((os.getenv("GROQ_API_KEY") or "").strip())
+    llm_config = resolve_llm_provider_config()
     if jarvis_brain.llm is not None:
-        publish("llm", CapabilityState.AVAILABLE, "groq_ready")
-    elif groq_configured:
+        detail = f"Fallback provider: {llm_config.fallback_provider}" if llm_config.fallback_provider else ""
+        publish(
+            "llm",
+            CapabilityState.AVAILABLE,
+            f"{llm_config.primary_provider or 'llm'}_ready",
+            detail=detail,
+        )
+    elif llm_config.configured:
         publish(
             "llm",
             CapabilityState.DEGRADED,
-            "groq_initializing",
+            f"{llm_config.primary_provider}_initializing",
             "Review backend logs if initialization does not complete",
         )
     else:
         publish(
             "llm",
             CapabilityState.UNCONFIGURED,
-            "groq_key_missing",
-            "Configure GROQ_API_KEY",
+            "llm_key_missing",
+            "Configure GEMINI_API_KEY or GROQ_API_KEY",
         )
 
-    voice_profiles = (
-        _admin_voice_profile_count()
-        if admin_voice_profiles is None
-        else int(admin_voice_profiles)
-    )
+    voice_profiles = _admin_voice_profile_count() if admin_voice_profiles is None else int(admin_voice_profiles)
     if not RUNTIME_FEATURES.voice_id_enabled:
         publish(
             "voice_id",
@@ -222,57 +221,31 @@ def _runtime_capabilities(
     ):
         publish(
             name,
-            (
-                CapabilityState.AVAILABLE
-                if enabled
-                else CapabilityState.DISABLED
-            ),
+            (CapabilityState.AVAILABLE if enabled else CapabilityState.DISABLED),
             "enabled" if enabled else "core_mode",
             "" if enabled else action,
         )
 
-    spotify_mode = (
-        os.getenv("SPOTIFY_PLAYBACK_MODE") or "auto"
-    ).strip().lower()
+    spotify_mode = (os.getenv("SPOTIFY_PLAYBACK_MODE") or "auto").strip().lower()
     spotify_api = bool(
-        (
-            os.getenv("SPOTIPY_CLIENT_ID")
-            or os.getenv("SPOTIFY_CLIENT_ID")
-            or ""
-        ).strip()
-        and (
-            os.getenv("SPOTIPY_CLIENT_SECRET")
-            or os.getenv("SPOTIFY_CLIENT_SECRET")
-            or ""
-        ).strip()
+        (os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID") or "").strip()
+        and (os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET") or "").strip()
     )
     spotify_desktop = sys.platform == "win32"
     spotify_available = (
         (spotify_mode == "api" and spotify_api)
         or (spotify_mode == "desktop" and spotify_desktop)
-        or (
-            spotify_mode not in {"api", "desktop"}
-            and (spotify_api or spotify_desktop)
-        )
+        or (spotify_mode not in {"api", "desktop"} and (spotify_api or spotify_desktop))
     )
     publish(
         "spotify",
-        (
-            CapabilityState.AVAILABLE
-            if spotify_available
-            else CapabilityState.UNCONFIGURED
-        ),
+        (CapabilityState.AVAILABLE if spotify_available else CapabilityState.UNCONFIGURED),
         "spotify_ready" if spotify_available else "spotify_unconfigured",
-        (
-            ""
-            if spotify_available
-            else "Configure Spotify credentials or use Windows desktop mode"
-        ),
+        ("" if spotify_available else "Configure Spotify credentials or use Windows desktop mode"),
     )
 
     telegram_configured = bool(
-        (os.getenv("TELEGRAM_TOKEN") or "").strip()
-        and (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+        (os.getenv("TELEGRAM_TOKEN") or "").strip() and (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
     )
     if not RUNTIME_FEATURES.telegram_enabled:
         publish(
@@ -457,6 +430,7 @@ def get_news():
 @status_bp.route("/api/auth_status", methods=["GET"])
 def auth_status():
     from utils.jarvis_auth import verificar_autorizacion as _verificar_autorizacion
+
     pid = jarvis_state.get_active_profile_id(DEFAULT_PROFILE_ID or "admin")
     authorized = _verificar_autorizacion(pid)
     return jsonify({"authorized": authorized, "autorizado": authorized})
@@ -478,9 +452,7 @@ def setup_status():
         speech_to_text=_speech_to_text_status(),
         admin_voice_profiles=admin_voice_profiles,
     )
-    return jsonify(
-        setup
-    )
+    return jsonify(setup)
 
 
 @status_bp.route("/api/reminders", methods=["GET"])
@@ -526,15 +498,6 @@ def get_status_full():
             llm_latency = 0
     except Exception:
         pass
-
-    if _services.weather_cache.get("temp") == "--" or "Sincronizando" in str(_services.weather_cache.get("desc", "")):
-        try:
-            import threading
-
-            from tools.utilities import _auto_init_weather
-            threading.Thread(target=_auto_init_weather, daemon=True).start()
-        except Exception:
-            pass
 
     payload = {
         "status": "online",

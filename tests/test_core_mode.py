@@ -23,13 +23,13 @@ def test_core_mode_is_the_safe_default():
     assert flags.monitoring_enabled is False
 
 
-def test_full_mode_enables_optional_features():
+def test_full_mode_enables_optional_features_except_voice_biometrics():
     from core.jarvis_config import resolve_runtime_features  # pyright: ignore[reportMissingImports]
 
     flags = resolve_runtime_features({"JARVIS_CORE_MODE": "false"})
 
     assert flags.core_mode is False
-    assert flags.voice_id_enabled is True
+    assert flags.voice_id_enabled is False
     assert flags.rag_enabled is True
     assert flags.vision_enabled is True
     assert flags.plugins_enabled is True
@@ -58,9 +58,7 @@ def test_core_mode_allows_explicit_feature_override():
 def test_core_mode_allows_explicit_monitoring_override():
     from core.jarvis_config import resolve_runtime_features  # pyright: ignore[reportMissingImports]
 
-    flags = resolve_runtime_features(
-        {"JARVIS_CORE_MODE": "true", "JARVIS_MONITORING_ENABLED": "yes"}
-    )
+    flags = resolve_runtime_features({"JARVIS_CORE_MODE": "true", "JARVIS_MONITORING_ENABLED": "yes"})
 
     assert flags.core_mode is True
     assert flags.monitoring_enabled is True

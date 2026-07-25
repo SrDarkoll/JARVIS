@@ -1,4 +1,4 @@
-LLM_UNCONFIGURED_MESSAGE = "Configure GROQ_API_KEY to enable AI responses."
+LLM_UNCONFIGURED_MESSAGE = "Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses."
 CHAT_UNAVAILABLE_MESSAGE = "The AI service is temporarily unavailable."
 
 
