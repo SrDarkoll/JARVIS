@@ -60,7 +60,7 @@ macOS/Linux can run the backend and web UI, but Windows-only features such as so
 
 ```powershell
 git lfs install
-git clone https://github.com/SrDarkoll/J.A.R.V.I.S.git
+git clone https://github.com/SrDarkoll/JARVIS.git
 cd J.A.R.V.I.S
 git lfs pull
 ```

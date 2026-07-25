@@ -18,7 +18,7 @@ Fresh clone:
 
 ```powershell
 git lfs install
-git clone https://github.com/SrDarkoll/J.A.R.V.I.S.git
+git clone https://github.com/SrDarkoll/JARVIS.git
 cd J.A.R.V.I.S
 git lfs pull
 ```
