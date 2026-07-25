@@ -99,6 +99,7 @@ WebView2/
 .agents/
 .claude/
 .gemini/
+docs/
 skills-lock.json
 *.swp
 *.swo
