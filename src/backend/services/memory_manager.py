@@ -153,9 +153,7 @@ class MemoryManager:
                     self._default_id,
                 )
                 self._profiles[profile] = {
-                    "history": list(data.get("history", ()))[
-                        -MAX_PROFILE_HISTORY:
-                    ],
+                    "history": list(data.get("history", ()))[-MAX_PROFILE_HISTORY:],
                     "facts": str(data.get("facts", "")),
                 }
 

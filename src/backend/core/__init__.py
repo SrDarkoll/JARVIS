@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Lazy facade for JARVIS core modules."""
 
 from importlib import import_module

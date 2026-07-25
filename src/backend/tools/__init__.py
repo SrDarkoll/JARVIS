@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 """Lazy aggregator for the base JARVIS tools."""
 
 import os
@@ -67,7 +68,8 @@ _OPT_IN_SYSTEM_TOOLS = frozenset(
         "ejecutar_comando_terminal",
     }
 )
-__all__ = ["get_base_tools", *_BASE_TOOL_NAMES]
+__all__ = ["get_base_tools"]
+__all__.extend(_BASE_TOOL_NAMES)
 
 
 def __getattr__(name: str):

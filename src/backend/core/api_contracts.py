@@ -75,7 +75,11 @@ def validate_voice_response(payload: Any) -> ContractResult:
         return ContractResult(False, "Field 'response' must be str when present")
     if "should_listen" in payload and not isinstance(payload.get("should_listen"), bool):
         return ContractResult(False, "Field 'should_listen' must be bool when present")
-    if "profile_id" in payload and payload.get("profile_id") is not None and not isinstance(payload.get("profile_id"), str):
+    if (
+        "profile_id" in payload
+        and payload.get("profile_id") is not None
+        and not isinstance(payload.get("profile_id"), str)
+    ):
         return ContractResult(False, "Field 'profile_id' must be str|null when present")
     if "nombre" in payload and payload.get("nombre") is not None and not isinstance(payload.get("nombre"), str):
         return ContractResult(False, "Field 'nombre' must be str|null when present")

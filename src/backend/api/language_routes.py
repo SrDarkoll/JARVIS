@@ -68,15 +68,14 @@ async def get_language():
     current = getattr(_jarvis_settings, "LANGUAGE", get_app_config().localization.language)
     if current not in LANGUAGE_CONFIG:
         current = "en"
-    available = {
-        code: {"name": cfg["name"], "locale": cfg["locale"]}
-        for code, cfg in LANGUAGE_CONFIG.items()
-    }
-    return jsonify({
-        "current": current,
-        "locale": LANGUAGE_CONFIG.get(current, {}).get("locale", "en-US"),
-        "available": available,
-    })
+    available = {code: {"name": cfg["name"], "locale": cfg["locale"]} for code, cfg in LANGUAGE_CONFIG.items()}
+    return jsonify(
+        {
+            "current": current,
+            "locale": LANGUAGE_CONFIG.get(current, {}).get("locale", "en-US"),
+            "available": available,
+        }
+    )
 
 
 @language_bp.route("/api/language", methods=["POST"])
@@ -97,11 +96,13 @@ async def set_language():
     lang = (data.get("language") or "").strip().lower()
 
     if lang not in LANGUAGE_CONFIG:
-        return jsonify({
-            "ok": False,
-            "error": f"Unsupported language: {lang}",
-            "available": list(LANGUAGE_CONFIG.keys()),
-        }), 400
+        return jsonify(
+            {
+                "ok": False,
+                "error": f"Unsupported language: {lang}",
+                "available": list(LANGUAGE_CONFIG.keys()),
+            }
+        ), 400
 
     cfg = LANGUAGE_CONFIG[lang]
     old_lang = getattr(_jarvis_settings, "LANGUAGE", "en")

@@ -100,9 +100,7 @@ def listar_ventanas(maximo: int = 10) -> str:
             return "No se detectaron ventanas visibles o el control de ventanas no esta available."
         lines = ["Ventanas detectadas:"]
         for window in windows:
-            lines.append(
-                f"- [{window['handle']}] {window['title']} (PID {window.get('pid', 0)})"
-            )
+            lines.append(f"- [{window['handle']}] {window['title']} (PID {window.get('pid', 0)})")
         return "\n".join(lines)
     except Exception as exc:
         return f"Error listando ventanas: {exc}"

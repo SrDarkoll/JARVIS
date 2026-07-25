@@ -68,11 +68,16 @@ from tools.utilities import (  # noqa: F401
 
 def get_base_tools():
     from tools import _get_base_tools_impl
+
     return _get_base_tools_impl()
+
 
 def inject_dependencies(deps: dict):
     from tools import _inject_dependencies_impl
+
     return _inject_dependencies_impl(deps)
+
+
 from core.service_container import services
 
 # Legacy compatibility shims

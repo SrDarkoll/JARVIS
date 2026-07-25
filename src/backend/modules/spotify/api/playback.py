@@ -127,15 +127,11 @@ def _inferir_query_track_artist_tail(raw: str) -> tuple[str, str, str] | None:
         if not items:
             continue
 
-        cand = _spotify_mejor_track(
-            raw, items, track_guess.lower(), artist_guess.lower()
-        )
+        cand = _spotify_mejor_track(raw, items, track_guess.lower(), artist_guess.lower())
         if not cand:
             continue
 
-        artist_text = " ".join(
-            (a.get("name") or "").lower() for a in (cand.get("artists") or [])
-        )
+        artist_text = " ".join((a.get("name") or "").lower() for a in (cand.get("artists") or []))
         track_name = (cand.get("name") or "").lower()
         score = 0
         if artist_guess.lower() in artist_text:
@@ -165,10 +161,7 @@ def _mensaje_error_spotify(tipo: str, track_name: str, artist: str) -> str:
             "La sesión de Spotify venció. Necesitás re-autenticar JARVIS: "
             "borren el archivo .cache-jarvis en src/backend/ y reinicien el backend."
         ),
-        "quota": (
-            "Spotify detectó demasiadas solicitudes desde JARVIS. "
-            " Esperá unos minutos y volvé a intentarlo."
-        ),
+        "quota": ("Spotify detectó demasiadas solicitudes desde JARVIS.  Esperá unos minutos y volvé a intentarlo."),
     }
     msgs_en = {
         "premium": (
@@ -179,10 +172,7 @@ def _mensaje_error_spotify(tipo: str, track_name: str, artist: str) -> str:
             "The Spotify session expired. Re-authenticate JARVIS: "
             "delete .cache-jarvis in src/backend/ and restart the backend."
         ),
-        "quota": (
-            "Spotify detected too many requests from JARVIS. "
-            "Wait a few minutes and try again."
-        ),
+        "quota": ("Spotify detected too many requests from JARVIS. Wait a few minutes and try again."),
     }
     fallback = _spotify_text(
         f"I could not play {_spotify_track_label(track_name, artist)}. Error: {tipo}.",
@@ -265,9 +255,7 @@ def _spotify_play_api_message(cancion: str) -> str:
             inferida = _inferir_query_track_artist_tail(cancion)
             if inferida:
                 query, track_hint, artist_hint = inferida
-        print(
-            f"  [SPOTIFY] Query: '{query}' | track='{track_hint}' | artist='{artist_hint}'"
-        )
+        print(f"  [SPOTIFY] Query: '{query}' | track='{track_hint}' | artist='{artist_hint}'")
 
         tracks = _spotify_search_tracks(q=query, limit=10)
 
@@ -434,9 +422,7 @@ def _spotify_play_api(song: str) -> SpotifyAPIPlaybackResult:
     message = _spotify_play_api_message(song)
     normalized = normalize_text(message)
     ok = _spotify_api_message_is_success(message)
-    capability_failure = not ok or any(
-        normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS
-    )
+    capability_failure = not ok or any(normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS)
     return SpotifyAPIPlaybackResult(
         ok=ok,
         message=message,
@@ -487,7 +473,7 @@ def _spotify_control_api_message(accion: str) -> str:
         if accion in ["pausar", "pausa", "detener", "detén"]:
             err = _try_player_action(
                 lambda did: client.sp.pause_playback(device_id=did),
-                lambda: client.sp.pause_playback(),
+                client.sp.pause_playback,
             )
             if err is None:
                 return _spotify_text("Playback paused.", "Reproducción pausada.")
@@ -495,7 +481,7 @@ def _spotify_control_api_message(accion: str) -> str:
         elif accion in ["reanudar", "continuar", "play", "resume"]:
             err = _try_player_action(
                 lambda did: client.sp.start_playback(device_id=did),
-                lambda: client.sp.start_playback(),
+                client.sp.start_playback,
             )
             if err is None:
                 return _spotify_text("Playback resumed.", "Reproducción reanudada.")
@@ -503,7 +489,7 @@ def _spotify_control_api_message(accion: str) -> str:
         elif accion in ["siguiente", "next", "skip"]:
             err = _try_player_action(
                 lambda did: client.sp.next_track(device_id=did),
-                lambda: client.sp.next_track(),
+                client.sp.next_track,
             )
             if err is None:
                 return _spotify_text("Next track.", "Siguiente canción.")
@@ -511,14 +497,20 @@ def _spotify_control_api_message(accion: str) -> str:
         elif accion in ["anterior", "prev", "atrás", "atras"]:
             err = _try_player_action(
                 lambda did: client.sp.previous_track(device_id=did),
-                lambda: client.sp.previous_track(),
+                client.sp.previous_track,
             )
             if err is None:
                 return _spotify_text("Previous track.", "Canción anterior.")
-            return _resolver_error_player(err, _spotify_text("go back to the previous track", "volver a la canción anterior"))
+            return _resolver_error_player(
+                err, _spotify_text("go back to the previous track", "volver a la canción anterior")
+            )
         elif accion in [
-            "shuffle on", "activar shuffle", "activa shuffle",
-            "mezcla on", "aleatorio on", "aleatorio",
+            "shuffle on",
+            "activar shuffle",
+            "activa shuffle",
+            "mezcla on",
+            "aleatorio on",
+            "aleatorio",
         ]:
             if _spotify_set_shuffle(True, device_id) or _spotify_set_shuffle(True, None):
                 return _spotify_text("Shuffle enabled.", "Shuffle activado.")
@@ -530,8 +522,11 @@ def _spotify_control_api_message(accion: str) -> str:
                 )
             return _spotify_text("I could not enable shuffle right now.", "No pude activar shuffle en este momento.")
         elif accion in [
-            "shuffle off", "desactivar shuffle", "desactiva shuffle",
-            "mezcla off", "aleatorio off",
+            "shuffle off",
+            "desactivar shuffle",
+            "desactiva shuffle",
+            "mezcla off",
+            "aleatorio off",
         ]:
             if _spotify_set_shuffle(False, device_id) or _spotify_set_shuffle(False, None):
                 return _spotify_text("Shuffle disabled.", "Shuffle desactivado.")
@@ -541,7 +536,9 @@ def _spotify_control_api_message(accion: str) -> str:
                     "No active Spotify device is available. Open Spotify and play something once to disable shuffle.",
                     "No hay dispositivo activo de Spotify. Abra Spotify y reproduzca algo una vez para desactivar shuffle.",
                 )
-            return _spotify_text("I could not disable shuffle right now.", "No pude desactivar shuffle en este momento.")
+            return _spotify_text(
+                "I could not disable shuffle right now.", "No pude desactivar shuffle en este momento."
+            )
         return _spotify_text(f"Action '{accion}' not recognized.", f"Acción '{accion}' no reconocida.")
     except Exception as error:
         _spotify_log_error("control_playback", error)

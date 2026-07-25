@@ -71,9 +71,7 @@ class VoiceService:
             return False
         return _OWNER_PID in getattr(r._voice_id_motor, "perfiles_voz", {})
 
-    def admin_enrollment_authorized(
-        self, client_profile_id: str | None, pending: dict | None = None
-    ) -> bool:
+    def admin_enrollment_authorized(self, client_profile_id: str | None, pending: dict | None = None) -> bool:
         r = self.runtime
         if (
             pending
@@ -124,7 +122,9 @@ class VoiceService:
         return {
             "ok": True,
             "stage": VoiceStage.AWAITING_SAMPLE.value,
-            "message": "Registro de voz iniciado. Capture una sample y luego diga su nombre. Se registrara como invitado.",
+            "message": (
+                "Registro de voz iniciado. Capture una sample y luego diga su nombre. Se registrara como invitado."
+            ),
             "should_listen": True,
         }, 200
 
@@ -297,6 +297,7 @@ class VoiceService:
         _sync_runtime_globals(self.runtime)
         return _process_voice_sync(audio_bytes, request_data)
 
+
 # Runtime-backed processor dependencies. These are synchronized from the
 # API module immediately before service calls so legacy tests that monkeypatch
 # api.voice_routes keep working while the domain logic lives here.
@@ -400,6 +401,7 @@ def _transcribe_command(
         source = "local"
     return TranscriptionResult(text, source)
 
+
 def _voice_is_english() -> bool:
     return get_current_language().startswith("en")
 
@@ -411,6 +413,7 @@ def _voice_text(en: str, es: str) -> str:
 def _allow_guest_mode() -> bool:
     try:
         from core.jarvis_config import resolve_runtime_features
+
         return resolve_runtime_features().allow_guest_mode
     except Exception:
         return True
@@ -446,17 +449,50 @@ def _es_pregunta_simple_voz(texto: str) -> bool:
         return True
 
     question_prefixes = (
-        "cÃ³mo ", "como ", "quÃ© ", "que ", "quiÃ©n ", "quien ", "cuÃ¡l ", "cual ",
-        "dÃ³nde ", "donde ", "cuÃ¡ndo ", "cuando ", "por quÃ© ", "porque ",
-        "what ", "what's ", "whats ", "how ", "who ", "where ", "when ",
-        "can ", "could ", "would ", "do ", "does ",
+        "cÃ³mo ",
+        "como ",
+        "quÃ© ",
+        "que ",
+        "quiÃ©n ",
+        "quien ",
+        "cuÃ¡l ",
+        "cual ",
+        "dÃ³nde ",
+        "donde ",
+        "cuÃ¡ndo ",
+        "cuando ",
+        "por quÃ© ",
+        "porque ",
+        "what ",
+        "what's ",
+        "whats ",
+        "how ",
+        "who ",
+        "where ",
+        "when ",
+        "can ",
+        "could ",
+        "would ",
+        "do ",
+        "does ",
     )
     if lower.startswith(question_prefixes):
         return True
 
     info_markers = (
-        "clima", "tiempo", "temperatura", "weather", "temperature", "forecast",
-        "hora", "fecha", "time", "date", "noticias", "news", "spotify",
+        "clima",
+        "tiempo",
+        "temperatura",
+        "weather",
+        "temperature",
+        "forecast",
+        "hora",
+        "fecha",
+        "time",
+        "date",
+        "noticias",
+        "news",
+        "spotify",
     )
     return any(marker in lower for marker in info_markers)
 
@@ -561,7 +597,6 @@ def _persist_guest_profile_registration(profile_id: str, nombre: str, user_text:
         log_warning("guest_profile_memory_persist_failed", profile_id=profile_id, error=str(e))
 
 
-
 def _to_float_safe(value, default=0.0):
     try:
         return float(value)
@@ -633,7 +668,36 @@ def _clasificar_peticion_voz(texto: str) -> dict:
         "?" in normalized
         or any(
             lower.startswith(prefix)
-            for prefix in ("que ", "quÃ© ", "como ", "cÃ³mo ", "quien ", "quiÃ©n ", "cual ", "cuÃ¡l ", "donde ", "dÃ³nde ", "cuando ", "cuÃ¡ndo ", "a cuanto ", "a cuÃ¡nto ", "what ", "what's ", "whats ", "how ", "who ", "where ", "when ", "can ", "could ", "would ", "do ", "does ", "is ", "are ")
+            for prefix in (
+                "que ",
+                "quÃ© ",
+                "como ",
+                "cÃ³mo ",
+                "quien ",
+                "quiÃ©n ",
+                "cual ",
+                "cuÃ¡l ",
+                "donde ",
+                "dÃ³nde ",
+                "cuando ",
+                "cuÃ¡ndo ",
+                "a cuanto ",
+                "a cuÃ¡nto ",
+                "what ",
+                "what's ",
+                "whats ",
+                "how ",
+                "who ",
+                "where ",
+                "when ",
+                "can ",
+                "could ",
+                "would ",
+                "do ",
+                "does ",
+                "is ",
+                "are ",
+            )
         )
         or any(
             phrase in lower
@@ -719,9 +783,7 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
     source = str(body.get("identity_source") or voice_debug.get("identity_source") or "unknown")
     body["identity_source"] = source
     transcription_source = str(
-        body.get("transcription_source")
-        or voice_debug.get("transcription_source")
-        or "unavailable"
+        body.get("transcription_source") or voice_debug.get("transcription_source") or "unavailable"
     )
     body["transcription_source"] = transcription_source
     profile_out = str(body.get("profile_id") or voice_debug.get("profile_id") or "")
@@ -744,9 +806,7 @@ def _voice_response_for_debug(voice_debug: dict, payload, status=200):
         "wav_valid": bool(voice_debug.get("wav_valid")),
         "route_mode": voice_debug.get("route_mode") or "",
         "route_reason": voice_debug.get("route_reason") or "",
-        "transcript_confidence": round(
-            _to_float_safe(voice_debug.get("transcript_confidence"), -1.0), 3
-        ),
+        "transcript_confidence": round(_to_float_safe(voice_debug.get("transcript_confidence"), -1.0), 3),
         "transcription_source": transcription_source,
         "transcript": str(voice_debug.get("transcript") or "")[:500],
         "identify_decision": voice_debug.get("identify_decision") or "",
@@ -834,7 +894,6 @@ def _build_voice_debug(
         "transcript": "",
         "transcription_source": "unavailable",
     }
-
 
 
 def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
@@ -975,14 +1034,16 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     )
 
     if not audio_bytes:
-        return _voice_response({"error": _voice_text("No audio received", "Sin audio"), "should_listen": True}, status=400)
+        return _voice_response(
+            {"error": _voice_text("No audio received", "Sin audio"), "should_listen": True}, status=400
+        )
 
-    owner_session_active = (
-        client_profile_id_norm == _brain.DEFAULT_PROFILE_ID
-        and _verificar_autorizacion(_brain.DEFAULT_PROFILE_ID)
+    owner_session_active = client_profile_id_norm == _brain.DEFAULT_PROFILE_ID and _verificar_autorizacion(
+        _brain.DEFAULT_PROFILE_ID
     )
     print(
-        f"[VOICE ID] Hint: '{transcript_hint[:60]}' | Profile: '{client_profile_id}' | {len(audio_bytes)} bytes | CT: {content_type[:40]} | Magic: {magic_hex[:32]}"
+        f"[VOICE ID] Hint: '{transcript_hint[:60]}' | Profile: '{client_profile_id}' "
+        f"| {len(audio_bytes)} bytes | CT: {content_type[:40]} | Magic: {magic_hex[:32]}"
     )
     _emit_voice_event(
         "voice_request_context",
@@ -996,9 +1057,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         transcript_confidence=voice_debug.get("transcript_confidence"),
     )
     skip_biometric_lookup = (
-        route_hint.get("mode") == "fast_info"
-        and not esperando_nombre
-        and not esperando_confirmacion
+        route_hint.get("mode") == "fast_info" and not esperando_nombre and not esperando_confirmacion
     )
 
     wav_purificado, wav_ok = _norm_a_wav(audio_bytes)
@@ -1115,14 +1174,10 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     )
     texto = transcription.text
     voice_debug["transcript"] = str(texto or "")
-    voice_debug["transcription_source"] = str(
-        transcription.source or "unavailable"
-    )
+    voice_debug["transcription_source"] = str(transcription.source or "unavailable")
     if not texto:
         _set_voice_identity("transcription_empty", similarity_value=0.0)
-        return _voice_response(
-            {"response": "I couldn't hear you clearly.", "should_listen": False}
-        )
+        return _voice_response({"response": "I couldn't hear you clearly.", "should_listen": False})
     route_actual = _intent_clasificar_peticion_voz(texto)
     voice_debug["route_mode"] = route_actual.get("mode") or voice_debug.get("route_mode") or ""
     voice_debug["route_reason"] = route_actual.get("reason") or voice_debug.get("route_reason") or ""
@@ -1130,10 +1185,24 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     # Detectar cancelaciÃ³n
     texto_lower = texto.strip().lower()
     CANCELAR_REGISTRO_KEYWORDS = [
-        "cancelar registro", "cancela registro", "cancelar el registro", "no registrar",
-        "no quiero registrarme", "no me registres", "no quiero", "olvÃ­dalo", "olvidalo",
-        "olvÃ­dalo ya", "no es necesario", "dÃ©jalo", "dejalo", "basta", "no soy",
-        "no es mi nombre", "ninguno", "ninguna",
+        "cancelar registro",
+        "cancela registro",
+        "cancelar el registro",
+        "no registrar",
+        "no quiero registrarme",
+        "no me registres",
+        "no quiero",
+        "olvÃ­dalo",
+        "olvidalo",
+        "olvÃ­dalo ya",
+        "no es necesario",
+        "dÃ©jalo",
+        "dejalo",
+        "basta",
+        "no soy",
+        "no es mi nombre",
+        "ninguno",
+        "ninguna",
     ]
     if pending and any(kw in texto_lower for kw in CANCELAR_REGISTRO_KEYWORDS):
         _cancel_pending(ip)
@@ -1196,9 +1265,20 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             else:
                 should_listen = False
                 reply = _voice_text(f"Confirmed, {soft_match_nombre}.", f"Confirmado, {soft_match_nombre}.")
-            _set_voice_identity(source="soft_match_confirmed", profile=soft_match_pid, display_name=soft_match_nombre, similarity_value=soft_sim)
+            _set_voice_identity(
+                source="soft_match_confirmed",
+                profile=soft_match_pid,
+                display_name=soft_match_nombre,
+                similarity_value=soft_sim,
+            )
             return _voice_response(
-                {"response": reply, "profile_id": soft_match_pid, "nombre": soft_match_nombre, "identity_source": "soft_match_confirmed", "should_listen": bool(should_listen)}
+                {
+                    "response": reply,
+                    "profile_id": soft_match_pid,
+                    "nombre": soft_match_nombre,
+                    "identity_source": "soft_match_confirmed",
+                    "should_listen": bool(should_listen),
+                }
             )
         else:
             _pending_voice_registration[ip] = {
@@ -1224,7 +1304,13 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         if not pending_audio:
             _pop_pending(ip)
             _set_voice_identity("pending_audio_missing", similarity_value=0.0)
-            return _voice_response({"response": "I couldn't save the voice sample. Please start the registration again.", "should_listen": False}, status=409)
+            return _voice_response(
+                {
+                    "response": "I couldn't save the voice sample. Please start the registration again.",
+                    "should_listen": False,
+                },
+                status=409,
+            )
         if not wav_ok and not _bytes_es_wav_valido(pending_audio):
             _pop_pending(ip)
             _set_voice_identity("invalid_audio", similarity_value=0.0)
@@ -1243,8 +1329,50 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         texto_nombre = _reparar_unicode(texto).strip()
         if not texto_nombre:
             _set_voice_identity("name_not_understood", similarity_value=0.0)
-            return _voice_response({"response": "I couldn't understand your name. Please repeat it.", "should_listen": True, "nueva_voz": True})
-        pregunta_keywords = ["cÃ³mo", "como", "quÃ©", "que", "quiÃ©n", "quien", "cuÃ¡l", "cual", "dÃ³nde", "donde", "cuÃ¡ndo", "cuando", "por quÃ©", "porque", "puedes", "puede", "sabes", "sabe", "tienes", "tiene", "hay", "es", "estÃ¡", "esta", "son", "what", "what's", "whats", "how", "who", "where", "when", "weather", "temperature", "forecast"]
+            return _voice_response(
+                {
+                    "response": "I couldn't understand your name. Please repeat it.",
+                    "should_listen": True,
+                    "nueva_voz": True,
+                }
+            )
+        pregunta_keywords = [
+            "cÃ³mo",
+            "como",
+            "quÃ©",
+            "que",
+            "quiÃ©n",
+            "quien",
+            "cuÃ¡l",
+            "cual",
+            "dÃ³nde",
+            "donde",
+            "cuÃ¡ndo",
+            "cuando",
+            "por quÃ©",
+            "porque",
+            "puedes",
+            "puede",
+            "sabes",
+            "sabe",
+            "tienes",
+            "tiene",
+            "hay",
+            "es",
+            "estÃ¡",
+            "esta",
+            "son",
+            "what",
+            "what's",
+            "whats",
+            "how",
+            "who",
+            "where",
+            "when",
+            "weather",
+            "temperature",
+            "forecast",
+        ]
         tl = texto_nombre.lower()
         es_pregunta = any(kw in tl for kw in pregunta_keywords) or "?" in texto_nombre or tl.endswith("?")
         if es_pregunta:
@@ -1254,9 +1382,20 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             pid_resp = _brain.DEFAULT_PROFILE_ID if owner_session_active else _effective_unverified_pid()
             nombre_resp = _voice_display_name(pid_resp)
             respuesta, sl = _brain.procesar_mensaje(texto_nombre, profile_id=pid_resp)
-            _set_voice_identity(source="question_during_registration", profile=pid_resp, display_name=nombre_resp, similarity_value=similitud)
+            _set_voice_identity(
+                source="question_during_registration",
+                profile=pid_resp,
+                display_name=nombre_resp,
+                similarity_value=similitud,
+            )
             return _voice_response(
-                {"response": respuesta, "profile_id": pid_resp, "nombre": nombre_resp, "identity_source": "question_during_registration", "should_listen": bool(sl)}
+                {
+                    "response": respuesta,
+                    "profile_id": pid_resp,
+                    "nombre": nombre_resp,
+                    "identity_source": "question_during_registration",
+                    "should_listen": bool(sl),
+                }
             )
         nombre_nuevo = _norm_nombre_invitado(texto_nombre)
         wants_owner_alias = _es_alias_owner(nombre_nuevo)
@@ -1288,9 +1427,20 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             if owner_session_active:
                 _pop_pending(ip)
                 reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
-                _set_voice_identity(source="session_owner_fallback_registration", profile=_brain.DEFAULT_PROFILE_ID, display_name="Administrador", similarity_value=similitud)
+                _set_voice_identity(
+                    source="session_owner_fallback_registration",
+                    profile=_brain.DEFAULT_PROFILE_ID,
+                    display_name="Administrador",
+                    similarity_value=similitud,
+                )
                 return _voice_response(
-                    {"response": reply, "profile_id": _brain.DEFAULT_PROFILE_ID, "nombre": "Administrador", "identity_source": "session_owner_fallback_registration", "should_listen": bool(sl)}
+                    {
+                        "response": reply,
+                        "profile_id": _brain.DEFAULT_PROFILE_ID,
+                        "nombre": "Administrador",
+                        "identity_source": "session_owner_fallback_registration",
+                        "should_listen": bool(sl),
+                    }
                 )
             _pending_voice_registration[ip] = {
                 "audio": wav_purificado or pending_audio,
@@ -1301,7 +1451,14 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             log_error("voice_registration_failed", profile_id=pid_nuevo, last_error=ultimo_error)
             _set_voice_identity("retry", profile=pid_nuevo, display_name=nombre_nuevo, similarity_value=0.0)
             return _voice_response(
-                {"response": "I couldn't register the voiceprint with sufficient quality. Please repeat your name clearly.", "should_listen": True, "nueva_voz": True, "identity_source": "retry"},
+                {
+                    "response": (
+                        "I couldn't register the voiceprint with sufficient quality. Please repeat your name clearly."
+                    ),
+                    "should_listen": True,
+                    "nueva_voz": True,
+                    "identity_source": "retry",
+                },
                 status=409,
             )
         _pop_pending(ip)
@@ -1312,7 +1469,8 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             respuesta_pregunta, should_listen = _brain.procesar_mensaje(pending_question, profile_id=pid_nuevo)
             reply = _voice_text(
                 f"Done. I registered your voice as guest, {nombre_nuevo}. About what you asked: {respuesta_pregunta}",
-                f"Perfecto. He registrado tu voz como invitado, {nombre_nuevo}. Sobre lo que preguntaste: {respuesta_pregunta}",
+                f"Perfecto. He registrado tu voz como invitado, {nombre_nuevo}. "
+                f"Sobre lo que preguntaste: {respuesta_pregunta}",
             )
         else:
             should_listen = False
@@ -1321,23 +1479,55 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                 f"Perfecto. He registrado tu voz como invitado, {nombre_nuevo}.",
             )
         _guest_persist_profile_registration(pid_nuevo, nombre_nuevo, texto_nombre, reply)
-        nombre_final = nombre_nuevo if pid_nuevo != _brain.DEFAULT_PROFILE_ID else _voice_display_name(_brain.DEFAULT_PROFILE_ID)
-        _set_voice_identity(source=identity_source, profile=pid_nuevo, display_name=nombre_final, similarity_value=similitud)
+        nombre_final = (
+            nombre_nuevo if pid_nuevo != _brain.DEFAULT_PROFILE_ID else _voice_display_name(_brain.DEFAULT_PROFILE_ID)
+        )
+        _set_voice_identity(
+            source=identity_source, profile=pid_nuevo, display_name=nombre_final, similarity_value=similitud
+        )
         return _voice_response(
-            {"response": reply, "profile_id": pid_nuevo, "nombre": nombre_final, "identity_source": identity_source, "should_listen": bool(should_listen)}
+            {
+                "response": reply,
+                "profile_id": pid_nuevo,
+                "nombre": nombre_final,
+                "identity_source": identity_source,
+                "should_listen": bool(should_listen),
+            }
         )
 
     # Fallback de sesiÃ³n
     if not esperando_nombre and not conversion_exitosa and owner_session_active:
         reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
-        _set_voice_identity(source="session_owner_fallback_audio_error", profile=_brain.DEFAULT_PROFILE_ID, display_name="Administrador", similarity_value=similitud)
+        _set_voice_identity(
+            source="session_owner_fallback_audio_error",
+            profile=_brain.DEFAULT_PROFILE_ID,
+            display_name="Administrador",
+            similarity_value=similitud,
+        )
         return _voice_response(
-            {"response": reply, "profile_id": _brain.DEFAULT_PROFILE_ID, "nombre": "Administrador", "identity_source": "session_owner_fallback_audio_error", "should_listen": sl}
+            {
+                "response": reply,
+                "profile_id": _brain.DEFAULT_PROFILE_ID,
+                "nombre": "Administrador",
+                "identity_source": "session_owner_fallback_audio_error",
+                "should_listen": sl,
+            }
         )
 
     # Session continuity
-    if not esperando_nombre and not esperando_confirmacion and not profile_id and conversion_exitosa and owner_session_active and soft_pid == _brain.DEFAULT_PROFILE_ID and soft_sim >= 0.12:
-        print(f"[AUTH] Session continuity: Administrador below threshold (sim={soft_sim:.4f}) but session active. Maintaining identity.")
+    if (
+        not esperando_nombre
+        and not esperando_confirmacion
+        and not profile_id
+        and conversion_exitosa
+        and owner_session_active
+        and soft_pid == _brain.DEFAULT_PROFILE_ID
+        and soft_sim >= 0.12
+    ):
+        print(
+            f"[AUTH] Session continuity: Administrador below threshold "
+            f"(sim={soft_sim:.4f}) but session active. Maintaining identity."
+        )
         _autorizar_por_biometria(_brain.DEFAULT_PROFILE_ID, "Administrador")
         profile_id = _brain.DEFAULT_PROFILE_ID
         nombre = "Administrador"
@@ -1353,14 +1543,31 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     # Voz desconocida
     if not esperando_confirmacion and (
         (not conversion_exitosa)
-        or (not profile_id and _biometria_activa and _voice_id_motor and hasattr(_voice_id_motor, "encoder") and _voice_id_motor.encoder is not None)
+        or (
+            not profile_id
+            and _biometria_activa
+            and _voice_id_motor
+            and hasattr(_voice_id_motor, "encoder")
+            and _voice_id_motor.encoder is not None
+        )
     ):
         if owner_session_active:
             _autorizar_por_biometria(_brain.DEFAULT_PROFILE_ID, "Administrador")
             reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
-            _set_voice_identity(source="session_owner_fallback", profile=_brain.DEFAULT_PROFILE_ID, display_name="Administrador", similarity_value=similitud)
+            _set_voice_identity(
+                source="session_owner_fallback",
+                profile=_brain.DEFAULT_PROFILE_ID,
+                display_name="Administrador",
+                similarity_value=similitud,
+            )
             return _voice_response(
-                {"response": reply, "profile_id": _brain.DEFAULT_PROFILE_ID, "nombre": "Administrador", "identity_source": "session_owner_fallback", "should_listen": bool(sl)}
+                {
+                    "response": reply,
+                    "profile_id": _brain.DEFAULT_PROFILE_ID,
+                    "nombre": "Administrador",
+                    "identity_source": "session_owner_fallback",
+                    "should_listen": bool(sl),
+                }
             )
         if route_actual.get("mode") == "identity_query":
             if conversion_exitosa:
@@ -1374,7 +1581,8 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             return _voice_response(
                 {
                     "response": _voice_text(
-                        "I cannot confirm who you are with enough confidence yet. Tell me your name and I will register this voice as a guest profile.",
+                        "I cannot confirm who you are with enough confidence yet. "
+                        "Tell me your name and I will register this voice as a guest profile.",
                         "TodavÃ­a no puedo confirmar quiÃ©n eres con suficiente seguridad. Dime tu nombre y registrarÃ© esta voz como perfil invitado.",
                     ),
                     "profile_id": None,
@@ -1417,14 +1625,31 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                 reply = f"One moment. Are you {soft_nombre}?"
             _set_voice_identity("soft_match_pending", similarity_value=soft_sim)
             return _voice_response(
-                {"response": reply, "profile_id": None, "nueva_voz": True, "identity_source": "soft_match_pending", "should_listen": True}
+                {
+                    "response": reply,
+                    "profile_id": None,
+                    "nueva_voz": True,
+                    "identity_source": "soft_match_pending",
+                    "should_listen": True,
+                }
             )
         if not _allow_guest_mode():
             _autorizar_por_biometria(_brain.DEFAULT_PROFILE_ID, "Administrador")
             reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
-            _set_voice_identity(source="single_user_admin_mode", profile=_brain.DEFAULT_PROFILE_ID, display_name="Administrador", similarity_value=similitud)
+            _set_voice_identity(
+                source="single_user_admin_mode",
+                profile=_brain.DEFAULT_PROFILE_ID,
+                display_name="Administrador",
+                similarity_value=similitud,
+            )
             return _voice_response(
-                {"response": reply, "profile_id": _brain.DEFAULT_PROFILE_ID, "nombre": "Administrador", "identity_source": "single_user_admin_mode", "should_listen": bool(sl)}
+                {
+                    "response": reply,
+                    "profile_id": _brain.DEFAULT_PROFILE_ID,
+                    "nombre": "Administrador",
+                    "identity_source": "single_user_admin_mode",
+                    "should_listen": bool(sl),
+                }
             )
         tl = texto.lower()
         es_pregunta_simple = _intent_es_pregunta_simple_voz(texto)
@@ -1432,9 +1657,20 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             print(f"[AUTH] Unknown voice but simple question ('{tl}'), responding without registration.")
             unverified_pid = _effective_unverified_pid()
             reply, sl = _brain.procesar_mensaje(texto, profile_id=unverified_pid)
-            _set_voice_identity(source="unknown_direct_response", profile=unverified_pid, display_name=_voice_display_name(unverified_pid), similarity_value=similitud)
+            _set_voice_identity(
+                source="unknown_direct_response",
+                profile=unverified_pid,
+                display_name=_voice_display_name(unverified_pid),
+                similarity_value=similitud,
+            )
             return _voice_response(
-                {"response": reply, "profile_id": unverified_pid, "nombre": _voice_display_name(unverified_pid), "identity_source": "unknown_direct_response", "should_listen": bool(sl)}
+                {
+                    "response": reply,
+                    "profile_id": unverified_pid,
+                    "nombre": _voice_display_name(unverified_pid),
+                    "identity_source": "unknown_direct_response",
+                    "should_listen": bool(sl),
+                }
             )
         _pending_voice_registration[ip] = {
             "audio": wav_purificado,
@@ -1446,19 +1682,34 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         if not conversion_exitosa:
             reply = "I couldn't process your audio. Who are you? I will answer your question afterwards."
         else:
-            reply = "One moment. I don't recognize your voice. What is your name? I will answer your question immediately after."
+            reply = (
+                "One moment. I don't recognize your voice. What is your name? "
+                "I will answer your question immediately after."
+            )
         _set_voice_identity(source="unknown" if conversion_exitosa else "conversion_failed", similarity_value=similitud)
         return _voice_response(
-            {"response": reply, "profile_id": None, "nueva_voz": True, "identity_source": "unknown" if conversion_exitosa else "conversion_failed", "should_listen": True}
+            {
+                "response": reply,
+                "profile_id": None,
+                "nueva_voz": True,
+                "identity_source": "unknown" if conversion_exitosa else "conversion_failed",
+                "should_listen": True,
+            }
         )
 
     # Procesar mensaje
     pid_final = profile_id or _effective_unverified_pid()
     nombre_final = nombre or _voice_display_name(pid_final)
     reply, sl = _brain.procesar_mensaje(texto, profile_id=pid_final)
-    _set_voice_identity(source=identity_source, profile=pid_final, display_name=nombre_final, similarity_value=similitud)
-    return _voice_response(
-        {"response": reply, "profile_id": pid_final, "nombre": nombre_final, "identity_source": identity_source, "should_listen": sl}
+    _set_voice_identity(
+        source=identity_source, profile=pid_final, display_name=nombre_final, similarity_value=similitud
     )
-
-
+    return _voice_response(
+        {
+            "response": reply,
+            "profile_id": pid_final,
+            "nombre": nombre_final,
+            "identity_source": identity_source,
+            "should_listen": sl,
+        }
+    )

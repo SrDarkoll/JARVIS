@@ -34,9 +34,7 @@ class ResponseComposer:
             return CommandResponse(
                 request_id=request.request_id,
                 text=text,
-                should_listen=(
-                    plan.requires_follow_up or text.rstrip().endswith("?")
-                ),
+                should_listen=(plan.requires_follow_up or text.rstrip().endswith("?")),
                 outcome="succeeded",
             )
 
@@ -49,16 +47,9 @@ class ResponseComposer:
             messages.append(message)
             seen_messages.add(message)
 
-        failed = any(
-            receipt.status in _FAILED_STATUSES for receipt in receipts
-        )
-        blocked = any(
-            receipt.status is ReceiptStatus.BLOCKED for receipt in receipts
-        )
-        all_duplicates = bool(receipts) and all(
-            receipt.status is ReceiptStatus.DUPLICATE
-            for receipt in receipts
-        )
+        failed = any(receipt.status in _FAILED_STATUSES for receipt in receipts)
+        blocked = any(receipt.status is ReceiptStatus.BLOCKED for receipt in receipts)
+        all_duplicates = bool(receipts) and all(receipt.status is ReceiptStatus.DUPLICATE for receipt in receipts)
 
         if not messages:
             if all_duplicates:
@@ -85,10 +76,7 @@ class ResponseComposer:
         if (
             self._synthesizer is not None
             and receipts
-            and all(
-                receipt.status is ReceiptStatus.SUCCEEDED
-                for receipt in receipts
-            )
+            and all(receipt.status is ReceiptStatus.SUCCEEDED for receipt in receipts)
             and not plan.requires_follow_up
         ):
             try:

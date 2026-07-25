@@ -24,9 +24,7 @@ class ControlledToolBlockedError(PermissionError):
 
     diagnostic_code = "tool_blocked"
     message_en = "I need explicit confirmation before performing that action."
-    message_es = (
-        "Necesito confirmacion explicita antes de realizar esa accion."
-    )
+    message_es = "Necesito confirmacion explicita antes de realizar esa accion."
 
     def __init__(self, public_message: str = "") -> None:
         super().__init__(self.diagnostic_code)
@@ -51,9 +49,7 @@ class ToolAuthorizationRequiredError(ControlledToolBlockedError):
 
     diagnostic_code = "tool_authorization_required"
     message_en = "Administrator authorization is required for that action."
-    message_es = (
-        "Se requiere autorizacion de administrador para realizar esa accion."
-    )
+    message_es = "Se requiere autorizacion de administrador para realizar esa accion."
 
 
 class ToolPolicyBlockedError(ControlledToolBlockedError):
@@ -104,18 +100,12 @@ class ToolExecutionService:
         self._records: OrderedDict[str, Future[ExecutionReceipt]] = OrderedDict()
 
     def _key(self, request: CommandRequest, step: ActionStep) -> str:
-        return (
-            f"{request.request_id}:{step.step_id}:{operation_signature(step)}"
-        )
+        return f"{request.request_id}:{step.step_id}:{operation_signature(step)}"
 
     def _trim_completed_records(self) -> None:
         while len(self._records) > self._max_records:
             completed_key = next(
-                (
-                    key
-                    for key, future in self._records.items()
-                    if future.done()
-                ),
+                (key for key, future in self._records.items() if future.done()),
                 None,
             )
             if completed_key is None:

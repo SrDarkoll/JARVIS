@@ -2,6 +2,7 @@
 TelegramManager: Isolation of the Telegram messaging service.
 Resolves concurrency risks and mixing of Asyncio with blocking threads.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -171,6 +172,7 @@ class TelegramManager:
         self.app.add_error_handler(self._error_handler)
 
         from utils.jarvis_i18n import get_bt
+
         bt = get_bt()
         log_warning("telegram_polling_start", detail=bt["log_telegram_active"])
         # We use run_polling so it doesn't try to catch signals (close_loop=False if necessary)
@@ -202,9 +204,7 @@ class TelegramManager:
                 return True
 
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            response = http_requests.post(
-                url, json={"chat_id": TELEGRAM_CHAT_ID, "text": texto_para_leer}, timeout=5
-            )
+            response = http_requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": texto_para_leer}, timeout=5)
             response.raise_for_status()
             return True
         except Exception as exc:

@@ -21,15 +21,61 @@ select = [
     "PL",    # pylint (errors only)
 ]
 ignore = [
+    "E402",      # Conditional imports after runtime/optional dependency guards
+    "E501",      # Ruff formatter cannot wrap every legacy string or diagnostic
     "PLR0913",   # Too many arguments
     "PLR2004",   # Magic value compared against variable
+    "PLR0911",   # Legacy command handlers still use early-return control flow
+    "PLR0912",   # Legacy routers require staged decomposition
+    "PLR0915",   # Legacy orchestration functions require staged decomposition
+    "PLC0415",   # Lazy imports preserve optional dependencies and avoid cycles
+    "PLW0603",   # Existing route/service initialization injects module state
     "B008",      # Do not perform function call in argument defaults
 ]
 
 [tool.pyright]
 include = ["src/backend"]
 exclude = ["**/__pycache__", "**/scratch", "**/.venv", "**/tests"]
+# Gradual-typing baseline. Diagnostics remain enabled for every backend file
+# not listed here. Keep entries file-specific; remove them as modules are typed.
+ignore = [
+    "src/backend/api/api_routes.py",
+    "src/backend/api/chat_routes.py",
+    "src/backend/api/security_routes.py",
+    "src/backend/api/status_routes.py",
+    "src/backend/api/tts_routes.py",
+    "src/backend/api/voice_routes.py",
+    "src/backend/core/brain/llm_engine.py",
+    "src/backend/core/brain/processor.py",
+    "src/backend/core/brain/prompts.py",
+    "src/backend/core/brain/tool_manager.py",
+    "src/backend/core/command_pipeline/orchestrator.py",
+    "src/backend/core/core_tools.py",
+    "src/backend/core/jarvis_context.py",
+    "src/backend/core/service_container.py",
+    "src/backend/core/unified_log.py",
+    "src/backend/engines/memory_rag.py",
+    "src/backend/jarvis_backend.py",
+    "src/backend/modules/spotify/api/client.py",
+    "src/backend/modules/spotify/api/playback.py",
+    "src/backend/modules/spotify/api/recommendations.py",
+    "src/backend/modules/spotify/desktop/controller.py",
+    "src/backend/modules/spotify/desktop/visual.py",
+    "src/backend/modules/spotify/desktop/windows.py",
+    "src/backend/services/monitoring_service.py",
+    "src/backend/services/security_manager.py",
+    "src/backend/services/telegram_manager.py",
+    "src/backend/tools/browser.py",
+    "src/backend/tools/search.py",
+    "src/backend/tools/system.py",
+    "src/backend/tools/utilities.py",
+    "src/backend/voice/identifier.py",
+    "src/backend/voice/pipeline.py",
+    "src/backend/voice/service.py",
+    "src/backend/voice/transcription.py",
+]
 typeCheckingMode = "basic"
+pythonVersion = "3.12"
 reportMissingImports = true
 reportMissingTypeStubs = false
 

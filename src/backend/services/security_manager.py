@@ -124,9 +124,7 @@ def _security_normalizar_policy(raw: dict | None) -> dict:
     if "strict_mode" in raw:
         policy["strict_mode"] = bool(raw.get("strict_mode"))
     if "allow_system_browser_fallback" in raw:
-        policy["allow_system_browser_fallback"] = bool(
-            raw.get("allow_system_browser_fallback")
-        )
+        policy["allow_system_browser_fallback"] = bool(raw.get("allow_system_browser_fallback"))
     if "max_tool_errors_5m" in raw:
         try:
             val = int(raw.get("max_tool_errors_5m"))
@@ -197,9 +195,7 @@ def _load_security_policy():
 def _save_security_policy():
     try:
         with SECURITY_LOCK:
-            snapshot = json.loads(
-                json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str)
-            )
+            snapshot = json.loads(json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str))
         with open(SECURITY_POLICY_FILE, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -251,13 +247,13 @@ def _security_tail(limit: int = 60) -> list[dict]:
             lines = f.readlines()[-max(1, int(limit)) :]
         out = []
         for line in lines:
-            line = (line or "").strip()
-            if not line:
+            normalized_line = (line or "").strip()
+            if not normalized_line:
                 continue
             try:
-                out.append(json.loads(line))
+                out.append(json.loads(normalized_line))
             except Exception:
-                out.append({"raw": line})
+                out.append({"raw": normalized_line})
     except Exception as e:
         print(f"[WARN _security_tail] error: {e}")
         return []
@@ -305,18 +301,14 @@ def _security_guard(
     profile_id: str | None = None,
 ) -> tuple[bool, str]:
     with SECURITY_LOCK:
-        policy = json.loads(
-            json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str)
-        )
+        policy = json.loads(json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str))
     blocked = set(policy.get("blocked_tools") or [])
 
     if tool_name in blocked:
         msg = f"Tool '{tool_name}' blocked by security policy."
         with SECURITY_LOCK:
             SECURITY_STATE["last_block_reason"] = msg
-            SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(
-                timespec="seconds"
-            )
+            SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(timespec="seconds")
         if callable(_obs_inc):
             _obs_inc("security_blocked_total", 1)
         _security_audit(
@@ -337,9 +329,7 @@ def _security_guard(
                 msg = f"Domain '{host}' outside of allowlist in strict mode."
                 with SECURITY_LOCK:
                     SECURITY_STATE["last_block_reason"] = msg
-                    SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(
-                        timespec="seconds"
-                    )
+                    SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(timespec="seconds")
                 if callable(_obs_inc):
                     _obs_inc("security_blocked_total", 1)
                 _security_audit(
@@ -354,14 +344,12 @@ def _security_guard(
 
         if tool_name == "abrir_aplicacion":
             app_name = str((args or {}).get("nombre_app", "")).strip().lower()
-            safe_apps = set(a.lower().strip() for a in (policy.get("safe_apps") or []))
+            safe_apps = {a.lower().strip() for a in (policy.get("safe_apps") or [])}
             if app_name and app_name not in safe_apps:
                 msg = f"Application '{app_name}' not permitted in strict mode."
                 with SECURITY_LOCK:
                     SECURITY_STATE["last_block_reason"] = msg
-                    SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(
-                        timespec="seconds"
-                    )
+                    SECURITY_STATE["last_block_ts"] = datetime.now().isoformat(timespec="seconds")
                 if callable(_obs_inc):
                     _obs_inc("security_blocked_total", 1)
                 _security_audit(
@@ -414,9 +402,7 @@ def _security_guard(
 
 def _security_snapshot() -> dict:
     with SECURITY_LOCK:
-        policy = json.loads(
-            json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str)
-        )
+        policy = json.loads(json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str))
         state = json.loads(json.dumps(SECURITY_STATE, ensure_ascii=False, default=str))
     return {
         "policy": policy,
@@ -441,9 +427,7 @@ def _proactive_push_alert(
         if not enabled:
             return False
         cooldown_s = int(cooldown or PROACTIVE_STATE.get("cooldown_seconds", 600))
-        last_sent = float(
-            PROACTIVE_STATE.get("last_alert_by_key", {}).get(key, 0.0) or 0.0
-        )
+        last_sent = float(PROACTIVE_STATE.get("last_alert_by_key", {}).get(key, 0.0) or 0.0)
         if last_sent and (now_ts - last_sent) < cooldown_s:
             return False
         PROACTIVE_STATE.setdefault("last_alert_by_key", {})[key] = now_ts
@@ -468,17 +452,9 @@ def _proactive_push_alert(
             key=key,
         )
 
-    if (
-        send_telegram
-        and "enviar_telegram_sync" in globals()
-        and callable(enviar_telegram_sync)
-    ):
+    if send_telegram and "enviar_telegram_sync" in globals() and callable(enviar_telegram_sync):
         try:
-            msg_to_send = (
-                normalizar_tratamiento_admin(message)
-                if callable(normalizar_tratamiento_admin)
-                else message
-            )
+            msg_to_send = normalizar_tratamiento_admin(message) if callable(normalizar_tratamiento_admin) else message
             threading.Thread(
                 target=enviar_telegram_sync,
                 args=(msg_to_send,),
@@ -492,11 +468,7 @@ def _proactive_push_alert(
 def _proactive_register_tool_error(tool_name: str, error_text: str):
     now_ts = _time.time()
     with PROACTIVE_LOCK:
-        win = [
-            x
-            for x in (PROACTIVE_STATE.get("tool_errors_window") or [])
-            if now_ts - float(x.get("ts", 0)) <= 300
-        ]
+        win = [x for x in (PROACTIVE_STATE.get("tool_errors_window") or []) if now_ts - float(x.get("ts", 0)) <= 300]
         win.append({"ts": now_ts, "tool": tool_name, "error": (error_text or "")[:160]})
         PROACTIVE_STATE["tool_errors_window"] = win
         total_5m = len(win)
@@ -546,9 +518,7 @@ def _proactive_snapshot(limit: int = 30) -> dict:
 def _actualizar_security_policy(payload: dict) -> dict:
     payload = payload or {}
     with SECURITY_LOCK:
-        current = json.loads(
-            json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str)
-        )
+        current = json.loads(json.dumps(SECURITY_POLICY, ensure_ascii=False, default=str))
         merged = dict(current)
         for key in [
             "strict_mode",

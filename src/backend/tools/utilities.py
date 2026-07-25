@@ -1,6 +1,8 @@
 """Utilidades variadas: clima, NBA, recordatorios, archivos, motivacional, rutinas, briefing, pantalla."""
 
+import base64
 import json
+import logging
 import os
 import re
 import threading
@@ -12,7 +14,9 @@ from core import jarvis_state
 from core.app_config import get_default_location
 from core.service_container import services
 from langchain_core.tools import tool
+from requests.exceptions import RequestException
 from utils.jarvis_auth import verificar_autorizacion
+from utils.jarvis_i18n import get_bt, get_current_language
 from utils.math_expression import (
     evaluate_math_expression,
     format_math_number,
@@ -316,8 +320,6 @@ def _format_weather_temperature(temp: str, lang: str) -> str:
 
 def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
     """Lógica interna para obtener el clima actual (wttr.in -> Open-Meteo)."""
-    from utils.jarvis_i18n import get_bt, get_current_language
-
     bt = get_bt()
     lang = get_current_language()
     default_location = _get_default_location()
@@ -358,10 +360,6 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
 
     # Proveedor 2: Open-Meteo
     try:
-        import time
-
-        from requests.exceptions import RequestException
-
         explicit_location = bool(str(ciudad or "").strip())
         use_configured_coordinates = (
             not explicit_location or str(ciudad_actual).strip().casefold() == str(default_location).strip().casefold()
@@ -398,21 +396,22 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
                     break  # Si status 200 pero la info no esta, no seguir iterando
                 elif r.status_code == 429:
                     if attempt < max_retries:
-                        time.sleep(1)
+                        _uti_time.sleep(1)
                         continue
                     break
                 else:
                     break
             except RequestException:
                 if attempt < max_retries:
-                    time.sleep(1)
+                    _uti_time.sleep(1)
                     continue
                 break
     except Exception as e:
         _warn_once("clima_openmeteo", f"Open-Meteo fallo: {e}")
 
     try:
-        from tools.search import buscar_en_internet
+        # Deferred to avoid the tools.utilities <-> tools.search import cycle.
+        from tools.search import buscar_en_internet  # noqa: PLC0415
 
         weather_query = (
             f"current weather in {ciudad_actual}" if lang.startswith("en") else f"clima actual en {ciudad_actual}"
@@ -421,8 +420,6 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
         temp = _extract_celsius_from_weather_text(res)
         return _sync_cache(res, temp)
     except Exception as e:
-        import logging
-
         logging.getLogger("JARVIS").warning(f"Error en fallback de clima: {e}")
 
     if wc:
@@ -433,8 +430,6 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
 @tool
 def obtener_clima(ciudad: str = "Madrid") -> str:
     """Obtiene el clima actual de una ciudad específica usando proveedores de red o Google."""
-    from utils.jarvis_i18n import get_current_language
-
     lang = get_current_language()
     desc, temp = _obtener_clima_logic(ciudad)
     temp_label = _format_weather_temperature(temp, lang)
@@ -457,10 +452,6 @@ def obtener_deportes_espn(
     """Obtiene marcadores o detalles de cualquier deporte vía ESPN (nba, nfl, mlb, soccer/eng.1, etc).
     Si event_id no está vacío, trae stats detallados de ese partido."""
     try:
-        import time
-
-        from requests.exceptions import RequestException
-
         # Validar y normalizar parámetros
         deporte = str(deporte).lower().strip()
         liga = str(liga).lower().strip()
@@ -557,21 +548,19 @@ def obtener_deportes_espn(
                                 }
                             )
 
-                    import json
-
                     widget_msg = f"\n\n<WIDGET>{json.dumps({'type': 'nba', 'data': {'games': games_json}})}</WIDGET>"
                     return f"Resumen {liga.upper()}:\n" + "\n".join(res) + widget_msg
 
                 elif r.status_code == 429:
                     if attempt < max_retries:
-                        time.sleep(1)
+                        _uti_time.sleep(1)
                         continue
                     return f"Error ESPN Rate Limit (codigo {r.status_code})"
                 else:
                     return f"Error ESPN: {r.status_code}"
             except RequestException:
                 if attempt < max_retries:
-                    time.sleep(1)
+                    _uti_time.sleep(1)
                     continue
                 return f"Error network fetching {liga.upper()} games."
     except Exception as e:
@@ -636,8 +625,6 @@ def frase_motivacional() -> str:
         )
         return res.content.strip()
     except Exception as e:
-        import logging
-
         logging.getLogger("JARVIS").warning(f"Error generando frase: {e}")
         return "El éxito es la mejor venganza, Administrador."
 
@@ -652,8 +639,9 @@ def analizar_pantalla() -> str:
         bloqueo = _bloqueo_si_no_autorizado()
         if bloqueo:
             return bloqueo
-        import pyautogui
-        from PIL import Image, ImageFilter, ImageStat
+        # Optional desktop dependencies must not be required for headless/core mode.
+        import pyautogui  # noqa: PLC0415
+        from PIL import Image, ImageFilter, ImageStat  # noqa: PLC0415
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         os.makedirs(os.path.join(ROOT_DIR, "media", "screenshots"), exist_ok=True)
@@ -677,8 +665,6 @@ def analizar_pantalla() -> str:
         edge_ratio = sum(eh[40:]) / float(total_px)
         densidad_ui = "alta" if edge_ratio > 0.22 else "media" if edge_ratio > 0.11 else "baja"
 
-        import base64
-
         img = Image.open(ruta)
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -701,7 +687,7 @@ def analizar_pantalla() -> str:
         multimodal_res = "Análisis visual no available (motor no configurado)."
 
         if llm_v:
-            from langchain_core.messages import HumanMessage
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
 
             content = [
                 {"type": "text", "text": prompt},
@@ -736,7 +722,7 @@ def recargar_plugins() -> str:
     """Recarga plugins dinámicos desde src/backend/plugins."""
     if services.recargar_plugins:
         try:
-            from core.brain.tool_manager import _recargar_plugins_runtime
+            from core.brain.tool_manager import _recargar_plugins_runtime  # noqa: PLC0415
 
             return _recargar_plugins_runtime()
         except Exception as e:
@@ -838,8 +824,6 @@ def ejecutar_rutina(nombre: str) -> str:
 # Briefing
 # ─────────────────────────────────────────
 def obtener_noticias_newsapi(lang: str | None = None):
-    from utils.jarvis_i18n import get_current_language
-
     lang = (lang or get_current_language() or "en").strip().lower()
     news_lang = "es" if lang.startswith("es") else "en"
     temas = TEMAS_NEWSAPI_ES if news_lang == "es" else TEMAS_NEWSAPI
@@ -868,8 +852,6 @@ def obtener_noticias_newsapi(lang: str | None = None):
 
 
 def _cargar_briefing_persistido():
-    from utils.jarvis_i18n import get_current_language
-
     nc = services.noticias_cache
     if nc is None:
         return
@@ -885,8 +867,6 @@ def _cargar_briefing_persistido():
                     resumen_limpio = re.sub(r"\s+", " ", resumen_limpio).strip()
                     data["resumen"] = resumen_limpio
                     nc.update(data)
-                    from utils.jarvis_i18n import get_bt
-
                     bt = get_bt()
                     print(bt["log_briefing_recovered"])
         except Exception:
@@ -895,8 +875,6 @@ def _cargar_briefing_persistido():
 
 def generar_resumen_noticias(forzar: bool = False):
     """Genera el resumen de noticias del día usando NewsAPI y el LLM."""
-    from utils.jarvis_i18n import get_bt, get_current_language
-
     nc = services.noticias_cache
     if nc is None:
         print("[WARN] Cannot generate briefing without injected noticias_cache.")

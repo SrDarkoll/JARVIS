@@ -55,9 +55,7 @@ def transcribir_dudoso(
                 beam_size=beam_size,
                 condition_on_previous_text=False,
             )
-            result = normalizar_transcript_hint(
-                reconstruir_transcripcion_por_pausas(list(segments))
-            )
+            result = normalizar_transcript_hint(reconstruir_transcripcion_por_pausas(list(segments)))
             if result:
                 return result
         except Exception as e:

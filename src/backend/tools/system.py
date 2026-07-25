@@ -377,6 +377,7 @@ def ejecutar_comando_terminal(comando: str) -> str:
                 text=True,
                 timeout=20,
                 shell=False,
+                check=False,
             )
         else:
             proc = subprocess.run(
@@ -385,6 +386,7 @@ def ejecutar_comando_terminal(comando: str) -> str:
                 text=True,
                 timeout=20,
                 shell=True,
+                check=False,
             )
 
         stdout = (proc.stdout or "").strip()

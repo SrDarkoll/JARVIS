@@ -31,9 +31,7 @@ class GroqPlanner:
         if max_steps < 1:
             raise ValueError("invalid_groq_max_steps")
         self._model = model
-        self._allowed_tools = frozenset(
-            str(name).strip() for name in allowed_tools if str(name).strip()
-        )
+        self._allowed_tools = frozenset(str(name).strip() for name in allowed_tools if str(name).strip())
         self._max_steps = int(max_steps)
 
     def plan(
@@ -53,9 +51,7 @@ class GroqPlanner:
 
         response = self._model.invoke(planner_messages)
         tool_calls = tuple(getattr(response, "tool_calls", None) or ())
-        content = brain_utils._limpiar_thinking(
-            str(getattr(response, "content", "") or "")
-        )
+        content = brain_utils._limpiar_thinking(str(getattr(response, "content", "") or ""))
 
         if not tool_calls:
             return ActionPlan(
@@ -71,8 +67,7 @@ class GroqPlanner:
             raise ValueError("groq_plan_too_large")
 
         steps = tuple(
-            self._parse_tool_call(tool_call, index=index)
-            for index, tool_call in enumerate(tool_calls, start=1)
+            self._parse_tool_call(tool_call, index=index) for index, tool_call in enumerate(tool_calls, start=1)
         )
         validate_plan_operations(steps)
         return ActionPlan(

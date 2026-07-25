@@ -5,6 +5,7 @@ Exports principales:
   from voice.pipeline import transcribir_audio, normalizar_a_wav, ...
   from voice.identifier import VoiceIdentifier
 """
+
 from voice.identifier import VOICE_ID_DISPONIBLE, VoiceIdentifier, voice_id_motor
 from voice.pipeline import (
     OWNER_SIMILARITY_OVERRIDE,
@@ -44,5 +45,3 @@ __all__ = [
     "RESERVED_OWNER_ALIASES",
     "OWNER_SIMILARITY_OVERRIDE",
 ]
-
-

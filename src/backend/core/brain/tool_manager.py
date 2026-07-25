@@ -41,11 +41,7 @@ def _resultado_parece_error(texto: str) -> bool:
         return False
     if "access_denied" in t:
         return False
-    t = "".join(
-        character
-        for character in unicodedata.normalize("NFKD", t)
-        if not unicodedata.combining(character)
-    )
+    t = "".join(character for character in unicodedata.normalize("NFKD", t) if not unicodedata.combining(character))
     patrones = [
         "error",
         "could not",
@@ -81,9 +77,7 @@ def _cargar_plugins_dinamicos(app_ref, base_tools: list) -> list:
         plugin_name = os.path.splitext(fname)[0]
         plugin_path = os.path.join(PLUGINS_DIR, fname)
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"jarvis_plugin_{plugin_name}", plugin_path
-            )
+            spec = importlib.util.spec_from_file_location(f"jarvis_plugin_{plugin_name}", plugin_path)
             if not spec or not spec.loader:
                 continue
             module = importlib.util.module_from_spec(spec)
@@ -105,7 +99,7 @@ def _cargar_plugins_dinamicos(app_ref, base_tools: list) -> list:
 
             try:
                 declared = provider(context)
-            except:
+            except TypeError:
                 declared = provider()
 
             if declared is None:
@@ -394,9 +388,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             if not verificar_autorizacion(profile_id):
                 from core.brain.history_manager import _registrar_accion_pendiente_auth
 
-                _registrar_accion_pendiente_auth(
-                    profile_id, tool_name, args, user_input
-                )
+                _registrar_accion_pendiente_auth(profile_id, tool_name, args, user_input)
                 outcome = "blocked"
                 result_preview = "tool_authorization_required"
                 raise ToolAuthorizationRequiredError()
@@ -428,9 +420,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             raise _ToolReportedFailure("tool_reported_failure")
 
         elapsed = (_time.perf_counter() - started) * 1000.0
-        obs_tool(
-            tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt
-        )
+        obs_tool(tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt)
         return _finish(result, "ok")
     except (ControlledToolBlockedError, LookupError, _ToolReportedFailure):
         raise
@@ -514,29 +504,21 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
     user_input = str(context.get("user_input") or tool_name)
     request = CommandRequest.create(
         text=user_input,
-        profile_id=(
-            context.get("profile_id") or jarvis_state.get_active_profile_id()
-        ),
+        profile_id=(context.get("profile_id") or jarvis_state.get_active_profile_id()),
         channel=context.get("source", "unknown"),
         request_id=context.get("request_id"),
         language=get_current_language(),
         metadata={"_tool_map": tool_map},
     )
     step = ActionStep(
-        step_id=str(
-            context.get("step_id")
-            or tc.get("id")
-            or f"legacy-{uuid4()}"
-        ),
+        step_id=str(context.get("step_id") or tc.get("id") or f"legacy-{uuid4()}"),
         tool_name=tool_name,
         arguments=tc.get("args") or {},
     )
     return _receipt_value(_tool_execution_service.execute(request, step))
 
 
-def _intentar_autocuracion(
-    tool_name: str, args: dict, user_input: str, motivo: str = ""
-) -> str | None:
+def _intentar_autocuracion(tool_name: str, args: dict, user_input: str, motivo: str = "") -> str | None:
     obs_inc("autocure_attempts", 1)
     obs_event("autocure_attempt", tool=tool_name, args=args, motivo=(motivo or "")[:200])
     try:
@@ -569,8 +551,8 @@ def _intentar_autocuracion(
             try:
                 core_tools._ajustar_volumen_absoluto(int(valor))
                 return f"Volume adjusted to {valor}% by autocuration."
-            except:
+            except Exception:
                 pass
-    except:
+    except Exception:
         pass
     return None

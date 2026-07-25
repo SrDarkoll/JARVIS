@@ -39,10 +39,7 @@ else:
     if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_ERROR:
         print("  [SPOTIFY] Invalid redirect URI. Use an explicit loopback IP.")
     else:
-        print(
-            "  [SPOTIFY] Web API credentials are not configured; "
-            "Windows desktop fallback remains available."
-        )
+        print("  [SPOTIFY] Web API credentials are not configured; Windows desktop fallback remains available.")
 
 _SPOTIFY_USER_COUNTRY = ""
 _PREFIJOS_SPOTIFY = re.compile(
@@ -192,9 +189,7 @@ def _spotify_album_tracks(album_id: str, limit: int = 50) -> list:
     market = _spotify_market_objetivo()
     try:
         if market:
-            return (sp.album_tracks(album_id, limit=limit, market=market) or {}).get(
-                "items", []
-            )
+            return (sp.album_tracks(album_id, limit=limit, market=market) or {}).get("items", [])
         return (sp.album_tracks(album_id, limit=limit) or {}).get("items", [])
     except TypeError:
         try:
@@ -239,9 +234,7 @@ def _spotify_access_token() -> str | None:
 
     try:
         # Spotipy 2.26 warns for the legacy as_dict=True return shape.
-        return _extract_token(
-            auth_manager.get_access_token(as_dict=False, check_cache=False)
-        )
+        return _extract_token(auth_manager.get_access_token(as_dict=False, check_cache=False))
     except Exception as error:
         _spotify_log_error("get_access_token", error)
 
@@ -291,9 +284,7 @@ def _spotify_track_actual_id() -> str | None:
         return None
 
 
-def _spotify_mejor_track(
-    cancion: str, tracks: list, track_hint: str = "", artist_hint: str = ""
-):
+def _spotify_mejor_track(cancion: str, tracks: list, track_hint: str = "", artist_hint: str = ""):
     if not tracks:
         return None
     if len(tracks) == 1:
@@ -366,27 +357,34 @@ def _spotify_classify_error(err: Exception | str) -> str:
     """Clasifica el error para dar mensaje específico."""
     txt = str(err or "")
     normalized = txt.strip().lower()
+    result = "unknown"
     if normalized in {"auth", "network", "no_device", "premium", "quota"}:
-        return normalized
+        result = normalized
 
-    if err.__class__.__name__ in ("SpotifyException", "HTTPError"):
+    if result == "unknown" and err.__class__.__name__ in ("SpotifyException", "HTTPError"):
         status = getattr(err, "status", None) or getattr(err, "code", None)
-        if status == 401 or "token" in txt.lower() and "invalid" in txt.lower():
-            return "auth"
-        if status == 403 or "premium" in txt.lower() or "restrict" in txt.lower():
-            return "premium"
-        if status == 429 or "rate limit" in txt.lower() or "cuota" in txt.lower():
-            return "quota"
+        if status == 401 or ("token" in normalized and "invalid" in normalized):
+            result = "auth"
+        elif status == 403 or "premium" in normalized or "restrict" in normalized:
+            result = "premium"
+        elif status == 429 or "rate limit" in normalized or "cuota" in normalized:
+            result = "quota"
 
-    if any(p in txt.lower() for p in [
-        "no active device", "no_active_device",
-        "player command failed: no active device found",
-        "404", "not found", "dispositivo",
-    ]):
-        return "no_device"
-    if any(p in txt.lower() for p in ["network", "connection", "timeout", "dns"]):
-        return "network"
-    return "unknown"
+    if result == "unknown" and any(
+        p in normalized
+        for p in [
+            "no active device",
+            "no_active_device",
+            "player command failed: no active device found",
+            "404",
+            "not found",
+            "dispositivo",
+        ]
+    ):
+        result = "no_device"
+    elif result == "unknown" and any(p in normalized for p in ["network", "connection", "timeout", "dns"]):
+        result = "network"
+    return result
 
 
 def _spotify_transfer_and_play(track_uri: str, device_id: str) -> tuple[bool, str | None]:

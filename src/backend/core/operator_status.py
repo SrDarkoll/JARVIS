@@ -130,14 +130,8 @@ def _memory_summary(active_profile_id: str, profiles: dict[str, Any]) -> dict[st
 
 def _tool_guard_summary(policy_overrides: dict[str, Any] | None) -> dict[str, Any]:
     policies = export_tool_policy_table(policy_overrides or {})
-    critical = [
-        name
-        for name, policy in policies.items()
-        if str(policy.get("risk_level") or "").lower() == "critical"
-    ]
-    confirmation = [
-        name for name, policy in policies.items() if bool(policy.get("requires_confirmation"))
-    ]
+    critical = [name for name, policy in policies.items() if str(policy.get("risk_level") or "").lower() == "critical"]
+    confirmation = [name for name, policy in policies.items() if bool(policy.get("requires_confirmation"))]
     audited = [name for name, policy in policies.items() if bool(policy.get("audit_log"))]
     return {
         "policies": policies,
@@ -169,9 +163,7 @@ def build_operator_status(
     tool_guard = _tool_guard_summary(policy_overrides)
     mission_summaries = [summarize_mission(_safe_dict(plan), tool_guard["policies"]) for plan in plans]
     active_missions = [
-        mission
-        for mission in mission_summaries
-        if str(mission.get("status") or "").lower() in MISSION_ACTIVE_STATUSES
+        mission for mission in mission_summaries if str(mission.get("status") or "").lower() in MISSION_ACTIVE_STATUSES
     ]
 
     security = _safe_dict(security_snapshot)

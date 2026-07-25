@@ -82,11 +82,11 @@ class TTSEngine:
         out = []
         cur = ""
         for fr in frases:
-            fr = fr.strip()
-            if not fr:
+            phrase = fr.strip()
+            if not phrase:
                 continue
-            if len(fr) > max_chars:
-                words = fr.split()
+            if len(phrase) > max_chars:
+                words = phrase.split()
                 tmp = ""
                 for w in words:
                     cand = (tmp + " " + w).strip()
@@ -100,13 +100,13 @@ class TTSEngine:
                     out.append(tmp)
                 continue
 
-            cand = (cur + " " + fr).strip() if cur else fr
+            cand = (cur + " " + phrase).strip() if cur else phrase
             if len(cand) <= max_chars:
                 cur = cand
             else:
                 if cur:
                     out.append(cur)
-                cur = fr
+                cur = phrase
         if cur:
             out.append(cur)
         return out
@@ -123,9 +123,7 @@ class TTSEngine:
                 )
             else:
                 self.speaker_id = None
-            print(
-                f"[TTS] Base voice loaded (sample_rate={self.voice.config.sample_rate})."
-            )
+            print(f"[TTS] Base voice loaded (sample_rate={self.voice.config.sample_rate}).")
         except Exception as e:
             print(f"[ERROR TTS] Could not load Piper: {e}")
 
@@ -174,9 +172,7 @@ class TTSEngine:
                 print(f"[ERROR TTS] Could not initialize RVC: {e}")
                 self.rvc = None
         else:
-            print(
-                "[TTS] RVC not detected or .pth file missing. JARVIS will speak with generic Piper voice."
-            )
+            print("[TTS] RVC not detected or .pth file missing. JARVIS will speak with generic Piper voice.")
 
     def cargar_reglas(self):
         loaded = {}
@@ -266,17 +262,13 @@ class TTSEngine:
             raise RuntimeError("Empty TTS text.")
 
         # Synthesis configuration with speaker_id for multi-speaker models
-        syn_cfg = (
-            SynthesisConfig(speaker_id=self.speaker_id) if self.speaker_id is not None else None
-        )
+        syn_cfg = SynthesisConfig(speaker_id=self.speaker_id) if self.speaker_id is not None else None
 
         import time as _t
 
         t_lock = _t.time()
         if not self.synthesis_lock.acquire(timeout=8):
-            raise RuntimeError(
-                f"synthesis_lock occupied for {_t.time() - t_lock:.1f}s (another thread synthesizing)"
-            )
+            raise RuntimeError(f"synthesis_lock occupied for {_t.time() - t_lock:.1f}s (another thread synthesizing)")
         print(f"[TTS Engine] Lock acquired in {_t.time() - t_lock:.2f}s, {len(segmentos)} segments")
         try:
             buf_out = io.BytesIO()
@@ -342,9 +334,7 @@ class TTSEngine:
             audio_bytes = buf_out.read()
         finally:
             self.synthesis_lock.release()
-            print(
-                f"[TTS Engine] Lock released, audio: {len(audio_bytes) if 'audio_bytes' in locals() else 0} bytes"
-            )
+            print(f"[TTS Engine] Lock released, audio: {len(audio_bytes) if 'audio_bytes' in locals() else 0} bytes")
         # --- RVC block (optional, if active) ---
         if self.rvc:
             input_wav = None

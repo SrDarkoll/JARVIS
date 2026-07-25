@@ -83,18 +83,25 @@ def _buscar_en_brave(query: str) -> str:
     from core.jarvis_config import BRAVE_API_KEY
 
     if not BRAVE_API_KEY:
-        return (
-            "I could not query the network porque BRAVE_API_KEY no esta configurada "
-            "en este entorno."
-        )
+        return "I could not query the network porque BRAVE_API_KEY no esta configurada en este entorno."
 
     ahora = datetime.now()
     ahora.strftime("%d/%m/%Y")
     query_mod = query
     query_lower = query.lower()
     palabras_tiempo = [
-        "hoy", "ayer", "mañana", "manana", "clima", "partido",
-        "nba", "noticias", "precio", "valor", "marcador", "estreno",
+        "hoy",
+        "ayer",
+        "mañana",
+        "manana",
+        "clima",
+        "partido",
+        "nba",
+        "noticias",
+        "precio",
+        "valor",
+        "marcador",
+        "estreno",
     ]
 
     palabras = query.strip().split()
@@ -106,14 +113,9 @@ def _buscar_en_brave(query: str) -> str:
     if es_nombre_propio:
         query_mod = f'"{query}"'
         print("  [SEARCH OPTIMIZER] Nombre propio detectado — usando comillas exactas.")
-    if (
-        any(p in query_lower for p in palabras_tiempo)
-        and str(ahora.year) not in query
-    ):
+    if any(p in query_lower for p in palabras_tiempo) and str(ahora.year) not in query:
         query_mod = f"{query} {ahora.year}"
-        print(
-            f"  [SEARCH OPTIMIZER] Inyectando año '{ahora.year}' para mayor precisión."
-        )
+        print(f"  [SEARCH OPTIMIZER] Inyectando año '{ahora.year}' para mayor precisión.")
 
     url = "https://api.search.brave.com/res/v1/web/search"
     headers = {
@@ -153,7 +155,7 @@ def _buscar_en_brave(query: str) -> str:
                             res.append(f"- {title}")
                     resultado = "\n".join(res)
                     return resultado
-                elif r.status_code == 429: # Rate limit
+                elif r.status_code == 429:  # Rate limit
                     if attempt < max_retries:
                         time.sleep(2)
                         continue
@@ -201,6 +203,7 @@ def _buscar_en_newsapi(query: str) -> list:
         import time
 
         from requests.exceptions import RequestException
+
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
@@ -261,9 +264,7 @@ def _buscar_en_youtube(query: str) -> list:
             "maxResults": 3,
             "key": YOUTUBE_API_KEY,
         }
-        r = http_requests.get(
-            "https://www.googleapis.com/youtube/v3/search", params=params, timeout=8
-        )
+        r = http_requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=8)
         if r.status_code == 200:
             items = r.json().get("items", [])
             return [
@@ -329,17 +330,10 @@ def _buscar_multi_fuente(query: str, es_youtube: bool = False) -> str:
     resultados = []
     fuentes_a_consultar = []
     if es_youtube:
-        fuentes_a_consultar.append(
-            {"tipo": "youtube", "fn": lambda: _buscar_en_youtube(query), "items": []}
-        )
+        fuentes_a_consultar.append({"tipo": "youtube", "fn": lambda: _buscar_en_youtube(query), "items": []})
     else:
-        fuentes_a_consultar.append(
-            {"tipo": "brave", "fn": lambda: _buscar_en_internet_api(query), "items": []}
-        )
-        if any(
-            p in query_lower
-            for p in ["noticia", "noticias", "actual", "último", "reciente"]
-        ):
+        fuentes_a_consultar.append({"tipo": "brave", "fn": lambda: _buscar_en_internet_api(query), "items": []})
+        if any(p in query_lower for p in ["noticia", "noticias", "actual", "último", "reciente"]):
             fuentes_a_consultar.append(
                 {
                     "tipo": "newsapi",
@@ -361,14 +355,14 @@ def _buscar_multi_fuente(query: str, es_youtube: bool = False) -> str:
                         colon_idx = rest.find(": ")
                         if colon_idx != -1:
                             title = rest[:colon_idx].strip()
-                            desc_url = rest[colon_idx + 2:]
+                            desc_url = rest[colon_idx + 2 :]
                             # Remove trailing "(url)" to extract the description.
                             # Use a URL-aware pattern so Wikipedia-style URLs
                             # like (https://…/Example_(disambiguation)) work too.
                             paren_m = re.search(r"\s*\(https?://\S+\)\s*$", desc_url)
                             if not paren_m:
                                 paren_m = re.search(r"\s*\([^)]*\)\s*$", desc_url)
-                            desc = desc_url[:paren_m.start()].strip() if paren_m else desc_url.strip()
+                            desc = desc_url[: paren_m.start()].strip() if paren_m else desc_url.strip()
                             items.append({"title": title, "desc": desc, "fecha": ""})
                 resultados.append({"tipo": "brave", "items": items})
             else:
@@ -391,11 +385,7 @@ def _buscar_multi_fuente(query: str, es_youtube: bool = False) -> str:
     fusionado = _fusionar_resultados(resultados, "general")
     if fusionado:
         return fusionado
-    return _limpiar_respuesta(
-        resultados[0].get("items", "")
-        if resultados
-        else f"Sin resultados para '{query}'."
-    )
+    return _limpiar_respuesta(resultados[0].get("items", "") if resultados else f"Sin resultados para '{query}'.")
 
 
 # ─────────────────────────────────────────
@@ -414,6 +404,3 @@ def buscar_en_internet(query: str) -> str:
         return _buscar_en_internet_impl(query)[:1200]
     except Exception:
         return "I could not query the internet at this time."
-
-
-

@@ -29,9 +29,7 @@ def build_voice_debug(
         "client_profile_id": client_profile_id,
         "pending_stage": getattr(pending_stage, "value", str(pending_stage or "")),
         "transcript_hint": transcript_hint,
-        "transcript_confidence": (
-            transcript_confidence if transcript_confidence is not None else -1.0
-        ),
+        "transcript_confidence": (transcript_confidence if transcript_confidence is not None else -1.0),
         "audio_bytes": len(audio_bytes or b""),
         "content_type": content_type,
         "route_mode": (route_hint or {}).get("mode") or "",

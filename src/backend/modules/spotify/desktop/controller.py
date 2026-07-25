@@ -392,9 +392,7 @@ class SpotifyDesktopController:
                 generation,
                 retry_search=cold_start,
             )
-            decision_status = (
-                decision.status.value if decision is not None else "cancelled"
-            )
+            decision_status = decision.status.value if decision is not None else "cancelled"
             if decision_error:
                 states.append(AutomationState.FAILED)
                 return SpotifyDesktopResult(

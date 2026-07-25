@@ -90,17 +90,14 @@ def _extraer_facts_de_input(input_text: str) -> list[str]:
     nuevos = []
 
     if ("admin" in t or "administrador" in t) and (
-        "llamame" in t or "dime" in t or "tratame" in t
-        or "dirigete" in t or "siempre" in t
+        "llamame" in t or "dime" in t or "tratame" in t or "dirigete" in t or "siempre" in t
     ):
         nuevos.append("Tratamiento preferido: Administrador")
 
     if "navegador predeterminado" in t or "navegador por defecto" in t:
         nuevos.append("Navegador preferido: Predeterminado del sistema")
 
-    if "spotify" in t and any(
-        k in t for k in ["similar", "shuffle", "automi", "aleatorio"]
-    ):
+    if "spotify" in t and any(k in t for k in ["similar", "shuffle", "automi", "aleatorio"]):
         nuevos.append("Spotify: AutoMix con canciones similares")
 
     return nuevos
@@ -167,10 +164,7 @@ def _limpiar_historial_memoria(history: list) -> list:
         if "vengadores" in txt or "avengers" in txt:
             continue
         if isinstance(m, AIMessage):
-            if (
-                "situacion con los vengadores" in txt
-                or "prioridad con los vengadores" in txt
-            ):
+            if "situacion con los vengadores" in txt or "prioridad con los vengadores" in txt:
                 continue
             if "no hay datos nuevos importantes" in txt and "vengadores" in txt:
                 continue
@@ -364,9 +358,7 @@ def _obtener_contexto_memoria_entrelazada(profile_id: str):
     }
 
 
-def _sincronizar_memoria_entrelazada(
-    profile_id: str, user_input: str, ai_reply: str
-) -> None:
+def _sincronizar_memoria_entrelazada(profile_id: str, user_input: str, ai_reply: str) -> None:
     pid = _normalizar_profile_id(profile_id)
     if pid == SHARED_PROFILE_ID:
         return
@@ -406,4 +398,3 @@ except Exception as e:
 if SHARED_PROFILE_ID not in jarvis_state._perfiles_memoria:
     with memory_manager.lock:
         jarvis_state._perfiles_memoria[SHARED_PROFILE_ID] = {"history": [], "facts": ""}
-

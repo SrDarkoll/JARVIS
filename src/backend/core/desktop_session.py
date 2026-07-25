@@ -76,9 +76,7 @@ def _ensure_directory(path: str) -> bool:
     cleanup_failed = False
     try:
         os.makedirs(path, exist_ok=True)
-        descriptor, probe_path = tempfile.mkstemp(
-            prefix=".jarvis-write-probe-", dir=path
-        )
+        descriptor, probe_path = tempfile.mkstemp(prefix=".jarvis-write-probe-", dir=path)
         os.close(descriptor)
         descriptor = -1
         os.remove(probe_path)
@@ -117,9 +115,7 @@ def _write_session(path: str, payload: dict) -> bool:
     descriptor = -1
     temp_path = ""
     try:
-        descriptor, temp_path = tempfile.mkstemp(
-            prefix=".desktop-session-", suffix=".tmp", dir=directory
-        )
+        descriptor, temp_path = tempfile.mkstemp(prefix=".desktop-session-", suffix=".tmp", dir=directory)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             descriptor = -1
             json.dump(payload, handle, ensure_ascii=False, indent=2)
@@ -171,9 +167,7 @@ def load_desktop_session(port: int = 5002, *, persist: bool = True) -> DesktopSe
             shutil.rmtree(cleanup_dir, ignore_errors=True)
             raise OSError("JARVIS could not create temporary desktop storage")
         path = _session_file(cleanup_dir)
-        logger.warning(
-            "Desktop persistence unavailable; using temporary WebView storage."
-        )
+        logger.warning("Desktop persistence unavailable; using temporary WebView storage.")
 
     session = DesktopSession(
         origin=origin,

@@ -6,6 +6,7 @@ Responsabilidades:
 - Gestión de sesiones de registro de invitados
 - Normalización de nombres y slugs
 """
+
 from __future__ import annotations
 
 import io
@@ -27,17 +28,57 @@ from voice.session_store import VoiceSessionMapping, VoiceSessionStore
 # CONSTANTES
 # =========================================================
 RESERVED_OWNER_ALIASES = {"admin", "administrador", "creador", "sistema"}
-OWNER_SIMILARITY_OVERRIDE = float(
-    (os.getenv("VOICE_ID_OWNER_OVERRIDE") or "0.58").strip() or "0.58"
-)
+OWNER_SIMILARITY_OVERRIDE = float((os.getenv("VOICE_ID_OWNER_OVERRIDE") or "0.58").strip() or "0.58")
 
 _NO_ES_NOMBRE = {
-    "quien", "quién", "soy", "yo", "él", "ella", "usted", "nada", "algo",
-    "hola", "oye", "jarvis", "si", "sí", "no", "bueno", "pues", "maldito",
-    "mismo", "igual", "lo mismo", "eso", "esto", "aqui", "aquí", "ok",
-    "invitado", "usuario", "persona", "alguien", "nadie", "todos",
-    "who", "what", "where", "when", "why", "how", "me", "my", "name",
-    "you", "your", "guest", "user", "person", "someone", "nobody",
+    "quien",
+    "quién",
+    "soy",
+    "yo",
+    "él",
+    "ella",
+    "usted",
+    "nada",
+    "algo",
+    "hola",
+    "oye",
+    "jarvis",
+    "si",
+    "sí",
+    "no",
+    "bueno",
+    "pues",
+    "maldito",
+    "mismo",
+    "igual",
+    "lo mismo",
+    "eso",
+    "esto",
+    "aqui",
+    "aquí",
+    "ok",
+    "invitado",
+    "usuario",
+    "persona",
+    "alguien",
+    "nadie",
+    "todos",
+    "who",
+    "what",
+    "where",
+    "when",
+    "why",
+    "how",
+    "me",
+    "my",
+    "name",
+    "you",
+    "your",
+    "guest",
+    "user",
+    "person",
+    "someone",
+    "nobody",
 }
 
 _PENDING_VOICE_REGISTRATION_TTL = 300
@@ -49,16 +90,12 @@ _VOICE_SESSION_STORE = VoiceSessionStore(
 _PENDING_VOICE_REGISTRATION = VoiceSessionMapping(_VOICE_SESSION_STORE)
 
 try:
-    WHISPER_BEAM_SIZE = max(
-        1, int((os.getenv("JARVIS_WHISPER_BEAM_SIZE") or "1").strip() or "1")
-    )
+    WHISPER_BEAM_SIZE = max(1, int((os.getenv("JARVIS_WHISPER_BEAM_SIZE") or "1").strip() or "1"))
 except Exception:
     WHISPER_BEAM_SIZE = 1
 
 try:
-    HINT_MIN_CONFIDENCE = float(
-        (os.getenv("JARVIS_VOICE_HINT_MIN_CONFIDENCE") or "0.58").strip() or "0.58"
-    )
+    HINT_MIN_CONFIDENCE = float((os.getenv("JARVIS_VOICE_HINT_MIN_CONFIDENCE") or "0.58").strip() or "0.58")
 except Exception:
     HINT_MIN_CONFIDENCE = 0.58
 
@@ -74,6 +111,7 @@ def get_active_whisper_language() -> str:
 # =========================================================
 # AUDIO: CONVERSIÓN
 # =========================================================
+
 
 def bytes_es_wav_valido(audio_bytes: bytes) -> bool:
     if not audio_bytes or len(audio_bytes) < 44:
@@ -91,10 +129,7 @@ def wav_ya_optimizado(audio_bytes: bytes) -> bool:
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
             return (
-                wf.getnchannels() == 1
-                and wf.getframerate() == 16000
-                and wf.getsampwidth() == 2
-                and wf.getnframes() > 0
+                wf.getnchannels() == 1 and wf.getframerate() == 16000 and wf.getsampwidth() == 2 and wf.getnframes() > 0
             )
     except Exception:
         return False
@@ -112,9 +147,11 @@ def normalizar_a_wav(audio_bytes: bytes) -> tuple[bytes, bool]:
     except AudioConversionError:
         return audio_bytes, False
 
+
 # =========================================================
 # TRANSCRIPCIÓN
 # =========================================================
+
 
 def normalizar_transcript_hint(texto: str) -> str:
     texto = reparar_unicode(str(texto or "")).strip()
@@ -156,16 +193,46 @@ def hint_necesita_reintento_whisper(
     token_count = len(tokens)
     cleaned_lower = " ".join(tokens).lower().strip()
     if cleaned_lower in {
-        "jarvis", "jarvi", "jarbis", "jarbi",
-        "jarviz", "jarvix", "jarves", "jarbiz",
-        "jarvys", "jarvs", "jarbes", "jarbez",
-        "yarvis", "yarvi", "yarbis", "yarbi",
-        "yarbiz", "yarviz", "yarvix", "yarves",
-        "yarvys", "yarvs", "yarbes", "yarbez",
-        "harvis", "harvi", "harbis", "harbi",
-        "harviz", "harvix", "harves", "harbiz",
-        "charvis", "charvi", "charbis", "charbi",
-        "garvis", "garvi", "garbis", "garbi",
+        "jarvis",
+        "jarvi",
+        "jarbis",
+        "jarbi",
+        "jarviz",
+        "jarvix",
+        "jarves",
+        "jarbiz",
+        "jarvys",
+        "jarvs",
+        "jarbes",
+        "jarbez",
+        "yarvis",
+        "yarvi",
+        "yarbis",
+        "yarbi",
+        "yarbiz",
+        "yarviz",
+        "yarvix",
+        "yarves",
+        "yarvys",
+        "yarvs",
+        "yarbes",
+        "yarbez",
+        "harvis",
+        "harvi",
+        "harbis",
+        "harbi",
+        "harviz",
+        "harvix",
+        "harves",
+        "harbiz",
+        "charvis",
+        "charvi",
+        "charbis",
+        "charbi",
+        "garvis",
+        "garvi",
+        "garbis",
+        "garbi",
     }:
         return True
 
@@ -176,9 +243,7 @@ def hint_necesita_reintento_whisper(
     return conf < HINT_MIN_CONFIDENCE
 
 
-def reconstruir_transcripcion_por_pausas(
-    segments, pausa_punto: float = 0.85, pausa_coma: float = 0.45
-) -> str:
+def reconstruir_transcripcion_por_pausas(segments, pausa_punto: float = 0.85, pausa_coma: float = 0.45) -> str:
     partes: list[str] = []
     prev_end = None
     for seg in segments:
@@ -247,9 +312,7 @@ def transcribir_audio(
             beam_size=WHISPER_BEAM_SIZE,
             condition_on_previous_text=False,
         )
-        texto = normalizar_transcript_hint(
-            reconstruir_transcripcion_por_pausas(list(segments_iter))
-        )
+        texto = normalizar_transcript_hint(reconstruir_transcripcion_por_pausas(list(segments_iter)))
         if texto:
             print(f"[VOICE ID] Whisper transcribed: '{texto[:80]}'")
             return texto
@@ -266,12 +329,10 @@ def transcribir_audio(
 # NOMBRES Y SLUGS DE INVITADOS
 # =========================================================
 
+
 def slugify_guest_name(name: str) -> str:
     txt = reparar_unicode(str(name or "")).strip().lower()
-    txt = "".join(
-        ch for ch in unicodedata.normalize("NFKD", txt)
-        if not unicodedata.combining(ch)
-    )
+    txt = "".join(ch for ch in unicodedata.normalize("NFKD", txt) if not unicodedata.combining(ch))
     txt = re.sub(r"[^a-z0-9\s_-]+", "", txt)
     txt = re.sub(r"\s+", "_", txt)
     txt = re.sub(r"_+", "_", txt).strip("_")
@@ -332,6 +393,7 @@ def es_alias_owner(nombre: str) -> bool:
 # =========================================================
 # SESIONES DE REGISTRO PENDIENTES
 # =========================================================
+
 
 def cancel_pending_voice_registration(ip: str = None) -> int:
     """Cancela registros pendientes. Si ip=None, cancela TODOS."""

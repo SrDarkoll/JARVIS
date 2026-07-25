@@ -65,12 +65,7 @@ def _normalize_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         args = raw.get("args") or {}
         if not isinstance(args, dict):
             raise ValueError(f"args de {tool_name} debe ser un objeto")
-        description = str(
-            raw.get("description")
-            or raw.get("descripcion")
-            or raw.get("summary")
-            or tool_name
-        ).strip()
+        description = str(raw.get("description") or raw.get("descripcion") or raw.get("summary") or tool_name).strip()
         normalized.append(
             {
                 "index": index,
@@ -106,9 +101,7 @@ def create_action_plan(
     }
     with _PLAN_LOCK:
         while plan["id"] in _ACTION_PLANS:
-            plan["id"] = hashlib.sha256(
-                f"{plan['id']}:{len(_ACTION_PLANS)}".encode()
-            ).hexdigest()[:12]
+            plan["id"] = hashlib.sha256(f"{plan['id']}:{len(_ACTION_PLANS)}".encode()).hexdigest()[:12]
         _ACTION_PLANS[plan["id"]] = _copy_plan(plan)
     return _copy_plan(plan)
 

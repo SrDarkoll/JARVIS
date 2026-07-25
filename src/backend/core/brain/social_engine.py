@@ -171,17 +171,14 @@ def _debe_buscar_en_web(text: str) -> bool:
         return False
 
     import unicodedata
+
     t_norm = unicodedata.normalize("NFD", t)
     t_norm = "".join(c for c in t_norm if unicodedata.category(c) != "Mn")
     t_norm = re.sub(r"[^\w\s]", " ", t_norm)
     t_norm = re.sub(r"\s+", " ", t_norm).strip()
 
     social_local = (
-        bt["social_hi"]
-        + bt["social_how"]
-        + bt["social_who"]
-        + bt.get("social_assistant_who", [])
-        + bt["social_thanks"]
+        bt["social_hi"] + bt["social_how"] + bt["social_who"] + bt.get("social_assistant_who", []) + bt["social_thanks"]
     )
     if _contiene_frase(t_norm, social_local):
         return False
@@ -195,9 +192,7 @@ def _debe_buscar_en_web(text: str) -> bool:
     if any(re.search(pat, t_norm) for pat in negation_patterns):
         return False
 
-    static_definition = bool(
-        re.search(r"\b(?:what is|what are|que es|que son)\b", t_norm)
-    )
+    static_definition = bool(re.search(r"\b(?:what is|what are|que es|que son)\b", t_norm))
     explicitly_dynamic = any(
         marker in t_norm
         for marker in (
@@ -217,9 +212,7 @@ def _debe_buscar_en_web(text: str) -> bool:
         return _es_consulta_tecnica_actualizable(t_norm)
 
     all_web_keywords = {
-        keyword
-        for translations in BACKEND_TRANSLATIONS.values()
-        for keyword in translations.get("keywords_web", [])
+        keyword for translations in BACKEND_TRANSLATIONS.values() for keyword in translations.get("keywords_web", [])
     }
     if _contiene_frase(t_norm, tuple(all_web_keywords)):
         return True
@@ -291,7 +284,7 @@ def _respuesta_seguimiento_contextual(user_input: str, history: list) -> str | N
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
 
     if any(p in t_plain for p in bt["social_why"]):
-        pass # continue
+        pass  # continue
     else:
         return None
 

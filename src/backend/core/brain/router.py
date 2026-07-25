@@ -6,9 +6,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 
 from core import jarvis_state
 from core.app_config import get_default_location
-from core.brain.brain_utils import (
-    _compactar_resumen_busqueda as _compactar_resumen_busqueda,
-)
+from core.brain import brain_utils as _brain_utils
 from core.brain.brain_utils import (
     _normalizar_ascii,
     parse_reminder,
@@ -23,12 +21,16 @@ from core.command_pipeline.models import (
 )
 from core.jarvis_observability import obs_inc
 from utils.jarvis_i18n import get_current_language
+from utils.jarvis_text import reparar_unicode
 from utils.math_expression import (
     evaluate_math_expression,
-    format_math_number as _format_arithmetic_number,
     normalize_math_expression,
 )
-from utils.jarvis_text import reparar_unicode
+from utils.math_expression import (
+    format_math_number as _format_arithmetic_number,
+)
+
+_compactar_resumen_busqueda = _brain_utils._compactar_resumen_busqueda
 
 _ROUTER_WEB_DIRECTO = {
     "facebook": "https://www.facebook.com",

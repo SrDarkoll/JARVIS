@@ -72,9 +72,7 @@ class GroqResponseSynthesizer:
             HumanMessage(content=user_content),
         ]
         response = self._model.invoke(messages)
-        text = self._clean_output(
-            str(getattr(response, "content", "") or "")
-        )
+        text = self._clean_output(str(getattr(response, "content", "") or ""))
         if not text or len(text) > self._max_output_chars:
             raise ValueError("invalid_synthesis_output")
         return text

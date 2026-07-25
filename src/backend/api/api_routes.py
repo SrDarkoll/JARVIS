@@ -30,6 +30,7 @@ async def index():
         return await render_template("index.html")
     except Exception as e:
         from core.runtime_logger import log_warning
+
         log_warning("template_render_failed", error=str(e), template="index.html")
         return jsonify(
             {
@@ -51,7 +52,9 @@ async def manifest_json():
 
 @api_bp.route("/sw.js", methods=["GET"])
 async def service_worker():
-    response = await make_response(await send_from_directory(os.path.join(_root_dir, "src", "frontend", "static"), "sw.js"))
+    response = await make_response(
+        await send_from_directory(os.path.join(_root_dir, "src", "frontend", "static"), "sw.js")
+    )
     response.headers["Cache-Control"] = "no-cache"
     return response
 

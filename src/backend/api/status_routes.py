@@ -11,9 +11,9 @@ from core.capabilities import (
     CapabilityReport,
     CapabilityState,
 )
-from core.llm_providers import resolve_llm_provider_config
 from core.jarvis_config import RUNTIME_FEATURES
 from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
+from core.llm_providers import resolve_llm_provider_config
 from core.operator_status import build_operator_status
 from core.runtime_logger import log_warning
 from core.setup_wizard import build_setup_status
@@ -96,8 +96,7 @@ def _monitoring_status() -> dict[str, bool]:
         return status
     try:
         snapshot = _monitoring_snapshot() or {}
-        for key in status:
-            status[key] = bool(snapshot.get(key, status[key]))
+        status = {key: bool(snapshot.get(key, value)) for key, value in status.items()}
     except Exception as exc:
         log_warning("monitoring_status_failed", error=type(exc).__name__)
     return status

@@ -80,11 +80,7 @@ class SpotifyVisualRecovery:
             if not path.is_file() or path.stat().st_size <= 0:
                 return False
             target = self._analyze(path, query)
-            if (
-                target is None
-                or not self._inside(target, bounds)
-                or not self._label_matches_query(target.label, query)
-            ):
+            if target is None or not self._inside(target, bounds) or not self._label_matches_query(target.label, query):
                 return False
             left, top, _right, _bottom = bounds
             center_x = left + target.x + target.width // 2
@@ -122,10 +118,7 @@ def _visual_target_from_response(response) -> VisualTarget | None:
         return direct
 
     if isinstance(content, list):
-        text = " ".join(
-            str(item.get("text") or "") if isinstance(item, dict) else str(item)
-            for item in content
-        )
+        text = " ".join(str(item.get("text") or "") if isinstance(item, dict) else str(item) for item in content)
     else:
         text = str(content or "")
 
@@ -145,11 +138,12 @@ def _visual_target_from_response(response) -> VisualTarget | None:
 
 def _capture_spotify_window(handle: int, path: Path) -> None:
     try:
-        import PIL  # noqa: F401
+        import PIL  # noqa: F401, PLC0415
     except ImportError as error:
         raise ImportError("spotify_visual_pillow_missing") from error
 
-    from pywinauto import Desktop
+    # Optional Windows-only dependency; keep lazy so imports work cross-platform.
+    from pywinauto import Desktop  # noqa: PLC0415
 
     image = Desktop(backend="uia").window(handle=handle).capture_as_image()
     if image is None:
@@ -159,7 +153,7 @@ def _capture_spotify_window(handle: int, path: Path) -> None:
 
 def _vision_analyzer(model):
     def analyze(path: Path, query: str) -> VisualTarget | None:
-        from langchain_core.messages import HumanMessage
+        from langchain_core.messages import HumanMessage  # noqa: PLC0415
 
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
         serialized_query = json.dumps(str(query or ""), ensure_ascii=True)
@@ -178,9 +172,7 @@ def _vision_analyzer(model):
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{encoded}"
-                            },
+                            "image_url": {"url": f"data:image/png;base64,{encoded}"},
                         },
                     ]
                 )
@@ -196,7 +188,7 @@ def _click_if_foreground(handle: int, x: int, y: int) -> bool:
         return False
     if int(ctypes.windll.user32.GetForegroundWindow()) != int(handle):
         return False
-    from pywinauto import mouse
+    from pywinauto import mouse  # noqa: PLC0415
 
     mouse.click(coords=(x, y))
     return True
@@ -206,7 +198,7 @@ def build_default_visual_recovery(*, model, scratch_dir: str | Path):
     if model is None or os.name != "nt":
         return SpotifyVisualRecovery(scratch_dir=scratch_dir)
     try:
-        import PIL  # noqa: F401
+        import PIL  # noqa: F401, PLC0415
     except ImportError:
         return SpotifyVisualRecovery(scratch_dir=scratch_dir)
     return SpotifyVisualRecovery(

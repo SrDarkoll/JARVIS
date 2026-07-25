@@ -1,2 +1,1 @@
 """Security policy package."""
-

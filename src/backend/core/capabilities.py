@@ -61,7 +61,4 @@ class CapabilityRegistry:
 
     def snapshot(self) -> dict[str, dict[str, str]]:
         with self._lock:
-            return {
-                name: report.to_dict()
-                for name, report in sorted(self._reports.items())
-            }
+            return {name: report.to_dict() for name, report in sorted(self._reports.items())}

@@ -40,11 +40,7 @@ def resolve_runtime_paths(
     """Resolve paths without creating or modifying the filesystem."""
     source = os.environ if env is None else env
     platform = sys.platform if platform_name is None else platform_name
-    explicit = str(
-        source.get("JARVIS_DATA_DIR")
-        or source.get("JARVIS_RUNTIME_DIR")
-        or ""
-    ).strip()
+    explicit = str(source.get("JARVIS_DATA_DIR") or source.get("JARVIS_RUNTIME_DIR") or "").strip()
 
     if explicit:
         home = Path(explicit).expanduser().resolve()
@@ -56,9 +52,7 @@ def resolve_runtime_paths(
     elif platform == "darwin":
         root = str(source.get("HOME") or "").strip()
         base = Path(root).expanduser() if root else Path.home()
-        home = (
-            base / "Library" / "Application Support" / "Jarvis"
-        ).resolve()
+        home = (base / "Library" / "Application Support" / "Jarvis").resolve()
     else:
         root = str(source.get("XDG_DATA_HOME") or "").strip()
         if not root:
@@ -93,9 +87,7 @@ def ensure_runtime_paths(paths: RuntimePaths) -> RuntimePaths:
             probe_path.unlink()
             probe_path = None
         except OSError as exc:
-            raise OSError(
-                f"runtime_path_unwritable:{directory}"
-            ) from exc
+            raise OSError(f"runtime_path_unwritable:{directory}") from exc
         finally:
             if descriptor >= 0:
                 os.close(descriptor)

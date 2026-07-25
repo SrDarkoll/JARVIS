@@ -75,9 +75,7 @@ def _normalize_locale(raw: Any, language: str, warnings: list[str]) -> str:
     if not locale:
         return LANGUAGE_CONFIG[language]["locale"]
     if len(locale) < 4 or "-" not in locale:
-        warnings.append(
-            f"Invalid locale '{locale}', using '{LANGUAGE_CONFIG[language]['locale']}'."
-        )
+        warnings.append(f"Invalid locale '{locale}', using '{LANGUAGE_CONFIG[language]['locale']}'.")
         return LANGUAGE_CONFIG[language]["locale"]
     return locale
 

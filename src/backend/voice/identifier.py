@@ -14,13 +14,18 @@ import sqlite3
 import tempfile
 import threading
 import time as _time
+import traceback
 
 import numpy as np
 import soundfile as sf
 from core.jarvis_config import CACHE_DIR, RUNTIME_DIR, VOICE_ID_ENABLED
+from core.jarvis_observability import obs_event
+from core.jarvis_state import DEFAULT_PROFILE_ID
 from utils.audio_conversion import AudioConversionError, convert_to_wav
+from utils.jarvis_i18n import get_bt
 
 VOICE_ID_DISPONIBLE = False
+SpeakerRecognition = None
 
 if os.getenv("JARVIS_TEST_MODE") == "1":
     print("[VOICE_ID] Disabled in test mode.")
@@ -28,20 +33,14 @@ elif not VOICE_ID_ENABLED:
     print("[VOICE_ID] Disabled by runtime configuration.")
 else:
     try:
-        from speechbrain.inference import SpeakerRecognition
+        from speechbrain.inference import SpeakerRecognition as _SpeakerRecognition
+
+        SpeakerRecognition = _SpeakerRecognition
 
         VOICE_ID_DISPONIBLE = True
         print("[VOICE_ID] Speechbrain ECAPA-VoxCeleb available.")
     except ImportError as e:
         print(f"[VOICE_ID] Speechbrain no available: {e}")
-
-try:
-    SpeakerRecognition
-except NameError:
-    SpeakerRecognition = None
-
-from core.jarvis_observability import obs_event
-from core.jarvis_state import DEFAULT_PROFILE_ID
 
 OWNER_PID = DEFAULT_PROFILE_ID  # Alias for clarity in biometric context
 
@@ -87,7 +86,6 @@ class VoiceIdentifier:
             )
             self._encoder_ready = True
             self._cargar_perfiles()
-            from utils.jarvis_i18n import get_bt
             bt = get_bt()
             print(bt["log_voice_ready"].format(count=len(self.perfiles_voz)))
         except Exception as e:
@@ -139,7 +137,6 @@ class VoiceIdentifier:
         self.perfiles_voz = loaded_profiles
 
         if OWNER_PID not in self.perfiles_voz:
-            from utils.jarvis_i18n import get_bt
             bt = get_bt()
             print(bt["log_voice_owner_not_found"])
         else:
@@ -159,8 +156,7 @@ class VoiceIdentifier:
             try:
                 conn_check = sqlite3.connect(DB_PATH)
                 row = conn_check.execute(
-                    "SELECT profile_id, nombre, embedding FROM voice_profiles WHERE profile_id=?",
-                    (OWNER_PID,)
+                    "SELECT profile_id, nombre, embedding FROM voice_profiles WHERE profile_id=?", (OWNER_PID,)
                 ).fetchone()
                 conn_check.close()
                 if row and row[2]:
@@ -219,9 +215,7 @@ class VoiceIdentifier:
             with _lock:
                 for pid, datos in self.perfiles_voz.items():
                     ref = datos["embedding"]
-                    sim = float(
-                        np.dot(emb, ref) / (np.linalg.norm(emb) * np.linalg.norm(ref) + 1e-8)
-                    )
+                    sim = float(np.dot(emb, ref) / (np.linalg.norm(emb) * np.linalg.norm(ref) + 1e-8))
                     matches.append((pid, datos["nombre"], sim))
 
             if not matches:
@@ -237,9 +231,7 @@ class VoiceIdentifier:
 
             matches.sort(key=lambda x: x[2], reverse=True)
             mejor_pid, mejor_nombre, mejor_sim = matches[0]
-            segundo_pid, segundo_nombre, segunda_sim = (
-                matches[1] if len(matches) > 1 else (None, None, 0.0)
-            )
+            segundo_pid, segundo_nombre, segunda_sim = matches[1] if len(matches) > 1 else (None, None, 0.0)
 
             # Guardar candidato para soft match / session continuity
             with _lock:
@@ -345,9 +337,7 @@ class VoiceIdentifier:
             es_confiable = mejor_sim >= 0.55
 
             if perfil_esperado and mejor_pid != perfil_esperado:
-                print(
-                    f"[VOICE ID] WARNING: Voz de '{mejor_nombre}' pero perfil era '{perfil_esperado}'!"
-                )
+                print(f"[VOICE ID] WARNING: Voz de '{mejor_nombre}' pero perfil era '{perfil_esperado}'!")
                 return mejor_pid, mejor_nombre, mejor_sim, False
 
             return mejor_pid, mejor_nombre, mejor_sim, es_confiable
@@ -415,9 +405,7 @@ class VoiceIdentifier:
                     "n_samples": n_samples,
                 }
 
-            print(
-                f"[VOICE_ID] Perfil '{profile_id}' actualizado. Centroide de {n_samples} sample(s)."
-            )
+            print(f"[VOICE_ID] Perfil '{profile_id}' actualizado. Centroide de {n_samples} sample(s).")
             obs_event("voice_registered", profile_id=profile_id, nombre=nombre, n_samples=n_samples)
             return True
         except Exception as e:
@@ -437,9 +425,7 @@ class VoiceIdentifier:
                 target = (self.perfiles_voz.get(pid) or {}).get("embedding")
             if target is None:
                 return 0.0
-            return float(
-                np.dot(emb, target) / (np.linalg.norm(emb) * np.linalg.norm(target) + 1e-8)
-            )
+            return float(np.dot(emb, target) / (np.linalg.norm(emb) * np.linalg.norm(target) + 1e-8))
         except Exception as e:
             print(f"[VOICE_ID] profile_similarity error: {e}")
             return 0.0
@@ -484,9 +470,7 @@ class VoiceIdentifier:
         try:
             conn = sqlite3.connect(DB_PATH)
             for pid in list(self.perfiles_voz.keys()):
-                n = conn.execute(
-                    "SELECT COUNT(*) FROM voice_embeddings WHERE profile_id=?", (pid,)
-                ).fetchone()[0]
+                n = conn.execute("SELECT COUNT(*) FROM voice_embeddings WHERE profile_id=?", (pid,)).fetchone()[0]
                 stats[pid] = {
                     "nombre": self.perfiles_voz[pid]["nombre"],
                     "n_samples": n,
@@ -522,13 +506,9 @@ class VoiceIdentifier:
             conn.close()
             ids_activos = self._get_active_profile_ids()
             with _lock:
-                self.perfiles_voz = {
-                    k: v for k, v in self.perfiles_voz.items() if k == OWNER_PID or k in ids_activos
-                }
+                self.perfiles_voz = {k: v for k, v in self.perfiles_voz.items() if k == OWNER_PID or k in ids_activos}
             if deleted:
-                print(
-                    f"[VOICE_ID] Limpieza: {deleted} perfil(es) de invitados inactivos eliminados."
-                )
+                print(f"[VOICE_ID] Limpieza: {deleted} perfil(es) de invitados inactivos eliminados.")
             return deleted
         except Exception as e:
             print(f"[VOICE_ID] _clean_old_profiles error: {e}")
@@ -603,9 +583,7 @@ class VoiceIdentifier:
 
             if not es_wav:
                 try:
-                    audio_a_procesar = convert_to_wav(
-                        audio_bytes, runtime_dir=RUNTIME_DIR
-                    )
+                    audio_a_procesar = convert_to_wav(audio_bytes, runtime_dir=RUNTIME_DIR)
                 except AudioConversionError:
                     return None
 
@@ -621,7 +599,8 @@ class VoiceIdentifier:
             wav = self._apply_vad(wav, sr)
 
             if sr != 16000:
-                from scipy.signal import resample_poly
+                # Optional voice dependency; core mode must import without SciPy.
+                from scipy.signal import resample_poly  # noqa: PLC0415
 
                 gcd = np.gcd(sr, 16000)
                 wav = resample_poly(wav, 16000 // gcd, sr // gcd)
@@ -651,25 +630,20 @@ class VoiceIdentifier:
                         pass
         except Exception as e:
             print(f"[VOICE_ID] Error preprocessing audio: {e}")
-            import traceback
-
             traceback.print_exc()
             return None
 
     def _embedding_desde_audio_bytes(self, audio_bytes: bytes) -> np.ndarray | None:
         try:
-            import torch
+            # Torch is loaded only when biometric inference is actually requested.
+            import torch  # noqa: PLC0415
 
             if not isinstance(audio_bytes, (bytes, bytearray)):
                 return None
 
-            print(
-                f"[VOICE_ID] Input audio: {len(audio_bytes)} bytes, tipo={type(audio_bytes).__name__}"
-            )
+            print(f"[VOICE_ID] Input audio: {len(audio_bytes)} bytes, tipo={type(audio_bytes).__name__}")
             normalized = self._preprocess_audio_bytes(audio_bytes)
-            print(
-                f"[VOICE_ID] Preprocesado result: tipo={type(normalized).__name__ if normalized else 'None'}"
-            )
+            print(f"[VOICE_ID] Preprocesado result: tipo={type(normalized).__name__ if normalized else 'None'}")
 
             if normalized is None:
                 return None
@@ -681,24 +655,21 @@ class VoiceIdentifier:
             signal = torch.from_numpy(wav_data).float().unsqueeze(0)
             print(f"[VOICE_ID] Signal pre.encode_batch: shape={signal.shape}")
             embeddings = self.encoder.encode_batch(signal)
-            print(
-                f"[VOICE_ID] Embeddings: tipo={type(embeddings)}, shape={getattr(embeddings, 'shape', 'N/A')}"
-            )
+            print(f"[VOICE_ID] Embeddings: tipo={type(embeddings)}, shape={getattr(embeddings, 'shape', 'N/A')}")
             if embeddings is not None:
                 emb = embeddings.squeeze().numpy()
                 norm = np.linalg.norm(emb)
                 if norm > 1e-8:
                     emb = emb / norm
                 print(
-                    f"[VOICE_ID] Embedding: shape={emb.shape}, norm={np.linalg.norm(emb):.4f}, finite={np.all(np.isfinite(emb))}"
+                    f"[VOICE_ID] Embedding: shape={emb.shape}, "
+                    f"norm={np.linalg.norm(emb):.4f}, finite={np.all(np.isfinite(emb))}"
                 )
                 if np.all(np.isfinite(emb)):
                     return emb
             return None
         except Exception as e:
             print(f"[VOICE_ID] Error extracting embedding: {e}")
-            import traceback
-
             traceback.print_exc()
             return None
 

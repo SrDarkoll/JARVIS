@@ -141,7 +141,10 @@ except ImportError as _bio_err:
     print(f"[VOICE] Voice package not found: {_bio_err}. Biometrics disabled.")
     voice_id_motor = None
     BIOMETRICS_ENABLED = False
-    transcribe_audio = lambda audio, hint="", whisper_model=None: hint
+
+    def transcribe_audio(audio, hint="", whisper_model=None):
+        return hint
+
 
 # --- COMPATIBILITY SHIMS ---
 DEFAULT_PROFILE_ID = jarvis_brain.DEFAULT_PROFILE_ID
@@ -155,6 +158,7 @@ if jarvis_config.ROOT_DIR not in _sys.path:
 try:
     import jarvis_settings
 except ImportError:
+
     class jarvis_settings:
         ASSISTANT_NAME = "J.A.R.V.I.S."
         ASSISTANT_FULLNAME = "Just A Rather Very Intelligent System"
@@ -163,6 +167,7 @@ except ImportError:
         LOCATION = "YOUR_CITY, YOUR_COUNTRY"
         LANGUAGE = "en"
         LOCALE = "en-US"
+
 
 APP_CONFIG = init_app_config(jarvis_settings)
 for _cfg_warn in APP_CONFIG.validation_warnings:
@@ -460,9 +465,7 @@ app = Quart(
     static_folder=os.path.join(SRC_DIR, "frontend", "static"),
     static_url_path="/static",
 )
-app.config["MAX_CONTENT_LENGTH"] = int(
-    (os.getenv("JARVIS_MAX_REQUEST_BYTES") or str(12 * 1024 * 1024)).strip()
-)
+app.config["MAX_CONTENT_LENGTH"] = int((os.getenv("JARVIS_MAX_REQUEST_BYTES") or str(12 * 1024 * 1024)).strip())
 app = cors(app, allow_origin=_cors_origins)
 app.register_blueprint(tts_bp)
 app.register_blueprint(api_bp)
@@ -524,11 +527,7 @@ def _normalize_origin(value: str | None) -> str:
 
 
 def _is_trusted_browser_origin() -> bool:
-    allowed = {
-        origin
-        for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins())
-        if origin
-    }
+    allowed = {origin for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins()) if origin}
     origin = _normalize_origin(request.headers.get("Origin"))
     if origin:
         return origin in allowed
@@ -549,10 +548,7 @@ def _is_origin_protected_api_path(path: str) -> bool:
     normalized = (path or "").rstrip("/") or "/"
     if normalized in _ORIGIN_PROTECTED_API_PATHS:
         return True
-    return any(
-        normalized.startswith(prefix + "/")
-        for prefix in _ORIGIN_PROTECTED_API_PATHS
-    )
+    return any(normalized.startswith(prefix + "/") for prefix in _ORIGIN_PROTECTED_API_PATHS)
 
 
 def _has_valid_api_token() -> bool:
@@ -568,17 +564,9 @@ async def _require_token_for_critical_routes():
     if request.method == "OPTIONS":
         return None
     is_critical = _is_critical_api_path(request.path)
-    if (
-        _is_origin_protected_api_path(request.path)
-        and not _is_trusted_browser_origin()
-        and not _has_valid_api_token()
-    ):
+    if _is_origin_protected_api_path(request.path) and not _is_trusted_browser_origin() and not _has_valid_api_token():
         obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
-        message = (
-            "Untrusted origin for critical route."
-            if is_critical
-            else "Untrusted origin for API route."
-        )
+        message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for API route."
         return jsonify({"error": message}), 403
     if not is_critical:
         return None
@@ -625,6 +613,7 @@ async def _set_security_headers(response):
     )
     return response
 
+
 context.update(
     {
         "app": app,
@@ -656,9 +645,7 @@ def _check_rate_limit(ip, limit, endpoint):
         if elapsed < limit:
             return False, max(0.0, limit - elapsed)
         if len(IP_LAST_CALL) >= IP_LAST_CALL_MAX_SIZE:
-            oldest_entries = sorted(IP_LAST_CALL.items(), key=lambda x: x[1])[
-                : IP_LAST_CALL_MAX_SIZE // 4
-            ]
+            oldest_entries = sorted(IP_LAST_CALL.items(), key=lambda x: x[1])[: IP_LAST_CALL_MAX_SIZE // 4]
             for old_key, _ in oldest_entries:
                 del IP_LAST_CALL[old_key]
         IP_LAST_CALL[key] = now
@@ -690,9 +677,7 @@ services.invoke_tool = jarvis_brain._invocar_tool
 services.reload_plugins = jarvis_brain._recargar_plugins_runtime
 
 # Synchronize with core_tools (shim) for legacy plugins if necessary
-core_tools.inject_dependencies(
-    {"noticias_cache": services.noticias_cache, "weather_cache": services.weather_cache}
-)
+core_tools.inject_dependencies({"noticias_cache": services.noticias_cache, "weather_cache": services.weather_cache})
 security_manager.inject_dependencies(
     {
         "_invocar_tool": jarvis_brain._invocar_tool,
@@ -796,11 +781,7 @@ def _configure_monitoring_service():
         telegram_service,
         jarvis_brain,
         security_manager,
-        (
-            core_tools.generar_resumen_noticias
-            if jarvis_config.RUNTIME_FEATURES.briefing_enabled
-            else None
-        ),
+        (core_tools.generar_resumen_noticias if jarvis_config.RUNTIME_FEATURES.briefing_enabled else None),
         None,
     )
 
@@ -818,6 +799,7 @@ async def _start_monitoring_service():
         import threading
 
         from tools.utilities import _auto_init_weather
+
         threading.Thread(target=_auto_init_weather, daemon=True).start()
     except Exception as exc:
         log_warning("monitoring_startup_failed", error=type(exc).__name__)
@@ -861,6 +843,7 @@ def _aplicar_pronunciacion_tts(texto: str) -> str:
     engine.tts_pronun_map = dict(TTS_PRONUN_DEFAULT)
     engine.reparar_unicode = reparar_unicode
     return engine.aplicar_pronunciacion(texto)
+
 
 if __name__ == "__main__":
     from hypercorn.asyncio import serve

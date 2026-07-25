@@ -92,11 +92,7 @@ class VoiceSessionStore:
     def cleanup_expired(self) -> int:
         cutoff = float(self._clock()) - self._ttl_seconds
         with self._lock:
-            expired = [
-                key
-                for key, value in self._sessions.items()
-                if float(value.get("created_at", 0.0)) < cutoff
-            ]
+            expired = [key for key, value in self._sessions.items() if float(value.get("created_at", 0.0)) < cutoff]
             for key in expired:
                 self._sessions.pop(key, None)
             return len(expired)

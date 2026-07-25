@@ -29,6 +29,7 @@ try:
     from playwright.sync_api import (
         sync_playwright as _sync_playwright,
     )
+
     sync_playwright = _sync_playwright
     PlaywrightTimeoutError = _PlaywrightTimeoutError
     PLAYWRIGHT_IMPORT_ERROR = ""
@@ -88,6 +89,7 @@ class BrowserWorker(threading.Thread):
                 while not self.stop_signal:
                     try:
                         from queue import Empty
+
                         # Timeout pequeño para revisar señales de stop y el idle timeout
                         task = self.tasks.get(timeout=5.0)
                         if task is None:
@@ -176,11 +178,7 @@ def _normalizar_destino_web(destino: str) -> str:
     if re.match(r"^https?://", destino, flags=re.IGNORECASE):
         parsed = urlparse(destino)
         host = (parsed.netloc or "").strip().rstrip(".")
-        if (
-            host
-            and "." not in host
-            and re.match(r"^[a-z0-9-]+$", host, flags=re.IGNORECASE)
-        ):
+        if host and "." not in host and re.match(r"^[a-z0-9-]+$", host, flags=re.IGNORECASE):
             host = f"{host}.com"
         if host and re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", host, flags=re.IGNORECASE):
             return urlunparse(parsed._replace(netloc=host))
@@ -194,11 +192,7 @@ def _normalizar_destino_web(destino: str) -> str:
             host, rest = token.split("/", 1)
             path = "/" + rest
         host = host.strip().rstrip(".")
-        if (
-            host
-            and "." not in host
-            and re.match(r"^[a-z0-9-]+$", host, flags=re.IGNORECASE)
-        ):
+        if host and "." not in host and re.match(r"^[a-z0-9-]+$", host, flags=re.IGNORECASE):
             host = f"{host}.com"
         if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", host, flags=re.IGNORECASE):
             return f"https://{host}{path}"
@@ -398,6 +392,7 @@ def _obtener_top_youtube_url(query: str) -> str:
     try:
         import urllib.parse
         import urllib.request
+
         q_clean = str(query or "").strip()
         if not q_clean:
             return "https://www.youtube.com"

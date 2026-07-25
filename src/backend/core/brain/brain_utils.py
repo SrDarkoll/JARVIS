@@ -8,31 +8,38 @@ from utils.jarvis_text import normalizar_tratamiento_admin, reparar_unicode
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 
+
 def _normalizar_ascii(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     t = reparar_unicode(str(text or "")).lower()
-    t = "".join(
-        ch for ch in unicodedata.normalize("NFKD", t) if not unicodedata.combining(ch)
-    )
+    t = "".join(ch for ch in unicodedata.normalize("NFKD", t) if not unicodedata.combining(ch))
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
+
 def _limpiar_thinking(text: str) -> str:
     """Removes <think>...</think> tags and their content from the final text."""
-    if not text: return ""
+    if not text:
+        return ""
     try:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    except: return text
+    except Exception:
+        return text
+
 
 def _limpiar_metadatos_voz(texto: str) -> str:
     """Removes <think>, <WIDGET> and HTML/tags so that TTS does not read them."""
-    if not texto: return ""
+    if not texto:
+        return ""
     try:
         t = _limpiar_thinking(texto)
         t = re.sub(r"<WIDGET>.*?</WIDGET>", "", t, flags=re.DOTALL).strip()
         t = re.sub(r"<[^>]+>", "", t).strip()
         return t
-    except: return texto
+    except Exception:
+        return texto
+
 
 def _formatear_reply_por_perfil(reply: str, profile_id: str) -> str:
     txt = reparar_unicode(str(reply or "")).strip() or "Understood."
@@ -45,22 +52,35 @@ def _formatear_reply_por_perfil(reply: str, profile_id: str) -> str:
     txt = re.sub(r"\s{2,}", " ", txt).strip(" ,.;:-")
     return txt or "Understood."
 
+
 def _limpiar_contexto_memoria(texto: str) -> str:
     raw = reparar_unicode(str(texto or "")).replace("\x00", " ").strip()
-    if not raw: return ""
-    drop_tokens = ["no new data", "does not provide information", "prioritize situation", '"type": "human"', '"type": "ai"']
+    if not raw:
+        return ""
+    drop_tokens = [
+        "no new data",
+        "does not provide information",
+        "prioritize situation",
+        '"type": "human"',
+        '"type": "ai"',
+    ]
     kept = []
     seen = set()
     for ln in re.split(r"[\n|]+", raw):
         line = re.sub(r"\s+", " ", ln).strip(" \t-")
-        if not line or len(line) > 220: continue
+        if not line or len(line) > 220:
+            continue
         norm = _normalizar_ascii(line)
-        if any(tok in norm for tok in drop_tokens): continue
-        if norm in seen: continue
+        if any(tok in norm for tok in drop_tokens):
+            continue
+        if norm in seen:
+            continue
         seen.add(norm)
         kept.append(line)
-        if len(kept) >= 8: break
+        if len(kept) >= 8:
+            break
     return "\n".join(f"- {x}" for x in kept)
+
 
 def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
     text = reparar_unicode(str(user_input or "")).strip()
@@ -86,8 +106,10 @@ def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
         return reminder_text, minutes
     return None, None
 
+
 def parsear_recordatorio(user_input: str) -> tuple[str | None, int | None]:
     return parse_reminder(user_input)
+
 
 def parse_volume_command(
     user_input: str,
@@ -112,10 +134,7 @@ def parse_volume_command(
         return None, None
 
     normalized = re.sub(r"\s+", " ", text).strip()
-    if any(
-        marker in normalized
-        for marker in ("mute", "silence", "silencia", "silenciar")
-    ):
+    if any(marker in normalized for marker in ("mute", "silence", "silencia", "silenciar")):
         return "absolute", 0
 
     number_match = re.search(
@@ -125,14 +144,7 @@ def parse_volume_command(
     value: int | None = None
     if number_match:
         try:
-            value = int(
-                float(
-                    number_match.group(0)
-                    .replace("%", "")
-                    .replace(",", ".")
-                    .strip()
-                )
-            )
+            value = int(float(number_match.group(0).replace("%", "").replace(",", ".").strip()))
         except ValueError:
             value = None
 
@@ -185,9 +197,7 @@ def parse_volume_command(
         )
     ):
         return "relative", value if value is not None else 10
-    if value is not None and any(
-        marker in normalized for marker in ("volume", "volumen")
-    ):
+    if value is not None and any(marker in normalized for marker in ("volume", "volumen")):
         return "absolute", value
     return None, None
 
@@ -198,16 +208,22 @@ def parsear_comando_volumen(
     """Compatibility alias for older plugins and tests."""
     return parse_volume_command(user_input)
 
+
 def _abrir_en_navegador_sistema(url: str) -> bool:
     try:
         webbrowser.open(url)
         return True
-    except: return False
+    except Exception:
+        return False
+
 
 def _normalizar_destino_web(url: str) -> str:
-    if not url: return "https://google.com"
-    if url.startswith(("http", "www")): return url
+    if not url:
+        return "https://google.com"
+    if url.startswith(("http", "www")):
+        return url
     return f"https://www.google.com/search?q={url}"
+
 
 def _extraer_fragmento_json_desde_texto(txt: str) -> str | None:
     """Extracts the first valid JSON block from a text."""
@@ -240,11 +256,7 @@ def _compactar_resumen_busqueda(res: Any) -> str:
     if json_fragment:
         try:
             payload = json.loads(json_fragment)
-            items = (
-                ((payload or {}).get("web") or {}).get("results")
-                if isinstance(payload, dict)
-                else None
-            )
+            items = ((payload or {}).get("web") or {}).get("results") if isinstance(payload, dict) else None
             if isinstance(items, list) and items:
                 parts = []
                 for it in items[:3]:
@@ -255,9 +267,7 @@ def _compactar_resumen_busqueda(res: Any) -> str:
                     elif title:
                         parts.append(title)
                 if parts:
-                    return core_tools._limpiar_respuesta(
-                        "Summary found: " + " | ".join(parts)
-                    )
+                    return core_tools._limpiar_respuesta("Summary found: " + " | ".join(parts))
         except Exception as e:
             print(f"[WARN _compactar_resumen_busqueda] Error: {e}")
 
@@ -270,6 +280,7 @@ def _respuesta_necesita_web_forzarla(user_input: str, reply: str, messages: list
     if not getattr(jarvis_config, "STRICT_WEB_SEARCH", False):
         return False
     from core.brain.social_engine import _debe_buscar_en_web
+
     if not _debe_buscar_en_web(user_input):
         return False
     web_tool_names = {"buscar_en_internet", "search_on_internet"}

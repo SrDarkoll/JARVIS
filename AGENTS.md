@@ -156,7 +156,7 @@ Dependency and release checks:
 ```powershell
 python -m pip check
 python -m pip_audit -r requirements.txt
-python -m ruff check src/backend tests --select F
+python -m ruff check src/backend
 ```
 
 ## Targeted Regression Commands
@@ -317,13 +317,23 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 
 ## Linting Notes
 
-Ruff is configured in `pyproject.toml`, but the codebase currently has legacy style debt. Use Ruff for focused cleanup when requested, but do not treat a full-project Ruff run as a release gate unless that cleanup is part of the task.
+Ruff is configured in `pyproject.toml`, and CI treats the backend check as a
+release gate. The global ignore list documents deferred architectural debt:
+optional/circular imports, injected module state, legacy long diagnostic
+strings, and oversized orchestration functions. Do not remove those exceptions
+without refactoring and testing the affected runtime paths, and do not add new
+exceptions when a focused code change can satisfy the rule.
 
-Useful focused lint command:
+CI lint command:
 
 ```powershell
-ruff check src tests
+ruff check src/backend
 ```
+
+Pyright runs in `basic` mode with a file-specific gradual-typing baseline in
+`pyproject.toml`. Baseline entries suppress diagnostics only for legacy dynamic
+modules; all other backend files remain checked. Do not add wildcards or whole
+directories, and remove entries as the corresponding modules are typed.
 
 ## Frontend Workflow
 

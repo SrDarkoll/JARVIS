@@ -45,6 +45,7 @@ def init_tts_routes(config: TTSRoutesConfig):
 
 def _normalize_tts_map(data):
     from utils.jarvis_text import reparar_unicode
+
     source = data or {}
     out = {}
     for k, v in source.items():
@@ -74,15 +75,11 @@ def _check_rate_limit(ip, limit, endpoint):
 
 
 def _tts_unavailable_response():
-    return jsonify(
-        {"error": "tts_unavailable", "message": "Voice engine is unavailable."}
-    ), 503
+    return jsonify({"error": "tts_unavailable", "message": "Voice engine is unavailable."}), 503
 
 
 def _tts_failed_response():
-    return jsonify(
-        {"error": "tts_failed", "message": "Voice synthesis failed."}
-    ), 500
+    return jsonify({"error": "tts_failed", "message": "Voice synthesis failed."}), 500
 
 
 @tts_bp.route("/api/tts", methods=["GET", "POST"])
@@ -153,9 +150,7 @@ def get_tts_pronunciation():
 @tts_bp.route("/api/tts/pronunciation", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion", methods=["POST"])
 async def update_tts_pronunciation():
-    if _tts_engine is None or not callable(
-        getattr(_tts_engine, "update_reglas", None)
-    ):
+    if _tts_engine is None or not callable(getattr(_tts_engine, "update_reglas", None)):
         return _tts_unavailable_response()
 
     data = (await request.get_json(silent=True)) or {}
@@ -176,8 +171,6 @@ async def update_tts_pronunciation():
 @tts_bp.route("/api/tts/pronunciation/reset", methods=["POST"])
 @tts_bp.route("/api/tts/pronunciacion/reset", methods=["POST"])
 def reset_tts_pronunciation():
-    if _tts_engine is None or not callable(
-        getattr(_tts_engine, "reset_reglas", None)
-    ):
+    if _tts_engine is None or not callable(getattr(_tts_engine, "reset_reglas", None)):
         return _tts_unavailable_response()
     return jsonify({"message": "Reset", "rules": _tts_engine.reset_reglas()})

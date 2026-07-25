@@ -17,6 +17,7 @@ if jarvis_config.ROOT_DIR not in sys.path:
 try:
     import jarvis_settings
 except ImportError:
+
     class jarvis_settings:
         ASSISTANT_NAME = "J.A.R.V.I.S."
         ASSISTANT_FULLNAME = "Just A Rather Very Intelligent System"
@@ -25,7 +26,6 @@ except ImportError:
         LOCATION = "TU_CIUDAD, TU_PAIS"
         GUEST_PROMPT = ""
         OWNER_PROMPT = ""
-
 
 
 def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMessage:
@@ -60,15 +60,12 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
     lang = get_current_language()
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
 
-    autorizado = (
-        bt["auth_yes"]
-        if verificar_autorizacion(pid)
-        else bt["auth_no"]
-    )
+    autorizado = bt["auth_yes"] if verificar_autorizacion(pid) else bt["auth_no"]
 
     _pid_activo = pid
     _pid_es_owner = _pid_activo == jarvis_state.DEFAULT_PROFILE_ID
     from core.jarvis_config import resolve_runtime_features
+
     if not resolve_runtime_features().allow_guest_mode:
         _pid_es_owner = True
     _nombre_activo = bt["profile_administrator"] if _pid_es_owner else bt["profile_guest"]
@@ -79,7 +76,9 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
         if _snap_pid == pid:
             _pid_activo = _snap_pid
             _pid_es_owner = _pid_activo == jarvis_state.DEFAULT_PROFILE_ID
-            _nombre_activo = _snap.get("nombre") or (bt["profile_administrator"] if _pid_es_owner else bt["profile_guest"])
+            _nombre_activo = _snap.get("nombre") or (
+                bt["profile_administrator"] if _pid_es_owner else bt["profile_guest"]
+            )
             perfil_activo = f"{_nombre_activo} ({bt['profile_label']}: {_pid_activo})"
     except Exception as exc:
         log_warning("auth_snapshot_read_failed", error=type(exc).__name__)
@@ -101,7 +100,7 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
             location=jarvis_settings.LOCATION,
             fecha_legible=fecha_legible,
             nombre_activo=_nombre_activo,
-            memoria_texto=memoria_texto
+            memoria_texto=memoria_texto,
         )
         return SystemMessage(content=content)
 
@@ -121,7 +120,6 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
         perfil_activo=perfil_activo,
         autorizado=autorizado,
         strict_status=strict_status,
-        memoria_texto=memoria_texto
+        memoria_texto=memoria_texto,
     )
     return SystemMessage(content=content)
-

@@ -63,6 +63,7 @@ async def get_security():
     limit = max(1, min(limit, 200))
     obs = obs_snapshot()
     from services.security_manager import _security_tail
+
     return jsonify(
         {
             **_security_snapshot(),

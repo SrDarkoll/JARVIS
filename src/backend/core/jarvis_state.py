@@ -67,6 +67,7 @@ def active_profile(profile_id: str | None) -> Iterator[str]:
     finally:
         reset_active_profile_id(token)
 
+
 # Cache de chat para el perfil activo (dueño habitualmente)
 chat_history: list = []
 DATOS_CURIOSOS: str = ""

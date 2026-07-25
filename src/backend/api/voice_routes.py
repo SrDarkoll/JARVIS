@@ -255,9 +255,7 @@ async def capture_guest_registration():
     audio_bytes, error_response = await _read_audio_payload(min_bytes=MIN_AUDIO_BYTES)
     if error_response:
         return error_response
-    return _service_response(
-        await asyncio.to_thread(voice_service.capture_guest_sample, ip, audio_bytes)
-    )
+    return _service_response(await asyncio.to_thread(voice_service.capture_guest_sample, ip, audio_bytes))
 
 
 @voice_bp.route("/api/voice", methods=["POST"])
@@ -272,6 +270,4 @@ async def process_voice():
         "ip": request.remote_addr or "unknown",
         "content_type": (request.headers.get("Content-Type", "") or "").strip(),
     }
-    return _service_response(
-        await asyncio.to_thread(voice_service.process_voice, audio_bytes, voice_request)
-    )
+    return _service_response(await asyncio.to_thread(voice_service.process_voice, audio_bytes, voice_request))

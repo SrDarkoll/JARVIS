@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.22
 
       - name: Run ruff
         run: ruff check src/backend/
@@ -41,7 +41,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install pyright
-        run: pip install pyright
+        run: pip install pyright==1.1.411
 
       - name: Run pyright
         run: pyright src/backend/

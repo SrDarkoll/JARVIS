@@ -69,10 +69,7 @@ class CommandOrchestrator:
                 "Reformula la solicitud como un comando local especifico."
             )
         else:
-            text = (
-                "The reasoning service is offline. "
-                "Rephrase the request as a specific local command."
-            )
+            text = "The reasoning service is offline. Rephrase the request as a specific local command."
         return ActionPlan(
             request_id=request.request_id,
             source=PlanSource.DETERMINISTIC,
@@ -92,10 +89,7 @@ class CommandOrchestrator:
             return False
         if not planned.direct_response.strip():
             return False
-        return any(
-            step.tool_name not in _DIRECT_RESPONSE_REPLACEABLE_TOOLS
-            for step in candidate.steps
-        )
+        return any(step.tool_name not in _DIRECT_RESPONSE_REPLACEABLE_TOOLS for step in candidate.steps)
 
     def _select_plan(
         self,
@@ -109,10 +103,7 @@ class CommandOrchestrator:
 
         if self._reasoning_mode is ReasoningMode.OFFLINE:
             return candidate or self._offline_plan(request)
-        if (
-            self._reasoning_mode is ReasoningMode.HYBRID
-            and candidate is not None
-        ):
+        if self._reasoning_mode is ReasoningMode.HYBRID and candidate is not None:
             return candidate
 
         send(
@@ -177,9 +168,7 @@ class CommandOrchestrator:
                     "request_id": request.request_id,
                 }
             )
-            receipts = tuple(
-                self._executor.execute(request, step) for step in plan.steps
-            )
+            receipts = tuple(self._executor.execute(request, step) for step in plan.steps)
             for step, receipt in zip(plan.steps, receipts, strict=True):
                 if (
                     receipt.request_id != request.request_id

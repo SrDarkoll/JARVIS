@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class AutomationState(str, Enum):
+class AutomationState(StrEnum):
     IDLE = "idle"
     DISCOVERING = "discovering"
     STARTING = "starting"
@@ -18,13 +18,13 @@ class AutomationState(str, Enum):
     CANCELLED = "cancelled"
 
 
-class MatchStatus(str, Enum):
+class MatchStatus(StrEnum):
     SELECTED = "selected"
     AMBIGUOUS = "ambiguous"
     NOT_FOUND = "not_found"
 
 
-class DesktopResultStatus(str, Enum):
+class DesktopResultStatus(StrEnum):
     SUCCESS = "success"
     AMBIGUOUS = "ambiguous"
     NOT_FOUND = "not_found"

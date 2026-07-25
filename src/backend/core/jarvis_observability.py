@@ -26,6 +26,7 @@ OBS_METRICS: dict = {
     "plugins_loaded": 0,
 }
 
+
 # --- Background Logger ---
 class LogWorker(threading.Thread):
     def __init__(self):
@@ -38,7 +39,8 @@ class LogWorker(threading.Thread):
             try:
                 # We wait for tasks (blocking with timeout to check stop_signal)
                 item = self.queue.get(timeout=1.0)
-                if item is None: break
+                if item is None:
+                    break
 
                 filepath, line = item
                 if not filepath:
@@ -56,9 +58,11 @@ class LogWorker(threading.Thread):
     def log(self, filepath, line):
         self.queue.put((filepath, line))
 
+
 _log_worker = LogWorker()
 _log_worker.start()
 # -------------------------
+
 
 def obs_inc(metric: str, delta: int = 1) -> None:
     with OBS_LOCK:
@@ -132,13 +136,13 @@ def obs_tail(limit: int = 80) -> list[dict]:
             lines = f.readlines()[-max(1, int(limit)) :]
         out = []
         for line in lines:
-            line = (line or "").strip()
-            if not line:
+            normalized_line = (line or "").strip()
+            if not normalized_line:
                 continue
             try:
-                out.append(json.loads(line))
+                out.append(json.loads(normalized_line))
             except Exception:
-                out.append({"raw": line})
+                out.append({"raw": normalized_line})
         return out
     except Exception:
         return []

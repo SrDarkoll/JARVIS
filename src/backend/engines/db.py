@@ -5,6 +5,7 @@ import sqlite3
 import threading
 
 from core import jarvis_config, jarvis_state
+from core.jarvis_observability import obs_event
 from langchain_core.messages import AIMessage, HumanMessage
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +21,7 @@ _perfiles_memoria = jarvis_state._perfiles_memoria
 _msg_counter_by_profile = jarvis_state._msg_counter_by_profile
 db_lock = threading.Lock()
 
+
 def init_db():
     with db_lock:
         try:
@@ -29,25 +31,26 @@ def init_db():
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
 
-            c.execute('''
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS profiles (
                     profile_id TEXT PRIMARY KEY,
                     history TEXT,
                     facts TEXT
                 )
-            ''')
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
-            from core.jarvis_observability import obs_event
             obs_event("db_init_error", error=str(e)[:300])
             print(f"[ERROR DB INIT] {e}")
+
 
 def _normalizar_profile_id(profile_id: str | None) -> str:
     pid = (profile_id or DEFAULT_PROFILE_ID).strip().lower()
     pid = re.sub(r"[^a-z0-9_.-]+", "_", pid)
     pid = pid.strip("._-") or DEFAULT_PROFILE_ID
     return pid[:64]
+
 
 def _deserializar_history(items: list) -> list:
     restored = []
@@ -63,17 +66,21 @@ def _deserializar_history(items: list) -> list:
             continue
     return restored[-40:]
 
+
 def _serializar_history(history: list) -> list:
     out = []
     for m in (history or [])[-40:]:
         try:
-            out.append({
-                "type": "human" if isinstance(m, HumanMessage) else "ai",
-                "content": getattr(m, "content", ""),
-            })
+            out.append(
+                {
+                    "type": "human" if isinstance(m, HumanMessage) else "ai",
+                    "content": getattr(m, "content", ""),
+                }
+            )
         except Exception:
             continue
     return out
+
 
 def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
     perfiles = {}
@@ -91,7 +98,6 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                 try:
                     hist_list = json.loads(row[1]) if row[1] else []
                 except Exception as e:
-                    from core.jarvis_observability import obs_event
                     obs_event("db_load_json_error", error=str(e)[:300])
                     hist_list = []
                 facts = row[2] or ""
@@ -101,7 +107,6 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                 }
             conn.close()
         except Exception as e:
-            from core.jarvis_observability import obs_event
             obs_event("db_load_error", error=str(e)[:300])
             print(f"[ERROR DB LOAD] {e}")
 
@@ -110,8 +115,8 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
         perfiles[DEFAULT_PROFILE_ID] = {"history": [], "facts": ""}
 
     if len(perfiles) <= 1 and not perfiles[DEFAULT_PROFILE_ID]["history"]:
-        mem_file = os.path.join(_ROOT, 'memoria_jarvis_profiles.json')
-        legacy_file = os.path.join(_ROOT, 'memoria_jarvis.json')
+        mem_file = os.path.join(_ROOT, "memoria_jarvis_profiles.json")
+        legacy_file = os.path.join(_ROOT, "memoria_jarvis.json")
         if os.path.exists(mem_file):
             try:
                 with open(mem_file, encoding="utf-8") as f:
@@ -124,7 +129,6 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                         "facts": normalizar_tratamiento_admin_func((pdata or {}).get("facts", "")),
                     }
             except Exception as e:
-                from core.jarvis_observability import obs_event
                 obs_event("json_load_error", error=str(e)[:300])
         elif os.path.exists(legacy_file):
             try:
@@ -135,10 +139,10 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                     "facts": normalizar_tratamiento_admin_func(old.get("facts", "")),
                 }
             except Exception as e:
-                from core.jarvis_observability import obs_event
                 obs_event("legacy_json_load_error", error=str(e)[:300])
 
     return perfiles
+
 
 def guardar_memoria_perfiles(normalizar_tratamiento_admin_func):
     try:
@@ -157,16 +161,19 @@ def guardar_memoria_perfiles(normalizar_tratamiento_admin_func):
             for pid, data in snapshot.items():
                 hist_str = json.dumps(data["history"], ensure_ascii=False)
                 facts = data["facts"]
-                c.execute('''
+                c.execute(
+                    """
                     INSERT INTO profiles(profile_id, history, facts) VALUES(?, ?, ?)
                     ON CONFLICT(profile_id) DO UPDATE SET history=excluded.history, facts=excluded.facts
-                ''', (pid, hist_str, facts))
+                """,
+                    (pid, hist_str, facts),
+                )
             conn.commit()
             conn.close()
     except Exception as e:
-        from core.jarvis_observability import obs_event
         obs_event("db_save_error", error=str(e)[:300])
         print(f"[ERROR DB SAVE] {e}")
+
 
 def guardar_memoria_async(args, normalizar_tratamiento_admin_func):
     try:
@@ -183,9 +190,12 @@ def guardar_memoria_async(args, normalizar_tratamiento_admin_func):
                     "history": list(history or [])[-40:],
                     "facts": normalizar_tratamiento_admin_func(facts or ""),
                 }
-        threading.Thread(target=guardar_memoria_perfiles, args=(normalizar_tratamiento_admin_func,), daemon=True).start()
+        threading.Thread(
+            target=guardar_memoria_perfiles, args=(normalizar_tratamiento_admin_func,), daemon=True
+        ).start()
     except Exception as e:
         print(f"[ERROR MEMORY ASYNC] {e}")
+
 
 def cargar_memoria(normalizar_tratamiento_admin_func):
     perfiles = cargar_memoria_perfiles(normalizar_tratamiento_admin_func)

@@ -38,11 +38,7 @@ class MonitoringService:
         self._ejecutar_briefing_func = None
         self._check_briefing_sent_func = None
 
-        self._scheduler = (
-            BackgroundScheduler(daemon=True)
-            if self._enabled and SCHEDULER_AVAILABLE
-            else None
-        )
+        self._scheduler = BackgroundScheduler(daemon=True) if self._enabled and SCHEDULER_AVAILABLE else None
 
     @property
     def configured(self) -> bool:
@@ -79,8 +75,8 @@ class MonitoringService:
 
             if self._security_manager:
                 with self._security_manager.PROACTIVE_LOCK:
-                    self._security_manager.PROACTIVE_STATE["last_health_check"] = (
-                        datetime.now().isoformat(timespec="seconds")
+                    self._security_manager.PROACTIVE_STATE["last_health_check"] = datetime.now().isoformat(
+                        timespec="seconds"
                     )
 
             heartbeat_state["cpu_high_streak"] = (
@@ -113,12 +109,8 @@ class MonitoringService:
                     )
 
             # Check de errores en plugins
-            plugin_errors = (
-                self._brain_state.PLUGIN_STATE.get("errors") if self._brain_state else {}
-            )
-            if plugin_errors and heartbeat_state.get(
-                "last_plugin_error_alert"
-            ) != datetime.now().strftime("%Y-%m-%d"):
+            plugin_errors = self._brain_state.PLUGIN_STATE.get("errors") if self._brain_state else {}
+            if plugin_errors and heartbeat_state.get("last_plugin_error_alert") != datetime.now().strftime("%Y-%m-%d"):
                 heartbeat_state["last_plugin_error_alert"] = datetime.now().strftime("%Y-%m-%d")
                 if self._security_manager:
                     self._security_manager._proactive_push_alert(
@@ -163,11 +155,10 @@ class MonitoringService:
         """Scheduled task for daily briefing (Cron)."""
         if self._ejecutar_briefing_func:
             from utils.jarvis_i18n import get_bt
+
             bt = get_bt()
             print(bt["log_morning_briefing"])
-            threading.Thread(
-                target=lambda: self._ejecutar_briefing_func("cron_scheduler"), daemon=True
-            ).start()
+            threading.Thread(target=lambda: self._ejecutar_briefing_func("cron_scheduler"), daemon=True).start()
 
     def _update_weather_task(self):
         """Updates the weather every 30 minutes."""
@@ -180,6 +171,7 @@ class MonitoringService:
             wc["desc"] = desc
             wc["last_update"] = _time.time()
             from utils.jarvis_i18n import get_bt
+
             bt = get_bt()
             print(bt["log_weather_updated"].format(temp=temp, desc=desc))
         except Exception as e:

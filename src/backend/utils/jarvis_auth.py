@@ -54,6 +54,7 @@ def verificar_autorizacion(profile_id: str | None = None) -> bool:
     Si el modo invitado está desactivado (allow_guest_mode=False), el admin está autorizado por defecto a menos que se revoque explícitamente.
     """
     from core.jarvis_config import resolve_runtime_features
+
     with _auth_lock:
         if not _auth_state["autorizado"]:
             if not resolve_runtime_features().allow_guest_mode and _auth_state.get("revoked_explicitly") is not True:
@@ -81,9 +82,6 @@ def es_perfil_autorizado(profile_id: str) -> bool:
     return profile_id == DEFAULT_AUTHORIZED_PROFILE
 
 
-
-
-
 def get_auth_snapshot() -> dict:
     with _auth_lock:
         return dict(_auth_state)
@@ -96,6 +94,7 @@ def es_guest(profile_id: str | None) -> bool:
     Owner: admin (único perfil con acceso completo)
     """
     from core.jarvis_config import resolve_runtime_features
+
     if not resolve_runtime_features().allow_guest_mode:
         return False
     if not profile_id:
@@ -130,6 +129,3 @@ def activar_perfil_invitado(profile_id: str, nombre: str) -> None:
         _auth_state["nombre"] = str(nombre or "Invitado").strip()
         _auth_state["timestamp"] = datetime.now().timestamp()
         _auth_state["metodo"] = "guest_voice"
-
-
-

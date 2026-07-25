@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from core.jarvis_config import SpeechToTextConfig
 from core.runtime_logger import log_warning
@@ -160,9 +161,7 @@ class LazyWhisperTranscriber:
                 beam_size=WHISPER_BEAM_SIZE,
                 condition_on_previous_text=False,
             )
-            return normalizar_transcript_hint(
-                reconstruir_transcripcion_por_pausas(list(segments))
-            )
+            return normalizar_transcript_hint(reconstruir_transcripcion_por_pausas(list(segments)))
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
@@ -180,9 +179,7 @@ class TranscriptionCoordinator:
         groq: AudioTranscriber | None,
         local: AudioTranscriber | None,
     ):
-        self.provider = (
-            provider if provider in {"auto", "browser", "groq", "local"} else "auto"
-        )
+        self.provider = provider if provider in {"auto", "browser", "groq", "local"} else "auto"
         self.groq = groq
         self.local = local
 
@@ -209,9 +206,7 @@ class TranscriptionCoordinator:
             if transcriber is None:
                 continue
             try:
-                text = normalizar_transcript_hint(
-                    transcriber.transcribe(audio_bytes, language)
-                )
+                text = normalizar_transcript_hint(transcriber.transcribe(audio_bytes, language))
             except Exception as exc:
                 log_warning(
                     "voice_transcription_provider_failed",
@@ -224,9 +219,7 @@ class TranscriptionCoordinator:
         return TranscriptionResult("", "unavailable")
 
     def snapshot(self) -> dict[str, bool | str]:
-        groq_configured = bool(
-            self.groq is not None and getattr(self.groq, "configured", True)
-        )
+        groq_configured = bool(self.groq is not None and getattr(self.groq, "configured", True))
         local_snapshot = (
             self.local.snapshot()
             if self.local is not None and hasattr(self.local, "snapshot")

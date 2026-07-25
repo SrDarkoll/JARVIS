@@ -89,10 +89,7 @@ def _redact_value(value: object, *, key: object = "") -> object:
     if _is_sensitive_key(key):
         return "[REDACTED]"
     if isinstance(value, dict):
-        return {
-            str(item_key): _redact_value(item_value, key=item_key)
-            for item_key, item_value in value.items()
-        }
+        return {str(item_key): _redact_value(item_value, key=item_key) for item_key, item_value in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_redact_value(item) for item in value]
     if value is None or isinstance(value, (bool, int, float)):
@@ -170,8 +167,7 @@ def write_log(category: str, message: object, **context: object) -> None:
             return
         clean_message = redact_text(message)
         context_parts = [
-            f"{redact_text(key)}={_format_context_value(value, key=key)}"
-            for key, value in context.items()
+            f"{redact_text(key)}={_format_context_value(value, key=key)}" for key, value in context.items()
         ]
         if context_parts:
             clean_message = f"{clean_message} | {' | '.join(context_parts)}"
@@ -231,9 +227,7 @@ class UnifiedLogTee:
         clean_line = line.strip()
         if not clean_line:
             return
-        if self._suppress_runtime_lines and clean_line.startswith(
-            _RUNTIME_STREAM_PREFIXES
-        ):
+        if self._suppress_runtime_lines and clean_line.startswith(_RUNTIME_STREAM_PREFIXES):
             return
         write_log(self._category, clean_line)
 
@@ -272,16 +266,8 @@ def install_console_capture(
     configure_unified_log(
         log_file or jarvis_config.UNIFIED_LOG_FILE,
         enabled=jarvis_config.UNIFIED_LOG_ENABLED if enabled is None else enabled,
-        max_bytes=(
-            jarvis_config.UNIFIED_LOG_MAX_BYTES
-            if max_bytes is None
-            else max_bytes
-        ),
-        backup_count=(
-            jarvis_config.UNIFIED_LOG_BACKUP_COUNT
-            if backup_count is None
-            else backup_count
-        ),
+        max_bytes=(jarvis_config.UNIFIED_LOG_MAX_BYTES if max_bytes is None else max_bytes),
+        backup_count=(jarvis_config.UNIFIED_LOG_BACKUP_COUNT if backup_count is None else backup_count),
     )
     if not _enabled:
         return False

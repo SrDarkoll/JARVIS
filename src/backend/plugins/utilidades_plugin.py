@@ -15,5 +15,3 @@ def get_tools(context):
         return f"Fecha actual: {datetime.now().strftime('%d/%m/%Y')}."
 
     return [hora_actual_plugin, fecha_actual_plugin]
-
-

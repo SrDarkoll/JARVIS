@@ -74,6 +74,7 @@ class ServiceContainer:
 
     def add_reminder(self, text: str, minutes: int):
         from datetime import timedelta
+
         cuando = datetime.now() + timedelta(minutes=minutes)
         with jarvis_state.recordatorios_lock:
             jarvis_state._recordatorios.append({"texto": text, "cuando": cuando})
@@ -86,12 +87,17 @@ class ServiceContainer:
 
     def log_event(self, event_type: str, **payload):
         if self.obs_event:
-            try: self.obs_event(event_type, **payload)
-            except Exception as e: print(f"[WARN container] Log error {event_type}: {e}")
+            try:
+                self.obs_event(event_type, **payload)
+            except Exception as e:
+                print(f"[WARN container] Log error {event_type}: {e}")
 
     def inc_counter(self, metric: str, amount: int = 1):
         if self.obs_inc:
-            try: self.obs_inc(metric, amount)
-            except Exception as e: print(f"[WARN container] Inc error {metric}: {e}")
+            try:
+                self.obs_inc(metric, amount)
+            except Exception as e:
+                print(f"[WARN container] Inc error {metric}: {e}")
+
 
 services = ServiceContainer()

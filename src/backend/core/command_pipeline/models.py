@@ -44,9 +44,7 @@ class CommandRequest:
     channel: str
     language: str
     received_at: datetime
-    metadata: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def create(
@@ -80,9 +78,7 @@ class ActionStep:
 
     step_id: str
     tool_name: str
-    arguments: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    arguments: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     depends_on: tuple[str, ...] = ()
     parallel_safe: bool = False
 

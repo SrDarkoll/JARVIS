@@ -17,9 +17,7 @@ _PENDING_AUTH_ACTIONS: dict[str, dict[str, Any]] = {}
 _PENDING_AUTH_LOCK = threading.RLock()
 
 
-def _registrar_accion_pendiente_auth(
-    profile_id: str, tool_name: str, args: dict, user_input: str
-) -> None:
+def _registrar_accion_pendiente_auth(profile_id: str, tool_name: str, args: dict, user_input: str) -> None:
     """
     Registra una acción que requiere confirmación por parte del usuario.
     """
@@ -34,9 +32,7 @@ def _registrar_accion_pendiente_auth(
         logger.debug(f"Acción pendiente de auth registrada para {pid}: {tool_name}")
 
 
-def _extraer_accion_pendiente_auth(
-    profile_id: str, *, pop: bool = False
-) -> dict | None:
+def _extraer_accion_pendiente_auth(profile_id: str, *, pop: bool = False) -> dict | None:
     """
     Extrae o lee la acción pendiente de autorización, descartándola si ha expirado.
     """
@@ -69,8 +65,7 @@ def _get_history_for_profile(pid: str) -> list:
 
 
 def _append_to_profile_history(
-    pid: str, human_msg: HumanMessage, ai_msg: AIMessage,
-    tool_results: list[str] | None = None
+    pid: str, human_msg: HumanMessage, ai_msg: AIMessage, tool_results: list[str] | None = None
 ) -> None:
     """
     Añade mensajes al historial, inyectando resultados de herramientas si existen
@@ -83,12 +78,7 @@ def _append_to_profile_history(
 
         if tool_results:
             # Casteo seguro a str por si el LLM devuelve un dict/list en el content
-            combined = (
-                str(ai_msg.content)
-                + "\n\n[Datos verificados en tiempo real: "
-                + " | ".join(tool_results)
-                + "]"
-            )
+            combined = str(ai_msg.content) + "\n\n[Datos verificados en tiempo real: " + " | ".join(tool_results) + "]"
             h.append(AIMessage(content=combined))
         else:
             h.append(ai_msg)

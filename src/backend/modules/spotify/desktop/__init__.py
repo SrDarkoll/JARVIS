@@ -39,6 +39,7 @@ def build_windows_controller(*, start_timeout: float, action_timeout: float):
         action_timeout=action_timeout,
     )
 
+
 __all__ = [
     "AutomationState",
     "DesktopResultStatus",
