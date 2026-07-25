@@ -14,8 +14,9 @@ Expect hardware-specific behavior around microphones, speakers, Spotify devices,
 - English/Spanish UI and response mode.
 - Admin voice enrollment and guest voice profile registration.
 - Per-profile memory and shared memory facts.
-- Local reminders, weather, news summaries, time/date answers, and dynamic web search routing.
+- Local reminders, weather (with automatic IP geolocation resolution on startup), news summaries, time/date answers, and dynamic web search routing.
 - Spotify playback and controls through either the Windows desktop client or an eligible Web API account, plus API-backed AutoMix and dynamic recommendations when the account permits them.
+- YouTube direct video search, structured candidate extraction, title similarity ranking, and automated playback.
 - Telegram bot integration with `TELEGRAM_CHAT_ID` filtering.
 - Local desktop/system tools gated by authorization and security policy.
 - Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
