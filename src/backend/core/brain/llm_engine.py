@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ from core import core_tools
 from core.brain import brain_state, tool_manager
 from core.jarvis_config import (
     BRIEFING_ENABLED,
+    GOOGLE_API_KEY,
     GROQ_API_KEY,
     GROQ_MODEL,
     GROQ_VISION_MODEL,
@@ -320,35 +322,63 @@ def init_brain(app_ref):
     base_tools = core_tools.get_base_tools()
 
     # Clean key configuration (avoids issues with literal quotes in .env)
-    g_key = (GROQ_API_KEY or "").strip().replace('"', "").replace("'", "")
-    google_key = (os.getenv("GOOGLE_API_KEY") or "").strip().replace('"', "").replace("'", "")
+    g_key = (getattr(sys.modules[__name__], "GROQ_API_KEY", None) or GROQ_API_KEY or "").strip().replace('"', "").replace("'", "")
+    google_key = (getattr(sys.modules[__name__], "GOOGLE_API_KEY", None) or GOOGLE_API_KEY or "").strip().replace('"', "").replace("'", "")
 
-    is_google_model = GROQ_MODEL.startswith("gemini") or GROQ_MODEL.startswith("gemma") or (os.getenv("JARVIS_LLM_PROVIDER") or "").strip().lower() in {"gemini", "google"}
-    active_key = google_key if is_google_model else g_key
-    active_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/" if is_google_model else "https://api.groq.com/openai/v1"
+    # Provider resolution: Google Gemini is primary when available, Groq is fallback.
+    provider = (os.getenv("JARVIS_LLM_PROVIDER") or "").strip().lower()
+    use_google_primary = bool(google_key and provider != "groq") or provider in {"gemini", "google"} or GROQ_MODEL.startswith("gemini")
 
     ChatOpenAI = _load_chat_openai()
     brain_state.llm = None
     brain_state.llm_vision = None
     brain_state.llm_fallback = None
 
-    if not active_key:
-        log_warning("llm_api_key_missing", error=f"API key missing for provider (is_google={is_google_model})")
-    else:
+    if use_google_primary and google_key:
+        gemini_model = os.getenv("JARVIS_GEMINI_MODEL", "gemini-2.5-flash") if not GROQ_MODEL.startswith("gemini") else GROQ_MODEL
+        brain_state.llm = ChatOpenAI(
+            model=gemini_model,
+            temperature=0,
+            api_key=google_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        if VISION_ENABLED:
+            brain_state.llm_vision = ChatOpenAI(
+                model=os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+                temperature=0,
+                api_key=google_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+        if g_key:
+            brain_state.llm_fallback = ChatOpenAI(
+                model=GROQ_MODEL,
+                temperature=0,
+                api_key=g_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+    elif g_key:
         brain_state.llm = ChatOpenAI(
             model=GROQ_MODEL,
             temperature=0,
-            api_key=active_key,
-            base_url=active_base_url,
+            api_key=g_key,
+            base_url="https://api.groq.com/openai/v1",
         )
-
         if VISION_ENABLED:
             brain_state.llm_vision = ChatOpenAI(
                 model=GROQ_VISION_MODEL,
                 temperature=0,
-                api_key=active_key,
-                base_url=active_base_url,
+                api_key=g_key,
+                base_url="https://api.groq.com/openai/v1",
             )
+        if google_key:
+            brain_state.llm_fallback = ChatOpenAI(
+                model=os.getenv("JARVIS_GEMINI_MODEL", "gemini-2.5-flash"),
+                temperature=0,
+                api_key=google_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+    else:
+        log_warning("llm_api_key_missing", error="API keys missing for both Google Gemini and Groq")
 
     services.llm = brain_state.llm
     services.llm_vision = brain_state.llm_vision

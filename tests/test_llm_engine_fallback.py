@@ -173,6 +173,8 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
             return None
 
     monkeypatch.setattr(llm_engine, "_load_chat_openai", lambda: FakeChatOpenAI)
+    monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
     monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
     monkeypatch.setattr(llm_engine, "GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
@@ -199,6 +201,43 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
     assert brain_state.llm_fallback is None
 
 
+def test_init_brain_configures_gemini_as_primary_and_groq_as_fallback(monkeypatch):
+    from core.brain import brain_state
+
+    calls = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            self.model = kwargs["model"]
+
+        def bind_tools(self, tools, tool_choice="auto", **_kwargs):
+            return self
+
+    monkeypatch.setattr(llm_engine, "_load_chat_openai", lambda: FakeChatOpenAI)
+    monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "google-key", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
+    monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "VISION_ENABLED", False, raising=False)
+    monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", False, raising=False)
+    monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", False, raising=False)
+    monkeypatch.setattr(llm_engine.core_tools, "inject_dependencies", lambda _deps: None)
+    monkeypatch.setattr(llm_engine.core_tools, "get_base_tools", lambda: [])
+
+    monkeypatch.setattr(brain_state, "llm", None)
+    monkeypatch.setattr(brain_state, "llm_vision", None)
+    monkeypatch.setattr(brain_state, "llm_fallback", None)
+    monkeypatch.setattr(brain_state, "llm_with_tools", None)
+
+    llm_engine.init_brain(app_ref=None)
+
+    assert brain_state.llm is not None
+    assert brain_state.llm.model == "gemini-2.5-flash"
+    assert brain_state.llm_fallback is not None
+    assert brain_state.llm_fallback.model == "qwen/qwen3.6-27b"
+
+
 def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
     from core.brain import brain_state  # pyright: ignore[reportMissingImports]
 
@@ -216,6 +255,8 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
         raise AssertionError("optional initializer should not run in core mode")
 
     monkeypatch.setattr(llm_engine, "_load_chat_openai", lambda: FakeChatOpenAI)
+    monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
     monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", False, raising=False)
