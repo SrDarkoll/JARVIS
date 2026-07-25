@@ -494,7 +494,13 @@ def test_controller_writes_sanitized_matching_diagnostics(monkeypatch):
         now_playing=("No Te Apartes de M\u00ed", "Vicentico"),
     )
 
-    result = make_controller(FakeWindowAdapter(), uia).play(request())
+    class FakeClock:
+        def monotonic(self):
+            return 100.0
+        def sleep(self, seconds):
+            pass
+
+    result = make_controller(FakeWindowAdapter(), uia, clock=FakeClock()).play(request())
 
     assert result.status is DesktopResultStatus.SUCCESS
     assert records == [

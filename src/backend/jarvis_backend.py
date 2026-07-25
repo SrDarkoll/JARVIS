@@ -816,6 +816,7 @@ async def _start_monitoring_service():
             started=bool(started),
         )
         import threading
+
         from tools.utilities import _auto_init_weather
         threading.Thread(target=_auto_init_weather, daemon=True).start()
     except Exception as exc:

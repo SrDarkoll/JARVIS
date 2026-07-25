@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from core.unified_log import write_log
+
 from modules.spotify.desktop.matching import (
     choose_candidate,
     normalize_text,

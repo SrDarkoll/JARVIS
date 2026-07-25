@@ -6,6 +6,8 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
+from langchain_core.messages import SystemMessage
+
 from core.brain import brain_utils
 from core.command_pipeline.execution import validate_plan_operations
 from core.command_pipeline.models import (
@@ -14,7 +16,6 @@ from core.command_pipeline.models import (
     CommandRequest,
     PlanSource,
 )
-from langchain_core.messages import SystemMessage
 
 
 class GroqPlanner:

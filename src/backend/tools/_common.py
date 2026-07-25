@@ -8,8 +8,7 @@ import re
 import sys
 import unicodedata
 
-from core import jarvis_state
-from core import jarvis_config
+from core import jarvis_config, jarvis_state
 from core.service_container import services
 
 IS_WINDOWS = sys.platform == "win32"

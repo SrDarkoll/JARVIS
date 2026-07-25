@@ -396,8 +396,8 @@ def cerrar_navegador_playwright() -> str:
 def _obtener_top_youtube_url(query: str) -> str:
     """Extrae la URL del primer video relevante en YouTube para reproducirlo directamente."""
     try:
-        import urllib.request
         import urllib.parse
+        import urllib.request
         q_clean = str(query or "").strip()
         if not q_clean:
             return "https://www.youtube.com"

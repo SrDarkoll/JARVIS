@@ -127,6 +127,7 @@ def _buscar_en_brave(query: str) -> str:
 
     try:
         import time
+
         from requests.exceptions import RequestException
 
         print(f"  [TOOL] Internet Search (Brave): {query_mod}")
@@ -198,6 +199,7 @@ def _buscar_en_newsapi(query: str) -> list:
     try:
         news_lang = "es" if get_current_language().startswith("es") else "en"
         import time
+
         from requests.exceptions import RequestException
         max_retries = 2
         for attempt in range(max_retries + 1):

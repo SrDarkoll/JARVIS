@@ -31,9 +31,17 @@ from modules.spotify.api.recommendations import (
 from modules.spotify.desktop.matching import normalize_text
 from modules.spotify.messages import (
     is_english as _spotify_is_english,
+)
+from modules.spotify.messages import (
     playback_success_message as _spotify_playback_success_message,
+)
+from modules.spotify.messages import (
     text as _spotify_text,
+)
+from modules.spotify.messages import (
     track_label as _spotify_track_label,
+)
+from modules.spotify.messages import (
     track_plain_label as _spotify_track_plain_label,
 )
 from modules.spotify.state import set_last_requested_track

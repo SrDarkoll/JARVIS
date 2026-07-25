@@ -6,14 +6,15 @@ import json
 import re
 from typing import Any
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from utils.jarvis_text import reparar_unicode
+
 from core.brain import brain_utils
 from core.command_pipeline.models import (
     ActionPlan,
     CommandRequest,
     ExecutionReceipt,
 )
-from langchain_core.messages import HumanMessage, SystemMessage
-from utils.jarvis_text import reparar_unicode
 
 
 class GroqResponseSynthesizer:

@@ -19,23 +19,6 @@ from core.brain import (
     social_engine,
     tool_manager,
 )
-from core.errors import (
-    CHAT_UNAVAILABLE_MESSAGE,
-    LLM_UNCONFIGURED_MESSAGE,
-    LLMServiceError,
-    LLMUnavailableError,
-)
-from core.jarvis_observability import obs_event, obs_inc
-from core.jarvis_config import REASONING_MODE
-from core.jarvis_state import DEFAULT_PROFILE_ID
-from core.service_container import services
-from core.unified_log import write_conversation
-from engines.memory_rag import rag_motor
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from modules.spotify.followup import (
-    SpotifySelectionStatus,
-    pending_spotify_selections,
-)
 from core.command_pipeline.deterministic import DeterministicPlanner
 from core.command_pipeline.groq_planner import GroqPlanner
 from core.command_pipeline.models import (
@@ -47,6 +30,23 @@ from core.command_pipeline.models import (
 from core.command_pipeline.orchestrator import CommandOrchestrator
 from core.command_pipeline.responses import ResponseComposer
 from core.command_pipeline.synthesis import GroqResponseSynthesizer
+from core.errors import (
+    CHAT_UNAVAILABLE_MESSAGE,
+    LLM_UNCONFIGURED_MESSAGE,
+    LLMServiceError,
+    LLMUnavailableError,
+)
+from core.jarvis_config import REASONING_MODE
+from core.jarvis_observability import obs_event, obs_inc
+from core.jarvis_state import DEFAULT_PROFILE_ID
+from core.service_container import services
+from core.unified_log import write_conversation
+from engines.memory_rag import rag_motor
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from modules.spotify.followup import (
+    SpotifySelectionStatus,
+    pending_spotify_selections,
+)
 from modules.spotify.state import get_last_requested_track
 from services.memory_manager import memory_manager
 from utils.jarvis_i18n import get_current_language

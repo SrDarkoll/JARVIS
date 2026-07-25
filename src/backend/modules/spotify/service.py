@@ -6,6 +6,7 @@ import re
 import threading
 
 from core import jarvis_config, jarvis_state
+
 from modules.spotify import config
 from modules.spotify.api.client import _spotify_has_valid_cached_token
 from modules.spotify.api.playback import _spotify_control_api, _spotify_play_api
@@ -19,7 +20,11 @@ from modules.spotify.desktop.matching import normalize_text
 from modules.spotify.followup import pending_spotify_selections
 from modules.spotify.messages import (
     text as _spotify_text,
+)
+from modules.spotify.messages import (
     track_label as _spotify_track_label,
+)
+from modules.spotify.messages import (
     track_plain_label as _spotify_track_plain_label,
 )
 from modules.spotify.state import set_last_requested_track

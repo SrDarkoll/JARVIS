@@ -283,6 +283,7 @@ def _obtener_clima_logic(ciudad: str | None = None) -> tuple[str, str]:
     # Proveedor 2: Open-Meteo
     try:
         import time
+
         from requests.exceptions import RequestException
         explicit_location = bool(str(ciudad or "").strip())
         use_configured_coordinates = (
@@ -386,6 +387,7 @@ def obtener_deportes_espn(deporte: str = "basketball", liga: str = "nba", consul
     Si event_id no está vacío, trae stats detallados de ese partido."""
     try:
         import time
+
         from requests.exceptions import RequestException
 
         # Validar y normalizar parámetros

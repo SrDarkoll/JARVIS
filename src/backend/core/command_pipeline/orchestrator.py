@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from core.command_pipeline.reasoning import ReasoningMode
 from core.command_pipeline.execution import validate_plan_operations
 from core.command_pipeline.models import (
     ActionPlan,
@@ -14,6 +13,7 @@ from core.command_pipeline.models import (
     ExecutionReceipt,
     PlanSource,
 )
+from core.command_pipeline.reasoning import ReasoningMode
 from core.errors import LLMServiceError, LLMUnavailableError
 
 EventCallback = Callable[[dict[str, Any]], None]

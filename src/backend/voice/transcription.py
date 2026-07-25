@@ -10,6 +10,7 @@ from typing import Any, Callable, Protocol
 
 from core.jarvis_config import SpeechToTextConfig
 from core.runtime_logger import log_warning
+
 from voice.pipeline import (
     WHISPER_BEAM_SIZE,
     hint_necesita_reintento_whisper,

@@ -5,8 +5,8 @@ import time as _time
 from datetime import datetime
 from urllib.parse import urlparse
 
-from core.jarvis_context import context
 from core import jarvis_config
+from core.jarvis_context import context
 from core.security.tool_policy import evaluate_tool_policy, export_tool_policy_table
 
 # DEPENDENCY INJECTION

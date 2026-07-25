@@ -2,7 +2,6 @@
 
 from importlib import import_module
 
-
 _LAZY_EXPORTS = {
     "buscar_en_internet": ("tools.search", "buscar_en_internet"),
     "obtener_deportes_espn": ("tools.utilities", "obtener_deportes_espn"),

@@ -9,10 +9,10 @@ import time as _time
 import spotipy
 from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyOAuth
+from tools._common import _open_url_or_app
 
 from modules.spotify import config
 from modules.spotify.messages import text as _spotify_text
-from tools._common import _open_url_or_app
 
 SPOTIFY_CACHE = config.SPOTIFY_CACHE
 SPOTIFY_CLIENT_ID = config.SPOTIFY_CLIENT_ID

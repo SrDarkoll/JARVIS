@@ -15,6 +15,7 @@ def build_windows_controller(*, start_timeout: float, action_timeout: float):
 
     from core import jarvis_config
     from core.service_container import services
+
     from modules.spotify.desktop.visual import build_default_visual_recovery
     from modules.spotify.desktop.windows import (
         SpotifyUIAutomationAdapter,
