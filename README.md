@@ -24,9 +24,9 @@ macOS and Linux when platform-specific integrations are unavailable.
 ### Windows Alpha Package
 
 The recommended path for Windows users is the
-[v0.1.0-alpha.1 release](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.1):
+[v0.1.0-alpha.2 release](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.2):
 
-1. Download `JARVIS-v0.1.0-alpha.1-windows.zip`.
+1. Download `JARVIS-v0.1.0-alpha.2-windows.zip`.
 2. Extract the complete ZIP to a permanent folder.
 3. Run `Install-JARVIS.bat`.
 4. Add `GROQ_API_KEY` or `GEMINI_API_KEY` to the generated `.env`.
@@ -118,6 +118,19 @@ The Windows package and Git LFS checkout include two offline Piper voices:
 | English | `en_GB-northern_english_male-medium.onnx` | Medium |
 | Spanish | `es_MX-claude-high.onnx` | High |
 
+The repository MIT license applies to J.A.R.V.I.S. source code. It does not
+replace the terms of bundled models or installed runtimes. Their sources,
+hashes, model cards, modification status, and license texts are preserved in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and `third_party/`.
+
+The English model card declares its dataset as CC-BY-SA 4.0 and says the model
+was fine-tuned from a Lessac voice without identifying that base voice's
+license. J.A.R.V.I.S. keeps the model unmodified and documents this unresolved
+lineage rather than representing it as purely MIT-licensed. The Spanish model
+card declares its dataset/training source as Apache-2.0. Piper itself is
+installed as `piper-tts==1.6.0`, whose package metadata declares
+GPL-3.0-or-later.
+
 A Piper voice is a pair of files:
 
 - `voice-name.onnx`: the neural voice model.
@@ -159,7 +172,10 @@ recognition support for a new language.
 
 Official voice downloads are available from the
 [Piper voice repository](https://huggingface.co/rhasspy/piper-voices/tree/main).
-Review each model card and license before redistributing a voice.
+Review each model card and license before redistributing a voice. Adding a
+downloaded model to a private installation does not add it to J.A.R.V.I.S.
+release archives; distributors who bundle another model must add its
+provenance and license to `THIRD_PARTY_NOTICES.md` and `third_party/`.
 
 RVC is a separate, experimental voice-conversion stage applied after Piper
 synthesis. It is disabled by default, is not included in the Windows alpha
@@ -430,7 +446,7 @@ pytest -q
 Current verified baseline:
 
 ```text
-643 passed, 1 skipped
+645 passed, 1 skipped
 ```
 
 Release checks:

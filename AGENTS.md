@@ -125,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-643 passed, 1 skipped
+645 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -340,7 +340,7 @@ directories, and remove entries as the corresponding modules are typed.
 Build the sanitized Windows ZIP from tracked runtime files:
 
 ```powershell
-.\scripts\build_windows_release.ps1 -Version 0.1.0-alpha.1
+.\scripts\build_windows_release.ps1 -Version 0.1.0-alpha.2
 ```
 
 The archive includes full Git LFS voice model contents and can therefore be
@@ -348,6 +348,11 @@ installed without Git or Git LFS. It deliberately excludes `.env`, virtual
 environments, tests, logs, caches, databases, and local runtime state. Stage
 new runtime files before building because the script packages only paths known
 to Git.
+
+Bundled third-party assets must remain documented in
+`THIRD_PARTY_NOTICES.md`. The release builder must require the matching model
+cards and license texts under `third_party/`; never add a model to a release
+without updating those files and their regression tests.
 
 Validate a release by extracting it below the repo-local `scratch/` directory,
 running its `setup.ps1`, checking the package virtual environment with
@@ -372,6 +377,8 @@ Before publishing a branch or release:
 - `.env` is not tracked.
 - `.env.example` documents required and optional variables.
 - `git lfs ls-files` includes tracked `.onnx` voice models.
+- `THIRD_PARTY_NOTICES.md` covers every bundled voice and runtime.
+- The release contains all required `third_party/` model cards and licenses.
 - `python -m pip check` reports no broken requirements.
 - `python -m pip_audit -r requirements.txt` reports no known runtime vulnerability.
 - `pytest -q` passes.

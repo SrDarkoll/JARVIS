@@ -1,7 +1,7 @@
 # Build a sanitized Windows release archive from version-controlled runtime files.
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0-alpha.1",
+    [string]$Version = "0.1.0-alpha.2",
     [string]$SourceRoot = "",
     [string]$OutputDirectory = ""
 )
@@ -48,14 +48,24 @@ $runtimeFiles = @(
     "setup.bat",
     "setup.ps1",
     "Start-JARVIS.bat",
-    "start_app.py"
+    "start_app.py",
+    "THIRD_PARTY_NOTICES.md"
 )
 $runtimeDirectories = @(
     "media",
     "models",
-    "src"
+    "src",
+    "third_party"
 )
 $runtimePaths = @($runtimeFiles + $runtimeDirectories)
+$requiredDistributionFiles = @(
+    "third_party\licenses\Apache-2.0.txt",
+    "third_party\licenses\CC-BY-SA-4.0.txt",
+    "third_party\licenses\GPL-3.0.txt",
+    "third_party\model_cards\en_GB-northern_english_male-medium.md",
+    "third_party\model_cards\es_MX-claude-high.md",
+    "third_party\PIPER_VOICES_REPOSITORY_NOTICE.md"
+)
 
 if (Test-Path -LiteralPath $buildRoot) {
     Remove-Item -LiteralPath $buildRoot -Recurse -Force
@@ -73,6 +83,12 @@ if ($LASTEXITCODE -ne 0 -or -not $trackedFiles) {
 foreach ($requiredFile in $runtimeFiles) {
     if ($requiredFile -notin $trackedFiles) {
         throw "Required release file is not tracked: $requiredFile"
+    }
+}
+foreach ($requiredFile in $requiredDistributionFiles) {
+    $gitPath = $requiredFile.Replace("\", "/")
+    if ($gitPath -notin $trackedFiles) {
+        throw "Required third-party notice is not tracked: $requiredFile"
     }
 }
 
@@ -111,6 +127,7 @@ J.A.R.V.I.S. v$Version for Windows
 
 This alpha package still requires Python 3.11/3.12, FFmpeg, eSpeak NG, and
 Microsoft Edge WebView2 Runtime. The installer validates these prerequisites.
+Third-party voice and runtime terms are documented in THIRD_PARTY_NOTICES.md.
 "@ | Set-Content -LiteralPath (Join-Path $packageRoot "RELEASE.txt") -Encoding utf8
 
 if (Test-Path -LiteralPath $archivePath) {

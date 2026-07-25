@@ -16,7 +16,7 @@ pywinauto>=0.6.9,<0.7; sys_platform == "win32"
 faster-whisper>=1.0
 numpy>=1.26
 soundfile>=0.12
-piper-tts
+piper-tts==1.6.0
 
 typing_extensions>=4.8; python_version < "3.11"
 
