@@ -31,7 +31,7 @@ from piper.config import SynthesisConfig
 from piper.voice import PiperVoice
 
 try:
-    from rvc_python.infer import RVCInference
+    from rvc_python.infer import RVCInference  # pyright: ignore[reportMissingImports]
 
     HAVE_RVC = True
 except ImportError:
