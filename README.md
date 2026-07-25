@@ -6,9 +6,51 @@ J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend a
 
 ## Project Status
 
-J.A.R.V.I.S. is currently a technical beta for local development and power users. A clean clone should install and start when Git LFS model files are present. A Groq key is required for AI-generated replies, but setup diagnostics and local-only features remain available without it. This is not yet a one-click consumer installer.
+J.A.R.V.I.S. is currently a technical beta for local development and power users. A clean clone installs and starts when Git LFS model files are present. An AI provider key (`GOOGLE_API_KEY` for Google Gemini primary, or `GROQ_API_KEY` for Groq fallback) is required for AI-generated replies, but setup diagnostics and local-only features remain available without it.
 
 Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, WebView2, and voice biometrics. Windows is the primary supported desktop target.
+
+## 🚀 Quick Start Guide (Paso a Paso)
+
+Follow these 4 simple steps to get Jarvis running:
+
+### 1. Clone the repository with Git LFS
+```powershell
+git lfs install
+git clone https://github.com/SrDarkoll/JARVIS.git
+cd JARVIS
+git lfs pull
+```
+*(Make sure `git lfs pull` downloads the real `.onnx` voice model files in `models/`).*
+
+### 2. Run automatic setup script
+- **Windows (PowerShell):**
+  ```powershell
+  .\setup.ps1 -Dev
+  ```
+- **Linux / macOS (Bash):**
+  ```bash
+  chmod +x setup.sh
+  ./setup.sh --dev
+  ```
+
+### 3. Configure your API Keys
+Copy `.env.example` to `.env`:
+- **Windows:** `Copy-Item .env.example .env`
+- **Linux/macOS:** `cp .env.example .env`
+
+Open `.env` and add your **Google Gemini API Key** (or Groq key):
+```env
+GOOGLE_API_KEY="tu_api_key_de_gemini"
+```
+
+### 4. Launch Jarvis
+```powershell
+python start_app.py
+```
+*Jarvis will start the backend engine and open the desktop interface.*
+
+---
 
 ## What Jarvis Can Do
 
@@ -24,28 +66,14 @@ Expect hardware-specific behavior around microphones, speakers, Spotify devices,
 - Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
 - Optional desktop shell through `pywebview` with persistent WebView2 storage.
 
-## Repository Layout
-
-- `start_app.py` - desktop launcher.
-- `src/backend/jarvis_backend.py` - Quart/Hypercorn backend entrypoint.
-- `src/backend/api/` - HTTP route modules.
-- `src/backend/core/` - config, state, security, tool routing, and assistant brain.
-- `src/backend/modules/` - first-party feature modules with their own service and provider boundaries; Spotify lives here.
-- `src/backend/tools/` - thin LangChain tool adapters plus shared search, browser, system, and utility tools.
-- `src/backend/voice/` - voice registration, transcription, and identity logic.
-- `src/frontend/` - static UI and templates.
-- `tests/` - regression and smoke tests.
-- `models/` - Piper voice models tracked with Git LFS.
-
 ## Requirements
 
 Recommended:
 
-- Python 3.11 or 3.12. The setup scripts reject newer Python versions for now because several ML dependencies still need a validated compatibility window. Python 3.13 remains unsupported even though `pydub` is no longer a direct dependency.
-- Git LFS before cloning, because `.onnx` voice models are stored through LFS.
-- FFmpeg on `PATH` for browser voice, voice identity, and Telegram OGG/Opus conversion.
-- Windows: eSpeak NG for Piper phonemization, usually installed at `C:\Program Files\eSpeak NG`.
-- Windows desktop shell: Microsoft Edge WebView2 runtime, normally already present on Windows 10/11.
+- Python 3.11 or 3.12. Python 3.13 is unsupported due to ML dependency compatibility windows.
+- Git LFS installed before cloning.
+- FFmpeg on `PATH` for browser voice, voice identity, and audio conversion.
+- Windows: eSpeak NG for Piper phonemization (usually at `C:\Program Files\eSpeak NG`).
 
 Useful Windows install commands:
 
@@ -56,70 +84,19 @@ winget install Gyan.FFmpeg
 winget install eSpeak-NG.eSpeak-NG
 ```
 
-macOS/Linux can run the backend and web UI, but Windows-only features such as some telemetry, volume control, and native desktop control may degrade or return controlled error messages.
+## Detailed Installation Options
 
-## Install From a Fresh Clone
+If you prefer manual virtual environment setup or full optional ML dependencies:
 
-```powershell
-git lfs install
-git clone https://github.com/SrDarkoll/JARVIS.git
-cd J.A.R.V.I.S
-git lfs pull
-```
+### Advanced Windows Flags
+- Standard dev setup: `.\setup.ps1 -Dev`
+- Complete optional dependencies (Voice ID, RAG, Vision): `.\setup.ps1 -Dev -Full`
 
-`git lfs pull` must download the real `.onnx` voice models. If those files are only tiny pointer files, TTS and setup validation will fail.
+### Advanced Linux/macOS Flags
+- Standard dev setup: `./setup.sh --dev`
+- Complete optional dependencies: `./setup.sh --dev --full`
 
-Windows:
-
-```powershell
-.\setup.ps1
-```
-
-Windows with test tools:
-
-```powershell
-.\setup.ps1 -Dev
-```
-
-Windows with every optional integration:
-
-```powershell
-.\setup.ps1 -Full
-```
-
-Windows full development environment:
-
-```powershell
-.\setup.ps1 -Dev -Full
-```
-
-Linux/macOS:
-
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-Linux/macOS with test tools:
-
-```bash
-./setup.sh --dev
-```
-
-Linux/macOS with every optional integration:
-
-```bash
-./setup.sh --full
-```
-
-Linux/macOS full development environment:
-
-```bash
-./setup.sh --dev --full
-```
-
-Manual setup:
-
+### Manual Setup Fallback
 ```bash
 python -m venv venv
 # Windows:
@@ -130,9 +107,6 @@ python -m venv venv
 venv/bin/python -m pip install --upgrade pip
 venv/bin/python -m pip install -r requirements.txt
 venv/bin/python -m pip install -r requirements-dev.txt
-# Only for full mode:
-.\venv\Scripts\python.exe -m pip install -r requirements-optional.txt
-# Linux/macOS: venv/bin/python -m pip install -r requirements-optional.txt
 ```
 
 Run `setup.ps1` or `setup.sh` before the launcher. When the project `venv`
