@@ -3,6 +3,7 @@
 param(
     [switch]$Dev,
     [switch]$Full,
+    [switch]$CreateShortcut,
     [ValidateSet("3.11", "3.12")]
     [string]$PythonVersion = ""
 )
@@ -27,7 +28,6 @@ function Require-Command {
     }
 }
 
-Require-Command -Name "git-lfs" -InstallCommand "winget install GitHub.GitLFS"
 Require-Command -Name "ffmpeg" -InstallCommand "winget install Gyan.FFmpeg"
 
 $requiredModels = @(
@@ -37,16 +37,31 @@ $requiredModels = @(
     "models\es_MX-claude-high.onnx.json"
 )
 
-$missingModels = @()
-foreach ($model in $requiredModels) {
-    if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
-        $missingModels += $model
-        continue
+function Get-ModelIssues {
+    $issues = @()
+    foreach ($model in $requiredModels) {
+        if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
+            $issues += $model
+            continue
+        }
+        if ($model.EndsWith(".onnx") -and
+            (Get-Item -LiteralPath $model).Length -lt 1000000) {
+            $issues += "$model (Git LFS pointer, not full model)"
+        }
     }
-    if ($model.EndsWith(".onnx") -and
-        (Get-Item -LiteralPath $model).Length -lt 1000000) {
-        $missingModels += "$model (Git LFS pointer, not full model)"
+    return $issues
+}
+
+$missingModels = @(Get-ModelIssues)
+if ($missingModels.Count -gt 0) {
+    Require-Command -Name "git-lfs" -InstallCommand "winget install GitHub.GitLFS"
+    Write-Host "Required voice models are missing; downloading Git LFS files..."
+    & git lfs pull
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Git LFS could not download the voice models." -ForegroundColor Red
+        exit 1
     }
+    $missingModels = @(Get-ModelIssues)
 }
 
 if ($missingModels.Count -gt 0) {
@@ -54,7 +69,7 @@ if ($missingModels.Count -gt 0) {
     $missingModels | ForEach-Object {
         Write-Host "  $_" -ForegroundColor Red
     }
-    Write-Host "Run: git lfs pull" -ForegroundColor Yellow
+    Write-Host "Run 'git lfs pull' and retry setup." -ForegroundColor Yellow
     exit 1
 }
 
@@ -126,7 +141,7 @@ foreach ($candidate in $pythonCandidates) {
         } catch {
             continue
         }
-        if (-not $candidatePath -or $candidatePath -like "*\WindowsApps\*") {
+        if (-not $candidatePath -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
             continue
         }
         $pythonCmd = $candidate.Cmd
@@ -136,7 +151,8 @@ foreach ($candidate in $pythonCandidates) {
 }
 
 if (-not $pythonCmd) {
-    Write-Host "ERROR: Python 3.11 or 3.12 was not found outside WindowsApps." -ForegroundColor Red
+    Write-Host "ERROR: Python 3.11 or 3.12 was not found." -ForegroundColor Red
+    Write-Host "Install with: winget install Python.Python.3.12" -ForegroundColor Yellow
     exit 1
 }
 
@@ -206,8 +222,24 @@ if (-not (Test-Path ".env")) {
     Write-Host ".env created. Add your API keys before real use." -ForegroundColor Green
 }
 
+if ($CreateShortcut) {
+    $shortcutTargets = @(
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "JARVIS.lnk"),
+        (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\JARVIS.lnk")
+    )
+    $shortcutShell = New-Object -ComObject WScript.Shell
+    foreach ($shortcutPath in $shortcutTargets) {
+        $shortcut = $shortcutShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = Join-Path $repoRoot "Start-JARVIS.bat"
+        $shortcut.WorkingDirectory = $repoRoot
+        $shortcut.Description = "Start J.A.R.V.I.S."
+        $shortcut.Save()
+    }
+    Write-Host "Desktop and Start Menu shortcuts created." -ForegroundColor Green
+}
+
 Write-Host "Setup complete."
-Write-Host "Run: .\venv\Scripts\python.exe start_app.py"
+Write-Host "Run: .\Start-JARVIS.bat"
 if (-not $Dev) {
     Write-Host "For test tools run: .\setup.ps1 -Dev"
 }

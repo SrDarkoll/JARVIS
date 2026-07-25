@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND = os.path.join(ROOT, "src", "backend")
@@ -12,6 +13,18 @@ BACKEND = os.path.join(ROOT, "src", "backend")
 def _ensure_backend_path() -> None:
     if BACKEND not in sys.path:
         sys.path.insert(0, BACKEND)
+
+
+def test_piper_voice_model_can_be_overridden_per_language(monkeypatch, tmp_path):
+    _ensure_backend_path()
+    from utils.jarvis_i18n import MODELS_DIR, get_model_path
+
+    monkeypatch.setenv("JARVIS_TTS_MODEL_EN", "en_US-lessac-medium.onnx")
+    custom_spanish_model = tmp_path / "es_ES-custom-medium.onnx"
+    monkeypatch.setenv("JARVIS_TTS_MODEL_ES", str(custom_spanish_model))
+
+    assert Path(get_model_path("en")) == Path(MODELS_DIR) / "en_US-lessac-medium.onnx"
+    assert Path(get_model_path("es")) == custom_spanish_model
 
 
 def test_frontend_stop_words_are_removed():
@@ -143,9 +156,7 @@ def test_weather_invalid_location_does_not_fall_back_to_madrid(monkeypatch):
 
     monkeypatch.setattr(utilities.http_requests, "get", fake_get)
 
-    description, temperature = utilities._obtener_clima_logic(
-        "zzzz-invalid-city-987654"
-    )
+    description, temperature = utilities._obtener_clima_logic("zzzz-invalid-city-987654")
 
     assert "not found" in description.lower() or "no encontrada" in description.lower()
     assert temperature == "--"
@@ -188,9 +199,7 @@ def test_weather_geocodes_explicit_location_for_openmeteo_fallback(monkeypatch):
 
     assert temperature == "36.5"
     assert description.lower() in {"clear", "despejado"}
-    forecast_params = next(
-        params for url, params in calls if "api.open-meteo.com/v1/forecast" in url
-    )
+    forecast_params = next(params for url, params in calls if "api.open-meteo.com/v1/forecast" in url)
     assert forecast_params["latitude"] == "26.08"
     assert forecast_params["longitude"] == "-98.29"
 
@@ -334,10 +343,7 @@ def test_spotify_playback_message_is_localized():
     prev_lang = get_current_language()
     try:
         set_current_language("en")
-        assert (
-            spotify_messages.playback_success_message("Killer Queen", "Queen")
-            == "Playing 'Killer Queen' by Queen."
-        )
+        assert spotify_messages.playback_success_message("Killer Queen", "Queen") == "Playing 'Killer Queen' by Queen."
 
         set_current_language("es")
         assert (
@@ -430,13 +436,9 @@ def test_dynamic_web_detection_is_bilingual_regardless_of_ui_language():
     previous = get_current_language()
     try:
         set_current_language("en")
-        assert social_engine._debe_buscar_en_web(
-            "Cual es la noticia mas reciente de inteligencia artificial?"
-        )
+        assert social_engine._debe_buscar_en_web("Cual es la noticia mas reciente de inteligencia artificial?")
         set_current_language("es")
-        assert social_engine._debe_buscar_en_web(
-            "What is the latest artificial intelligence news?"
-        )
+        assert social_engine._debe_buscar_en_web("What is the latest artificial intelligence news?")
     finally:
         set_current_language(previous)
 
@@ -446,11 +448,7 @@ def test_mojibake_is_repaired_before_routing_or_synthesis():
     from utils.jarvis_text import reparar_unicode
 
     broken = (
-        "\u00c2\u00bfCu\u00c3\u00a1l es la ra\u00c3\u00adz cuadrada? "
-        "C\u00c3\u00b3mo est\u00c3\u00a1 \u00c3\u0081frica?"
+        "\u00c2\u00bfCu\u00c3\u00a1l es la ra\u00c3\u00adz cuadrada? C\u00c3\u00b3mo est\u00c3\u00a1 \u00c3\u0081frica?"
     )
 
-    assert reparar_unicode(broken) == (
-        "\u00bfCu\u00e1l es la ra\u00edz cuadrada? "
-        "C\u00f3mo est\u00e1 \u00c1frica?"
-    )
+    assert reparar_unicode(broken) == ("\u00bfCu\u00e1l es la ra\u00edz cuadrada? C\u00f3mo est\u00e1 \u00c1frica?")

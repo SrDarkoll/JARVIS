@@ -48,12 +48,14 @@ def get_bt() -> dict:
 LANGUAGE_CONFIG = {
     "en": {
         "tts_model": "en_GB-northern_english_male-medium.onnx",
+        "tts_model_env": "JARVIS_TTS_MODEL_EN",
         "whisper_lang": "en",
         "locale": "en-US",
         "name": "English",
     },
     "es": {
         "tts_model": "es_MX-claude-high.onnx",
+        "tts_model_env": "JARVIS_TTS_MODEL_ES",
         "whisper_lang": "es",
         "locale": "es-ES",
         "name": "Español",
@@ -64,7 +66,11 @@ LANGUAGE_CONFIG = {
 def get_model_path(lang: str) -> str:
     """Returns the full path to the TTS model for a given language."""
     cfg = LANGUAGE_CONFIG.get(lang, LANGUAGE_CONFIG["en"])
-    return os.path.join(MODELS_DIR, cfg["tts_model"])
+    configured = os.getenv(cfg["tts_model_env"], "").strip()
+    model_path = os.path.expandvars(os.path.expanduser(configured or cfg["tts_model"]))
+    if not os.path.isabs(model_path):
+        model_path = os.path.join(MODELS_DIR, model_path)
+    return os.path.abspath(model_path)
 
 
 def get_whisper_lang(lang: str) -> str:

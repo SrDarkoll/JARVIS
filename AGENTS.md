@@ -125,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-638 passed, 1 skipped
+643 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -308,9 +308,9 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - `JARVIS_TEST_MODE=1` must disable the unified runtime log even when
   `.env.example` enables logging for normal runs.
 - `JARVIS_MONITORING_ENABLED` defaults off in core mode and on in full mode. Installing APScheduler does not enable jobs by itself.
-- Without both `GEMINI_API_KEY` and `GROQ_API_KEY`, AI-backed routes must return
-  controlled `llm_unconfigured` errors while setup/status and local preflight
-  paths remain usable.
+- Without either `GEMINI_API_KEY` or `GROQ_API_KEY`, AI-backed routes must
+  return controlled `llm_unconfigured` errors while setup/status and local
+  preflight paths remain usable.
 - Public-IP geolocation is opt-in through
   `JARVIS_IP_GEOLOCATION_ENABLED=true`. Keep providers HTTPS-only, preserve
   single-flight behavior, and cache failures for a cooldown period.
@@ -334,6 +334,24 @@ Pyright runs in `basic` mode with a file-specific gradual-typing baseline in
 `pyproject.toml`. Baseline entries suppress diagnostics only for legacy dynamic
 modules; all other backend files remain checked. Do not add wildcards or whole
 directories, and remove entries as the corresponding modules are typed.
+
+## Windows Release Package
+
+Build the sanitized Windows ZIP from tracked runtime files:
+
+```powershell
+.\scripts\build_windows_release.ps1 -Version 0.1.0-alpha.1
+```
+
+The archive includes full Git LFS voice model contents and can therefore be
+installed without Git or Git LFS. It deliberately excludes `.env`, virtual
+environments, tests, logs, caches, databases, and local runtime state. Stage
+new runtime files before building because the script packages only paths known
+to Git.
+
+Validate a release by extracting it below the repo-local `scratch/` directory,
+running its `setup.ps1`, checking the package virtual environment with
+`python -m pip check`, and exercising `/api/status` through Quart's test client.
 
 ## Frontend Workflow
 
@@ -361,4 +379,6 @@ Before publishing a branch or release:
 - `node --check src\frontend\static\js\main.js` passes.
 - `node --check src\frontend\static\js\modules\api.js` passes.
 - `git diff --check` has no whitespace errors.
+- The Windows archive builds and its `.sha256` matches.
+- The extracted release excludes secrets and passes a clean setup/status check.
 - A fresh setup can start with `python start_app.py` or `python src/backend/jarvis_backend.py`.

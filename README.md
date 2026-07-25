@@ -1,56 +1,82 @@
 # J.A.R.V.I.S.
 
+[![CI](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml/badge.svg)](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SrDarkoll/JARVIS?include_prereleases&sort=semver)](https://github.com/SrDarkoll/JARVIS/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.11-3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](#requirements)
+
+**A local desktop AI assistant for voice interaction, Spotify control, web
+tools, memory, and guarded Windows automation.**
+
+J.A.R.V.I.S. combines a Python/Quart backend with a browser-based desktop UI.
+Windows is the primary target; backend and web features degrade cleanly on
+macOS and Linux when platform-specific integrations are unavailable.
+
 ![J.A.R.V.I.S. UI](media/readme.png)
 
-J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend and a vanilla browser frontend. The main target is Windows, although the backend and most web/API features can run on macOS and Linux when optional desktop/audio integrations are available.
+> [!WARNING]
+> J.A.R.V.I.S. is alpha software. Expect hardware-specific behavior around
+> microphones, speakers, Spotify, desktop control, and WebView2. Security
+> sensitive system tools are disabled by default.
 
-## Project Status
+## Install J.A.R.V.I.S.
 
-J.A.R.V.I.S. is currently an alpha for local development and power users. A clean clone installs and starts when Git LFS model files are present. An AI provider key (`GEMINI_API_KEY` for Google Gemini or `GROQ_API_KEY` for Groq) is required for AI-generated replies, but setup diagnostics and local-only features remain available without it.
+### Windows Alpha Package
 
-Expect hardware-specific behavior around microphones, speakers, Spotify devices, local desktop control, and WebView2. Windows is the primary supported desktop target.
+The recommended path for Windows users is the
+[v0.1.0-alpha.1 release](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.1):
 
-## Quick Start Guide
+1. Download `JARVIS-v0.1.0-alpha.1-windows.zip`.
+2. Extract the complete ZIP to a permanent folder.
+3. Run `Install-JARVIS.bat`.
+4. Add `GROQ_API_KEY` or `GEMINI_API_KEY` to the generated `.env`.
+5. Start J.A.R.V.I.S. from the desktop shortcut or `Start-JARVIS.bat`.
 
-Follow these 4 simple steps to get Jarvis running:
+The release ZIP includes the two required Piper voice models, so Git and Git
+LFS are not required for this installation path. The setup validates these
+external prerequisites and prints exact `winget` commands when one is missing:
 
-### 1. Clone the repository with Git LFS
+- Python 3.11 or 3.12
+- FFmpeg
+- eSpeak NG
+- Microsoft Edge WebView2 Runtime
+
+### Install From Source
+
+Use this path for development or contributing:
+
 ```powershell
 git lfs install
 git clone https://github.com/SrDarkoll/JARVIS.git
 cd JARVIS
 git lfs pull
+.\setup.ps1 -Dev
 ```
-*(Make sure `git lfs pull` downloads the real `.onnx` voice model files in `models/`).*
 
-### 2. Run automatic setup script
-- **Windows (PowerShell):**
-  ```powershell
-  .\setup.ps1 -Dev
-  ```
-- **Linux / macOS (Bash):**
-  ```bash
-  chmod +x setup.sh
-  ./setup.sh --dev
-  ```
+Linux or macOS:
 
-### 3. Configure your API Keys
-Copy `.env.example` to `.env`:
-- **Windows:** `Copy-Item .env.example .env`
-- **Linux/macOS:** `cp .env.example .env`
+```bash
+git lfs install
+git clone https://github.com/SrDarkoll/JARVIS.git
+cd JARVIS
+git lfs pull
+chmod +x setup.sh
+./setup.sh --dev
+```
 
-Open `.env` and add your **Google Gemini API Key** (or a Groq key):
+Setup creates `.env` automatically. Configure at least one provider:
+
 ```env
-GEMINI_API_KEY="tu_api_key_de_gemini"
+GROQ_API_KEY="your_groq_key"
+# Or:
+GEMINI_API_KEY="your_gemini_key"
 ```
 
-### 4. Launch Jarvis
+Then launch:
+
 ```powershell
-python start_app.py
+.\Start-JARVIS.bat
 ```
-*Jarvis will start the backend engine and open the desktop interface.*
-
----
 
 ## What Jarvis Can Do
 
@@ -82,6 +108,62 @@ winget install GitHub.GitLFS
 winget install Gyan.FFmpeg
 winget install eSpeak-NG.eSpeak-NG
 ```
+
+## Piper Voice Models
+
+The Windows package and Git LFS checkout include two offline Piper voices:
+
+| J.A.R.V.I.S. language | Included model | Quality |
+| --- | --- | --- |
+| English | `en_GB-northern_english_male-medium.onnx` | Medium |
+| Spanish | `es_MX-claude-high.onnx` | High |
+
+A Piper voice is a pair of files:
+
+- `voice-name.onnx`: the neural voice model.
+- `voice-name.onnx.json`: phoneme, speaker, sample-rate, and synthesis
+  configuration.
+
+Both files must remain together with the same base filename. J.A.R.V.I.S.
+cannot load a downloaded `.onnx` file without its matching `.onnx.json`.
+
+### Install Another Piper Voice
+
+List available voices:
+
+```powershell
+.\venv\Scripts\python.exe -m piper.download_voices
+```
+
+Download a voice and its configuration into `models/`:
+
+```powershell
+.\venv\Scripts\python.exe -m piper.download_voices `
+  en_US-lessac-medium `
+  --download-dir models
+```
+
+Then select it in `.env`. A relative value is resolved inside `models/`;
+absolute paths are also accepted:
+
+```env
+JARVIS_TTS_MODEL_EN="en_US-lessac-medium.onnx"
+JARVIS_TTS_MODEL_ES="es_ES-sharvard-medium.onnx"
+```
+
+Restart J.A.R.V.I.S. after changing these variables. The English and Spanish
+language switch will use the configured voice for that language. Adding an
+entirely new language still requires translations and a new
+`LANGUAGE_CONFIG` entry; installing a voice alone does not add UI or speech
+recognition support for a new language.
+
+Official voice downloads are available from the
+[Piper voice repository](https://huggingface.co/rhasspy/piper-voices/tree/main).
+Review each model card and license before redistributing a voice.
+
+RVC is a separate, experimental voice-conversion stage applied after Piper
+synthesis. It is disabled by default, is not included in the Windows alpha
+package, and is not required to install additional Piper voices.
 
 ## Detailed Installation Options
 
@@ -348,7 +430,7 @@ pytest -q
 Current verified baseline:
 
 ```text
-638 passed, 1 skipped
+643 passed, 1 skipped
 ```
 
 Release checks:
@@ -356,16 +438,16 @@ Release checks:
 ```powershell
 python -m pip check
 python -m pip_audit -r requirements.txt
-python -m ruff check src/backend tests --select F
+python -m ruff check src/backend tests
+python -m pyright src/backend
 python -m compileall -q start_app.py src/backend
 node --check src/frontend/static/js/main.js
 node --check src/frontend/static/js/modules/api.js
 git diff --check
 ```
 
-`pytest.ini` restricts collection to `tests/` and ignores local runtime/cache folders. This prevents old W&B/temp directories from breaking collection on Windows.
-
-Ruff is useful for future cleanup, but it is not currently enforced as a release gate because the codebase still has legacy style debt.
+`pytest.ini` restricts collection to `tests/` and ignores local runtime/cache
+folders. CI enforces Ruff and Pyright before tests and compilation.
 
 ## Unified Readable Log
 
