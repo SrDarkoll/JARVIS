@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import struct
 import sys
-import asyncio
 import wave
-import numpy as np
 
+import numpy as np
 import pytest  # pyright: ignore[reportMissingImports]
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1118,9 +1118,9 @@ def test_guest_cannot_authorize_high_level_actions():
 
 def test_owner_biometric_authorization_works():
     from utils.jarvis_auth import (  # pyright: ignore[reportMissingImports]
+        autorizar_por_biometria,
         revocar_autorizacion,
         verificar_autorizacion,
-        autorizar_por_biometria,
     )
 
     revocar_autorizacion()
@@ -1314,8 +1314,9 @@ def test_memory_rag_store():
 
 
 def test_voice_id_preprocess_helper_from_bytes():
-    import wave
     import struct
+    import wave
+
     from core.jarvis_config import VOICE_ID_ENABLED
     from engines import voice_id  # pyright: ignore[reportMissingImports]
 
@@ -1384,8 +1385,9 @@ def test_monitoring_service_scheduler():
 
 
 def test_reminder_crud():
-    from core import jarvis_state  # pyright: ignore[reportMissingImports]
     from datetime import datetime, timedelta
+
+    from core import jarvis_state  # pyright: ignore[reportMissingImports]
 
     # Add a reminder
     when = datetime.now() + timedelta(minutes=30)
@@ -2097,6 +2099,7 @@ def test_voice_identifier_similarity_event_and_debug(monkeypatch):
 def test_healthcheck_cpu_ram_thresholds():
     """Verify monitoring thresholds match expected values (CPU 85%, RAM 90%, streak 2)."""
     import inspect
+
     from services import monitoring_service  # pyright: ignore[reportMissingImports]
 
     ms = monitoring_service.monitoring_service

@@ -1,10 +1,9 @@
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
-
 from core import unified_log
 from core.brain import processor, security_engine, tool_manager
+from langchain_core.messages import AIMessage, HumanMessage
 from services.memory_manager import memory_manager
 
 

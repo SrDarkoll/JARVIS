@@ -125,8 +125,8 @@ class TestBorrarMemoria:
         assert "acceso_denegado" in out.lower()
 
     def test_borrar_memoria_calls_security_audit_on_success(self, monkeypatch):
-        from tools import system
         from services import security_manager
+        from tools import system
 
         audit_calls = []
         monkeypatch.setattr(security_manager, "_security_audit", lambda *args, **kwargs: audit_calls.append((args, kwargs)))

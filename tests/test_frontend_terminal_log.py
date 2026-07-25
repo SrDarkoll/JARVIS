@@ -2,7 +2,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 UI_JS = ROOT / "src" / "frontend" / "static" / "js" / "modules" / "ui.js"
 API_ROUTES = ROOT / "src" / "backend" / "api" / "api_routes.py"

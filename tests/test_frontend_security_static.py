@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WIDGETS_JS = ROOT / "src" / "frontend" / "static" / "js" / "modules" / "widgets.js"
 INDEX_HTML = ROOT / "src" / "frontend" / "templates" / "index.html"

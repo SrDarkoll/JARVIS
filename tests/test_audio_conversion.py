@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from utils import audio_conversion
 from utils.audio_conversion import (
     AudioConversionError,

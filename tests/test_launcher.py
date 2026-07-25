@@ -7,7 +7,6 @@ import pytest
 
 import start_app
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 

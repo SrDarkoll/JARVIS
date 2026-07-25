@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from core import jarvis_config
 from modules.spotify import config as spotify_config
 from modules.spotify import service as spotify_service

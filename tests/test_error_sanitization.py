@@ -5,10 +5,9 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from quart import Quart
-
 from api import tts_routes
 from core.brain import processor, prompts
+from quart import Quart
 
 
 def _run(awaitable):

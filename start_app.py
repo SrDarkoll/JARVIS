@@ -8,7 +8,6 @@ import tempfile
 import time
 from pathlib import Path
 
-
 ROOT_DIR = Path(__file__).resolve().parent
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 

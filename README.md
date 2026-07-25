@@ -1,5 +1,7 @@
 # J.A.R.V.I.S.
 
+![J.A.R.V.I.S. UI](media/readme.png)
+
 J.A.R.V.I.S. is a local desktop AI assistant built with a Python/Quart backend and a vanilla browser frontend. The main target is Windows, although the backend and most web/API features can run on macOS and Linux when optional desktop/audio integrations are available.
 
 ## Project Status
@@ -155,17 +157,16 @@ The complete list of supported environment variables lives in `.env.example`. Ke
 
 Minimum for real LLM responses:
 
-- `GROQ_API_KEY`
+- `GOOGLE_API_KEY` (Google Gemini - Primary LLM)
+- `GROQ_API_KEY` (Groq - Fallback LLM)
 
-Without `GROQ_API_KEY`, status and setup diagnostics, Piper TTS, and local
-preflight tools continue to work. Chat requests that need an AI provider return
-the controlled `llm_unconfigured` error with HTTP 503.
+When `GOOGLE_API_KEY` is provided, Jarvis uses Google Gemini (`gemini-2.5-flash`) as the primary LLM provider, with Groq acting as an automatic fallback provider when both keys are present.
+
+Without an API key, status and setup diagnostics, Piper TTS, and local preflight tools continue to work. Chat requests that need an AI provider return the controlled `llm_unconfigured` error with HTTP 503.
 
 ## Stable Core Mode
 
-`JARVIS_CORE_MODE=true` is the default and the recommended starting point for
-new installations. It keeps Groq chat, local voice input, Piper TTS, basic
-memory, Spotify, base tools, and the web UI active.
+`JARVIS_CORE_MODE=true` is the default and the recommended starting point for new installations. It keeps LLM chat, local voice input, Piper TTS, basic memory, Spotify, base tools, and the web UI active.
 
 Core mode skips the subsystems most likely to make startup slow or fragile:
 

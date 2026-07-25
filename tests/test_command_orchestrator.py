@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from core.errors import LLMServiceError, LLMUnavailableError
 from core.command_pipeline.models import (
     ActionPlan,
     ActionStep,
@@ -15,6 +14,7 @@ from core.command_pipeline.models import (
 from core.command_pipeline.orchestrator import CommandOrchestrator
 from core.command_pipeline.reasoning import ReasoningMode
 from core.command_pipeline.responses import ResponseComposer
+from core.errors import LLMServiceError, LLMUnavailableError
 
 
 def _request(request_id: str = "request-1") -> CommandRequest:
