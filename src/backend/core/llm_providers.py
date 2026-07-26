@@ -6,6 +6,9 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+_DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
+
 
 @dataclass(frozen=True)
 class LLMProviderConfig:
@@ -21,6 +24,24 @@ class LLMProviderConfig:
         return bool(self.primary_provider and self.primary_api_key)
 
 
+def _provider_model(
+    source: Mapping[str, str],
+    variable: str,
+    *,
+    provider: str,
+    default: str,
+) -> str:
+    configured = str(source.get(variable) or default).strip() or default
+    normalized = configured.lower()
+    if provider == "groq" and normalized.startswith("gemini-"):
+        return default
+    if provider == "gemini" and normalized.startswith(
+        ("groq/", "llama-", "meta-llama/", "openai/", "qwen/")
+    ):
+        return default
+    return configured
+
+
 def resolve_llm_provider_config(
     env: Mapping[str, str] | None = None,
 ) -> LLMProviderConfig:
@@ -34,8 +55,18 @@ def resolve_llm_provider_config(
 
     gemini_key = str(source.get("GEMINI_API_KEY") or source.get("GOOGLE_API_KEY") or "").strip()
     groq_key = str(source.get("GROQ_API_KEY") or "").strip()
-    gemini_model = str(source.get("JARVIS_GEMINI_MODEL") or "gemini-2.5-flash").strip()
-    groq_model = str(source.get("JARVIS_GROQ_MODEL") or "qwen/qwen3.6-27b").strip()
+    gemini_model = _provider_model(
+        source,
+        "JARVIS_GEMINI_MODEL",
+        provider="gemini",
+        default=_DEFAULT_GEMINI_MODEL,
+    )
+    groq_model = _provider_model(
+        source,
+        "JARVIS_GROQ_MODEL",
+        provider="groq",
+        default=_DEFAULT_GROQ_MODEL,
+    )
 
     if requested == "groq" and groq_key:
         primary = ("groq", groq_model, groq_key)

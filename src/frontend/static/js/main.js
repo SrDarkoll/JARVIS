@@ -13,6 +13,7 @@ import {
     classifyVoiceError,
     detectVoiceCapabilities,
 } from './modules/voice-capabilities.js';
+import { classifyVoiceApiFailure } from './modules/voice-api.js';
 import { t, setLanguage, currentLang, updateUI } from './i18n.js';
 
 // --- CONSTANTES GLOBALES ---
@@ -1457,8 +1458,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw new Error('voice_invalid_response');
                     }
                     data = await res.json();
-                    if (!res.ok) {
+                    const voiceFailureKey = classifyVoiceApiFailure(res.status, data);
+                    if (!res.ok && !voiceFailureKey) {
                         throw new Error(`voice_http_${res.status}`);
+                    }
+                    if (voiceFailureKey) {
+                        ui.addLogEntry(t(voiceFailureKey));
+                        data.should_listen = false;
                     }
                     const dbg = data.identity_debug || {};
                     const transcriptionSource = String(

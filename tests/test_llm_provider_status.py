@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from api import status_routes
 from core.brain import brain_state
+from core.llm_providers import resolve_llm_provider_config
 
 
 def _capabilities(monkeypatch, env: dict[str, str], *, llm=None):
@@ -62,3 +63,29 @@ def test_status_uses_provider_neutral_missing_key_code(monkeypatch):
 
     assert capabilities["llm"]["state"] == "unconfigured"
     assert capabilities["llm"]["code"] == "llm_key_missing"
+
+
+def test_provider_defaults_use_current_stable_models():
+    config = resolve_llm_provider_config(
+        {
+            "GOOGLE_API_KEY": "google-key",
+            "GROQ_API_KEY": "groq-key",
+        }
+    )
+
+    assert config.primary_model == "gemini-3.5-flash"
+    assert config.fallback_model == "qwen/qwen3.6-27b"
+
+
+def test_provider_rejects_a_gemini_model_in_groq_configuration():
+    config = resolve_llm_provider_config(
+        {
+            "GOOGLE_API_KEY": "google-key",
+            "GROQ_API_KEY": "groq-key",
+            "JARVIS_GROQ_MODEL": "gemini-3.5-flash-lite",
+        }
+    )
+
+    assert config.primary_provider == "gemini"
+    assert config.fallback_provider == "groq"
+    assert config.fallback_model == "qwen/qwen3.6-27b"

@@ -231,7 +231,7 @@ Minimum for real LLM responses:
 - `GEMINI_API_KEY` (Google Gemini)
 - `GROQ_API_KEY` (Groq)
 
-When both keys are present, Jarvis uses Gemini (`gemini-2.5-flash`) as primary and Groq as automatic fallback. Set `JARVIS_LLM_PROVIDER=groq` to reverse that order. `GOOGLE_API_KEY` remains a compatibility alias for Gemini but is also used by Google search integrations, so new installations should prefer the dedicated `GEMINI_API_KEY`.
+When both keys are present, Jarvis uses Gemini (`gemini-3.5-flash`) as primary and Groq (`qwen/qwen3.6-27b`) as automatic fallback. Set `JARVIS_LLM_PROVIDER=groq` to reverse that order. Provider-specific model variables are validated so a Gemini model cannot silently be sent to Groq, or vice versa. `GOOGLE_API_KEY` remains a compatibility alias for Gemini but is also used by Google search integrations, so new installations should prefer the dedicated `GEMINI_API_KEY`.
 
 Without an API key, status and setup diagnostics, Piper TTS, and local preflight tools continue to work. Chat requests that need an AI provider return the controlled `llm_unconfigured` error with HTTP 503.
 

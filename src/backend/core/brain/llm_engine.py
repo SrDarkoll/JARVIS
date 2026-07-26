@@ -360,7 +360,7 @@ def init_brain(app_ref):
         brain_state.llm_primary_provider = provider_config.primary_provider
         if VISION_ENABLED:
             vision_model = (
-                os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash")
+                os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-3.5-flash")
                 if provider_config.primary_provider == "gemini"
                 else GROQ_VISION_MODEL
             )

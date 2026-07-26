@@ -1661,6 +1661,33 @@ def test_voice_empty_transcription_returns_to_passive_mode(monkeypatch):
     assert data.get("should_listen") is False
 
 
+def test_voice_llm_failure_after_transcript_returns_controlled_json(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from core.errors import LLMServiceError
+    from voice import service as voice_service
+
+    def unavailable(*_args, **_kwargs):
+        raise LLMServiceError
+
+    monkeypatch.setattr(voice_service, "_process_voice_sync", unavailable)
+
+    client = _test_client(jarvis_backend.app)
+    response = client.post(
+        "/api/voice",
+        data=b"RIFFFAKEAUDIO",
+        headers={"X-Transcript": "Pon una cancion", "X-Profile-Id": "admin"},
+        environ_base={"REMOTE_ADDR": "127.0.0.188"},
+    )
+
+    assert response.status_code == 503
+    assert response.content_type == "application/json"
+    data = response.get_json() or {}
+    assert data["error"] == "chat_unavailable"
+    assert data["transcription_source"] == "browser"
+    assert data["identity_debug"]["transcript"] == "Pon una cancion"
+    assert data["should_listen"] is False
+
+
 def test_voice_fast_info_hint_skips_biometric_lookup(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
     from api import voice_routes

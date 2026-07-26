@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from core.api_contracts import validate_voice_response
+from core.errors import LLMServiceError, LLMUnavailableError
 from core.jarvis_state import DEFAULT_PROFILE_ID as _OWNER_PID
 from core.runtime_logger import log_error, log_warning
 from utils.jarvis_i18n import get_current_language
@@ -295,7 +296,22 @@ class VoiceService:
     def process_voice(self, audio_bytes: bytes, request_data: dict):
         """Run the voice processor behind a framework-neutral interface."""
         _sync_runtime_globals(self.runtime)
-        return _process_voice_sync(audio_bytes, request_data)
+        try:
+            return _process_voice_sync(audio_bytes, request_data)
+        except LLMUnavailableError:
+            return _voice_reasoning_error_response(
+                request_data,
+                code="llm_unconfigured",
+                en="Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses.",
+                es="Configura GEMINI_API_KEY o GROQ_API_KEY para habilitar las respuestas de IA.",
+            )
+        except LLMServiceError:
+            return _voice_reasoning_error_response(
+                request_data,
+                code="chat_unavailable",
+                en="The AI service is temporarily unavailable.",
+                es="El servicio de IA no esta disponible temporalmente.",
+            )
 
 
 # Runtime-backed processor dependencies. These are synchronized from the
@@ -408,6 +424,39 @@ def _voice_is_english() -> bool:
 
 def _voice_text(en: str, es: str) -> str:
     return en if _voice_is_english() else es
+
+
+def _voice_reasoning_error_response(
+    request_data: dict,
+    *,
+    code: str,
+    en: str,
+    es: str,
+) -> tuple[dict, int]:
+    transcript = str(request_data.get("transcript_hint") or "").strip()
+    transcription_source = "browser" if transcript else "unknown"
+    profile_id = str(request_data.get("client_profile_id") or "").strip()
+    response = _voice_text(en, es)
+    log_warning(
+        "voice_reasoning_request_failed",
+        error=code,
+        transcription_source=transcription_source,
+    )
+    return {
+        "error": code,
+        "message": response,
+        "response": response,
+        "identity_source": "processing_error",
+        "transcription_source": transcription_source,
+        "profile_id": profile_id or None,
+        "nombre": _voice_display_name(profile_id),
+        "should_listen": False,
+        "identity_debug": {
+            "request_id": "",
+            "transcription_source": transcription_source,
+            "transcript": transcript[:500],
+        },
+    }, 503
 
 
 def _allow_guest_mode() -> bool:

@@ -15,14 +15,19 @@ POLICY_MODULE = (
 CAPABILITIES_MODULE = (
     ROOT / "src" / "frontend" / "static" / "js" / "modules" / "voice-capabilities.js"
 )
+VOICE_API_MODULE = (
+    ROOT / "src" / "frontend" / "static" / "js" / "modules" / "voice-api.js"
+)
 
 
 def _run_node_module_assertions(assertions: str) -> None:
     policy_url = POLICY_MODULE.resolve().as_uri()
     capabilities_url = CAPABILITIES_MODULE.resolve().as_uri()
+    voice_api_url = VOICE_API_MODULE.resolve().as_uri()
     script = (
         f"import * as policy from {json.dumps(policy_url)};\n"
         f"import * as capabilities from {json.dumps(capabilities_url)};\n"
+        f"import * as voiceApi from {json.dumps(voice_api_url)};\n"
         f"{assertions}\n"
     )
     subprocess.run(
@@ -140,10 +145,26 @@ def test_voice_diagnostics_have_english_and_spanish_translations():
         "voice_transcribing_backend",
         "voice_no_input",
         "voice_transcription_unavailable",
+        "voice_reasoning_unavailable",
+        "voice_reasoning_unconfigured",
     }
 
     for key in keys:
         assert source.count(f'"{key}"') == 2
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_voice_api_errors_distinguish_reasoning_from_transcription():
+    _run_node_module_assertions(
+        """
+if (voiceApi.classifyVoiceApiFailure(503, { error: 'chat_unavailable' })
+    !== 'voice_reasoning_unavailable') process.exit(1);
+if (voiceApi.classifyVoiceApiFailure(503, { error: 'llm_unconfigured' })
+    !== 'voice_reasoning_unconfigured') process.exit(1);
+if (voiceApi.classifyVoiceApiFailure(400, { error: 'bad_audio' }) !== null) process.exit(1);
+if (voiceApi.classifyVoiceApiFailure(200, { error: 'chat_unavailable' }) !== null) process.exit(1);
+"""
+    )
 
 
 def test_main_does_not_add_a_new_push_to_talk_mode():
