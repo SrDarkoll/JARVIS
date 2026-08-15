@@ -304,6 +304,43 @@ export class LiveVoiceClient {
         this.processorNode.connect(this.audioCtx.destination);
         this.isStreaming = true;
         this.onStateChange?.('listening');
+
+        // Optional parallel browser speech recognition for local user transcription
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRec) {
+            try {
+                this.rec = new SpeechRec();
+                this.rec.continuous = true;
+                this.rec.interimResults = false;
+                this.rec.lang = this.language === 'en' ? 'en-US' : 'es-MX';
+                this.rec.onresult = (event) => {
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            const userTranscript = event.results[i][0].transcript.trim();
+                            if (userTranscript) {
+                                this.sendUserTranscript(userTranscript);
+                                this.onTranscript?.({ role: 'user', text: userTranscript, is_final: true });
+                            }
+                        }
+                    }
+                };
+                this.rec.onerror = () => {};
+                this.rec.onend = () => {
+                    if (this.isStreaming && this.rec) {
+                        try { this.rec.start(); } catch (e) {}
+                    }
+                };
+                try { this.rec.start(); } catch (e) {}
+            } catch (e) {
+                console.debug('[LIVE_VOICE] Browser speech recognition init:', e);
+            }
+        }
+    }
+
+    sendUserTranscript(text) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'user_transcript', text }));
+        }
     }
 
     sendUserText(text) {
@@ -314,6 +351,10 @@ export class LiveVoiceClient {
 
     stopStreaming() {
         this.isStreaming = false;
+        if (this.rec) {
+            try { this.rec.stop(); } catch (e) {}
+            this.rec = null;
+        }
         if (this.processorNode) {
             try { this.processorNode.disconnect(); } catch (e) {}
             this.processorNode = null;

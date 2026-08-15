@@ -44,6 +44,7 @@ _LAZY_EXPORTS = {
     "ver_procesos_pesados": ("tools.system", "ver_procesos_pesados"),
     "matar_proceso": ("tools.system", "matar_proceso"),
     "borrar_memoria": ("tools.system", "borrar_memoria"),
+    "guardar_dato_memoria": ("tools.memory", "guardar_dato_memoria"),
     "listar_ventanas": ("tools.desktop_control", "listar_ventanas"),
     "enfocar_ventana": ("tools.desktop_control", "enfocar_ventana"),
     "controlar_ventana": ("tools.desktop_control", "controlar_ventana"),

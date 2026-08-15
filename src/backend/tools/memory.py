@@ -49,8 +49,8 @@ def _limpiar_facts_memoria(facts: str) -> str:
     raw = str(facts or "").replace("\x00", " ").replace("\r", "\n")
     if not raw:
         return ""
-    if len(raw) > 2800:
-        raw = raw[-2800:]
+    if len(raw) > 4000:
+        raw = raw[-4000:]
 
     out = []
     seen = set()
@@ -59,7 +59,7 @@ def _limpiar_facts_memoria(facts: str) -> str:
         if not ln:
             continue
         ln_norm = _normalizar_ascii(ln)
-        if len(ln) < 3 or len(ln) > 200:
+        if len(ln) < 3 or len(ln) > 250:
             continue
         if any(p in ln_norm for p in _MEMORIA_BASURA_PATTERNS):
             continue
@@ -67,7 +67,7 @@ def _limpiar_facts_memoria(facts: str) -> str:
             continue
         seen.add(ln_norm)
         out.append(ln)
-        if len(out) >= 8:
+        if len(out) >= 25:
             break
     if not out:
         return ""
@@ -99,6 +99,34 @@ def _extraer_facts_de_input(input_text: str) -> list[str]:
 
     if "spotify" in t and any(k in t for k in ["similar", "shuffle", "automi", "aleatorio"]):
         nuevos.append("Spotify: AutoMix con canciones similares")
+
+    # Patrones explícitos: "recuerda que...", "guarda que...", "acuérdate de que..."
+    match_rec = re.search(
+        r"(?:recuerda|recuerdame|guarda|guardame|acuerdate|memoriza|ten en cuenta|remember|keep in mind)\s+(?:que|de que|that)?\s*(.+)",
+        t_raw,
+        re.IGNORECASE,
+    )
+    if match_rec:
+        dato = match_rec.group(1).strip(". ")
+        if len(dato) >= 4 and len(dato) <= 200:
+            nuevos.append(f"Dato recordado: {dato}")
+
+    # Patrones de preferencias directas: "mi comida favorita es...", "mi banda favorita es..."
+    match_pref = re.search(
+        r"(?:mi|mis)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+)\s+(?:favorit[oa]s?|preferid[oa]s?)\s+(?:es|son)\s+([^.\n]+)",
+        t_raw,
+        re.IGNORECASE,
+    )
+    if match_pref:
+        cat = match_pref.group(1).strip()
+        val = match_pref.group(2).strip(". ")
+        if cat and val:
+            nuevos.append(f"Preferencia ({cat}): {val}")
+
+    # Patrón de cumpleaños o fechas
+    match_cumple = re.search(r"mi cumpleaños es\s+([^.\n]+)", t_raw, re.IGNORECASE)
+    if match_cumple:
+        nuevos.append(f"Cumpleaños: {match_cumple.group(1).strip('. ')}")
 
     return nuevos
 
@@ -148,10 +176,30 @@ def _fusionar_facts_memoria(last_facts: str, nuevos: list[str]) -> str:
             idx_by_key[key] = len(merged)
             merged.append(ln2)
 
-    merged = merged[:8]
+    merged = merged[:25]
     if not merged:
         return ""
     return "\n".join(f"- {x}" for x in merged)
+
+
+# ─────────────────────────────────────────
+# Tool de guardado permanente de memoria
+# ─────────────────────────────────────────
+from langchain_core.tools import tool
+
+
+@tool
+def guardar_dato_memoria(dato: str) -> str:
+    """Guarda un dato, preferencia o recuerdo en la memoria permanente del usuario para recordarlo siempre."""
+    clean_fact = _texto_limpio_memoria(dato).strip("- ")
+    if not clean_fact:
+        return "Dato de memoria vacío."
+    pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
+    current_facts = memory_manager.get_profile_data(pid).get("facts", "")
+    merged = _fusionar_facts_memoria(current_facts, [clean_fact])
+    memory_manager.set_facts(pid, merged)
+    guardar_memoria_perfiles()
+    return f"Dato guardado en la memoria permanente: '{clean_fact}'."
 
 
 # ─────────────────────────────────────────

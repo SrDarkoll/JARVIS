@@ -38,6 +38,7 @@ from tools.memory import (  # noqa: F401
     cargar_memoria,
     cargar_memoria_perfiles,
     extraer_datos_criticos,
+    guardar_dato_memoria,
     guardar_memoria,
     guardar_memoria_async,
     guardar_memoria_perfiles,

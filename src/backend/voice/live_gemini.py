@@ -53,9 +53,46 @@ class GeminiLiveStreamer:
         self.voice_name = voice_name
         self._ws: Any = None
         self._running = False
+        self._current_turn_text: list[str] = []
 
     def is_available(self) -> bool:
         return bool(self.api_key)
+
+    def _build_live_system_instruction(self) -> str:
+        """Build dynamic system instruction with full profile memory and recent conversation context."""
+        try:
+            from core.brain import prompts
+            from langchain_core.messages import HumanMessage
+            from services.memory_manager import memory_manager
+
+            pid = self.session.profile_id
+            sys_msg = prompts.get_system_msg("", profile_id=pid).content
+
+            # Retrieve recent conversation history turns
+            history = memory_manager.get_history(pid)
+            hist_text = ""
+            if history:
+                turns = []
+                for m in history[-12:]:
+                    sender = "Usuario" if isinstance(m, HumanMessage) else "JARVIS"
+                    content = str(getattr(m, "content", "") or "").strip()
+                    if content:
+                        turns.append(f"{sender}: {content}")
+                if turns:
+                    hist_text = "\n\n--- CONVERSACIONES PASADAS Y MEMORIA RECIENTE ---\n" + "\n".join(turns)
+
+            directives = (
+                "\n\n--- DIRECTIVAS CRÍTICAS DE VOZ EN VIVO Y HERRAMIENTAS ---\n"
+                "1. Eres J.A.R.V.I.S., el asistente de IA local para Windows del Administrador.\n"
+                "2. Conoces toda la información, memoria permanente y conversaciones pasadas del usuario listadas arriba. NUNCA busques en internet sobre tus conversaciones pasadas con el usuario; usa la sección de memoria y conversaciones de arriba.\n"
+                "3. Si el usuario te pide una acción del sistema (abrir juegos/apps como Counter-Strike, Spotify, volumen, clima, buscar en internet), "
+                "DEBES llamar inmediatamente a la función correspondiente mediante toolCall. NUNCA simules o digas que hiciste la acción sin llamar a la herramienta.\n"
+                "4. Mantén tus respuestas habladas breves, concisas, naturales y directas para voz. No uses Markdown ni expongas pensamientos internos."
+            )
+            return f"{sys_msg}{hist_text}{directives}"
+        except Exception as e:
+            log_warning("gemini_live_build_sys_msg_failed", error=str(e))
+            return self.system_instruction
 
     def _get_function_declarations(self) -> list[dict]:
         """Extract tool declarations from core tools for Gemini Live."""
@@ -63,12 +100,15 @@ class GeminiLiveStreamer:
             from core import core_tools
             from core.brain.llm_engine import _tool_schema_from_langchain_tool
 
+            # Conversational/LLM text generator tools are excluded because Gemini Live handles dialogue natively.
+            excluded = {"frase_motivacional"}
+
             tools = core_tools.get_base_tools()
             decls = []
             for t in tools:
                 schema = _tool_schema_from_langchain_tool(t)
                 fn = schema.get("function")
-                if fn and fn.get("name"):
+                if fn and fn.get("name") and fn["name"] not in excluded:
                     decls.append({
                         "name": fn["name"],
                         "description": str(fn.get("description", "") or "")[:500],
@@ -140,6 +180,7 @@ class GeminiLiveStreamer:
     async def _send_setup(self) -> None:
         """Send the initial Gemini Bidi setup payload."""
         decls = self._get_function_declarations()
+        instruction = self._build_live_system_instruction()
         setup_payload: dict[str, Any] = {
             "model": self.model,
             "generation_config": {
@@ -153,7 +194,7 @@ class GeminiLiveStreamer:
                 },
             },
             "system_instruction": {
-                "parts": [{"text": self.system_instruction}]
+                "parts": [{"text": instruction}]
             },
         }
         if decls:
@@ -196,17 +237,24 @@ class GeminiLiveStreamer:
         tool_result = "Acción ejecutada."
         try:
             from core.brain.tool_manager import _invocar_tool_entry
-            res = await asyncio.to_thread(
-                _invocar_tool_entry,
-                name,
-                args,
-                f"Live voice command: {name}",
-                source="gemini_live",
-                profile_id=self.session.profile_id,
+            res = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _invocar_tool_entry,
+                    name,
+                    args,
+                    f"Live voice command: {name}",
+                    source="gemini_live",
+                    profile_id=self.session.profile_id,
+                ),
+                timeout=7.0,
             )
             if res:
                 tool_result = str(res)
             print(f"[GEMINI LIVE TOOL] << RESULTADO: {tool_result}\n", flush=True)
+        except TimeoutError:
+            log_warning("gemini_live_tool_timeout", tool=name)
+            tool_result = f"La herramienta {name} tardó demasiado tiempo en responder."
+            print(f"[GEMINI LIVE TOOL] << TIMEOUT: {tool_result}\n", flush=True)
         except Exception as e:
             log_error("gemini_live_tool_execution_failed", tool=name, error=str(e))
             tool_result = f"Error al ejecutar {name}: {e}"
@@ -264,7 +312,7 @@ class GeminiLiveStreamer:
                     fn_name = fn_call.get("name", "")
                     fn_args = fn_call.get("args") or {}
                     fn_id = fn_call.get("id", "")
-                    await self._handle_function_call(fn_name, fn_args, fn_id)
+                    asyncio.create_task(self._handle_function_call(fn_name, fn_args, fn_id))
                 continue
 
             if not server_content:
@@ -300,7 +348,8 @@ class GeminiLiveStreamer:
                             print(f"\n[GEMINI LIVE RAZONAMIENTO] {raw_text}", flush=True)
                         else:
                             # Log spoken response to console and send to UI
-                            print(f"\n[GEMINI LIVE ASISTENTE] {raw_text}", flush=True)
+                            self._current_turn_text.append(raw_text)
+                            print(f"\n[JARVIS] << {raw_text}", flush=True)
                             await self.session.emit_json({
                                 "type": "transcript",
                                 "role": "assistant",
@@ -308,6 +357,21 @@ class GeminiLiveStreamer:
                             })
 
             if server_content.get("turnComplete"):
+                full_reply = " ".join(self._current_turn_text).strip()
+                if full_reply:
+                    try:
+                        from core import core_tools
+                        from core.unified_log import write_conversation
+                        from langchain_core.messages import AIMessage
+                        from services.memory_manager import memory_manager
+
+                        pid = self.session.profile_id
+                        write_conversation("JARVIS", full_reply, profile_id=pid, channel="gemini_live")
+                        memory_manager.append_history(pid, [AIMessage(content=full_reply)])
+                        core_tools.guardar_memoria_async(pid)
+                    except Exception as e:
+                        log_warning("gemini_live_save_turn_failed", error=str(e))
+                self._current_turn_text.clear()
                 print("[GEMINI LIVE] << Fin de turno de respuesta.\n", flush=True)
                 await self.session.set_state(LiveSessionState.LISTENING)
                 await self.session.emit_json({"type": "turn_complete"})

@@ -352,9 +352,23 @@ async def live_voice_stream():
                 event_type = event.get("type", "")
                 if event_type == "interrupt":
                     await session.interrupt()
-                elif event_type == "user_text":
+                elif event_type in ("user_text", "user_transcript"):
                     text = str(event.get("text", "")).strip()
-                    if hybrid_streamer and text:
+                    if text:
+                        print(f"\n[USUARIO] >> {text}\n", flush=True)
+                        try:
+                            from core import core_tools
+                            from core.unified_log import write_conversation
+                            from langchain_core.messages import HumanMessage
+                            from services.memory_manager import memory_manager
+
+                            write_conversation("USUARIO", text, profile_id=profile_id, channel="gemini_live")
+                            memory_manager.append_history(profile_id, [HumanMessage(content=text)])
+                            core_tools.guardar_memoria_async(profile_id)
+                        except Exception:
+                            pass
+
+                    if hybrid_streamer and text and event_type == "user_text":
                         await hybrid_streamer.process_user_text(text)
                 elif event_type == "ping":
                     await session.emit_json({"type": "pong"})

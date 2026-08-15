@@ -612,21 +612,22 @@ def leer_archivo(nombre_archivo: str) -> str:
 
 
 # ─────────────────────────────────────────
-# Motivacional
-# ─────────────────────────────────────────
+_FRASES_JARVIS = [
+    "Los sistemas están al límite, señor, pero su terquedad siempre supera cualquier especificación técnica.",
+    "A veces hay que correr antes de aprender a caminar, señor.",
+    "Un hombre inteligente aprende de sus errores; un genio construye una armadura con ellos.",
+    "Todo protocolo está activo, señor. Sugiero mantener la compostura y la brillantez habitual.",
+    "La probabilidad de éxito es inversamente proporcional a la cantidad de dudas que tenga, señor.",
+    "Siempre es un placer desafiar las leyes de la física a su lado, señor.",
+    "El éxito es la mejor venganza, Administrador.",
+]
+
+
 @tool
 def frase_motivacional() -> str:
     """Genera frase motivacional o chiste al estilo JARVIS."""
-    try:
-        if not services.llm:
-            return "El éxito es la mejor venganza, Administrador."
-        res = services.llm.invoke(
-            "Genera UNA frase motivacional o chiste seco al estilo JARVIS de Iron Man. Máximo 2 frases. En español. Sin emojis."
-        )
-        return res.content.strip()
-    except Exception as e:
-        logging.getLogger("JARVIS").warning(f"Error generando frase: {e}")
-        return "El éxito es la mejor venganza, Administrador."
+    import random
+    return random.choice(_FRASES_JARVIS)
 
 
 # ─────────────────────────────────────────

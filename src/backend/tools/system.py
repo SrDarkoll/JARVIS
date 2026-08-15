@@ -210,38 +210,136 @@ def controlar_pc(accion: str, el_usuario_ya_confirmo: bool = False) -> str:
 # ─────────────────────────────────────────
 @tool
 def abrir_aplicacion(nombre_app: str) -> str:
-    """Abre aplicaciones locales. Requiere autorización."""
+    """Abre aplicaciones locales y juegos en Windows/Linux/macOS."""
     pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
     if not verificar_autorizacion(pid):
         return "ACCESO_DENEGADO: Autorización requerida."
 
-    app = str(nombre_app or "").strip().lower()
-    app_map = {
-        "chrome": "chrome.exe",
-        "firefox": "firefox.exe",
-        "edge": "msedge.exe",
-        "vscode": "code.exe",
-        "spotify": "spotify:",
-        "discord": "discord:",
-        "notepad": "notepad.exe",
-        "calc": "calc.exe",
-    }
-    exe = app_map.get(app, app)
+    app_raw = str(nombre_app or "").strip()
+    if not app_raw:
+        return "Nombre de aplicación no especificado."
+    app = app_raw.lower()
 
-    try:
-        if IS_WINDOWS:
-            import webbrowser
+    if IS_WINDOWS:
+        import webbrowser
 
-            if exe.endswith(":"):
-                webbrowser.open(exe)
-            else:
-                os.startfile(exe)
-        else:
-            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", exe])
-        return f"Iniciando {app}..."
-    except Exception as e:
-        services.log_event("open_app_failed", app=app, error=str(e))
-        return f"No se pudo abrir '{app}'. Error: {e}"
+        # 1. Juegos populares de Steam (App IDs)
+        steam_games = {
+            "counter-strike 2": "730",
+            "counter strike 2": "730",
+            "counter-strike": "730",
+            "counter strike": "730",
+            "cs2": "730",
+            "cs:go": "730",
+            "csgo": "730",
+            "dota 2": "570",
+            "dota": "570",
+            "team fortress 2": "440",
+            "tf2": "440",
+            "apex legends": "1172470",
+            "apex": "1172470",
+            "pubg": "578080",
+            "gta v": "271590",
+            "gta 5": "271590",
+            "grand theft auto v": "271590",
+            "rust": "252490",
+            "cyberpunk 2077": "1091500",
+            "cyberpunk": "1091500",
+            "terraria": "105600",
+            "left 4 dead 2": "550",
+            "l4d2": "550",
+            "garrys mod": "4000",
+            "gmod": "4000",
+        }
+        for alias, game_id in steam_games.items():
+            if alias in app or app in alias:
+                try:
+                    webbrowser.open(f"steam://rungameid/{game_id}")
+                    return f"Iniciando {app_raw} a través de Steam..."
+                except Exception:
+                    pass
+
+        # 2. Esquemas URI y ejecutables conocidos
+        uri_map = {
+            "chrome": "chrome.exe",
+            "firefox": "firefox.exe",
+            "edge": "msedge.exe",
+            "vscode": "code.exe",
+            "visual studio code": "code.exe",
+            "cursor": "cursor.exe",
+            "spotify": "spotify:",
+            "discord": "discord:",
+            "steam": "steam://open/main",
+            "roblox": "roblox-player:",
+            "minecraft": "minecraft:",
+            "epic": "com.epicgames.launcher:",
+            "epic games": "com.epicgames.launcher:",
+            "whatsapp": "whatsapp:",
+            "telegram": "tg:",
+            "calculadora": "calc.exe",
+            "calc": "calc.exe",
+            "bloc de notas": "notepad.exe",
+            "notepad": "notepad.exe",
+            "explorador": "explorer.exe",
+            "cmd": "cmd.exe",
+            "terminal": "wt.exe",
+            "powershell": "powershell.exe",
+            "word": "winword.exe",
+            "excel": "excel.exe",
+            "powerpoint": "powerpnt.exe",
+        }
+        if app in uri_map:
+            target = uri_map[app]
+            if target.endswith(":") or "://" in target:
+                webbrowser.open(target)
+                return f"Iniciando {app_raw}..."
+            try:
+                os.startfile(target)
+                return f"Iniciando {app_raw}..."
+            except Exception:
+                pass
+
+        # 3. Intento directo por os.startfile
+        try:
+            os.startfile(app_raw)
+            return f"Iniciando {app_raw}..."
+        except Exception:
+            pass
+
+        # 4. Búsqueda en accesos directos de Menú Inicio y Escritorio
+        roots = [
+            os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+            os.path.expandvars(r"%USERPROFILE%\Desktop"),
+            r"C:\Users\Public\Desktop",
+        ]
+        all_lnks = []
+        for r in roots:
+            if os.path.exists(r):
+                for dirpath, _, filenames in os.walk(r):
+                    for f in filenames:
+                        if f.lower().endswith(".lnk") or f.lower().endswith(".url"):
+                            all_lnks.append(os.path.join(dirpath, f))
+
+        words = [w for w in app.split() if len(w) > 1]
+        for lnk in all_lnks:
+            base = os.path.splitext(os.path.basename(lnk))[0].lower()
+            if app in base or (words and all(w in base for w in words)):
+                try:
+                    os.startfile(lnk)
+                    return f"Iniciando {app_raw}..."
+                except Exception:
+                    pass
+
+        services.log_event("open_app_failed", app=app_raw, error="not_found")
+        return f"No se encontró el ejecutable o acceso directo para '{app_raw}'."
+    else:
+        try:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", app_raw])
+            return f"Iniciando {app_raw}..."
+        except Exception as e:
+            services.log_event("open_app_failed", app=app_raw, error=str(e))
+            return f"No se pudo abrir '{app_raw}'. Error: {e}"
 
 
 # ─────────────────────────────────────────
