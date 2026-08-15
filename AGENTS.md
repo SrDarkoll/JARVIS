@@ -125,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-649 passed, 1 skipped
+656 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -139,6 +139,7 @@ Frontend JavaScript syntax checks:
 ```powershell
 node --check src\frontend\static\js\main.js
 node --check src\frontend\static\js\modules\api.js
+node --check src\frontend\static\js\modules\live-voice.js
 node --check src\frontend\static\js\modules\recognition-policy.js
 node --check src\frontend\static\js\modules\voice-capabilities.js
 ```
@@ -157,33 +158,6 @@ Dependency and release checks:
 python -m pip check
 python -m pip_audit -r requirements.txt
 python -m ruff check src/backend
-```
-
-## Targeted Regression Commands
-
-Use these when touching security middleware, chat streaming, or web search.
-
-Critical-route and chat stream regressions:
-
-```powershell
-pytest tests\test_smoke.py::test_critical_route_rejects_untrusted_origin_on_loopback tests\test_smoke.py::test_critical_route_allows_trusted_loopback_origin_without_token tests\test_smoke.py::test_chat_stream_rejects_get tests\test_smoke.py::test_chat_stream_rate_limits_like_chat -q
-```
-
-Security confirmation and quick control regressions:
-
-```powershell
-pytest tests\test_security_manager.py::TestSecurityGuard::test_security_guard_requires_explicit_confirmation_even_when_authorized tests\test_security_manager.py::TestQuickControlActions -q
-```
-
-Search error-sanitization regression:
-
-```powershell
-pytest tests\test_search_security.py::test_brave_search_hides_internal_network_errors -q
-```
-
-Memory RAG optional-dependency regression:
-
-```powershell
 pytest tests\test_memory_rag_resilience.py -q
 ```
 

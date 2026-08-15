@@ -80,16 +80,16 @@ Then launch:
 
 ## What Jarvis Can Do
 
-- Voice chat with browser speech hints, optional Whisper fallback, and Piper TTS.
-- English/Spanish UI and response mode.
-- Per-profile memory and shared memory facts.
-- Local reminders, weather, optional IP geolocation, news summaries, time/date answers, and dynamic web search routing.
-- Spotify playback and controls through either the Windows desktop client or an eligible Web API account, plus API-backed AutoMix and dynamic recommendations when the account permits them.
-- YouTube video search, structured candidate extraction, similarity ranking, and truthful best-match/search-result opening.
-- Telegram bot integration with `TELEGRAM_CHAT_ID` filtering.
-- Local desktop tools gated by security policy. Arbitrary terminal execution and text-file writes are disabled by default.
-- Observability/status endpoints for setup, profiles, metrics, security, TTS, and voice identity diagnostics.
-- Optional desktop shell through `pywebview` with persistent WebView2 storage.
+- **Live Full-Duplex Voice (Gemini 3.1 Flash Live)**: Real-time, sub-second audio-to-audio streaming with barge-in interruption and live tool execution (*function calling*).
+- **Voice chat & Local TTS**: Standard voice input with browser speech hints, Whisper fallback, and offline Piper neural TTS (`en_GB` / `es_MX`).
+- **Complete System & Media Control**: Spotify Desktop / Web API playback, Windows volume adjustments, application launcher, and window management.
+- **English/Spanish Multilingual Mode**: Bi-directional real-time conversation and UI in English and Spanish.
+- **Memory & Context Persistence**: Per-profile memory, intertwined facts, and critical data extraction.
+- **Web & Live Information Tools**: Weather, ESPN sports scores, news synthesis, YouTube candidate search, and Tavily/Brave dynamic web queries.
+- **Auditable Security & Tool Boundary**: Zero silent arbitrary code execution; critical actions require authorization/confirmation.
+- **Telegram Bot Integration**: Remote interaction with `TELEGRAM_CHAT_ID` filtering and OGG/Opus voice synthesis.
+- **Console Telemetry & Live Reasoning**: Real-time terminal logs displaying model thoughts (*Chain of Thought*), tool dispatches, execution timings, and assistant dialogue.
+- **Desktop Shell**: High-performance browser HUD or native WebView2 desktop container.
 
 ## Requirements
 
@@ -234,6 +234,24 @@ Minimum for real LLM responses:
 When both keys are present, Jarvis uses Gemini (`gemini-3.5-flash`) as primary and Groq (`qwen/qwen3.6-27b`) as automatic fallback. Set `JARVIS_LLM_PROVIDER=groq` to reverse that order. Provider-specific model variables are validated so a Gemini model cannot silently be sent to Groq, or vice versa. `GOOGLE_API_KEY` remains a compatibility alias for Gemini but is also used by Google search integrations, so new installations should prefer the dedicated `GEMINI_API_KEY`.
 
 Without an API key, status and setup diagnostics, Piper TTS, and local preflight tools continue to work. Chat requests that need an AI provider return the controlled `llm_unconfigured` error with HTTP 503.
+
+## 🎙️ Real-Time Full-Duplex Voice (Gemini 3.1 Flash Live)
+
+J.A.R.V.I.S. features native bidirectional full-duplex voice streaming powered by Google's **Gemini 3.1 Flash Live** Multimodal Live WebSocket API:
+
+- **End-to-End Speech-to-Speech**: Eliminates intermediary Speech-to-Text and Text-to-Speech round-trips for sub-second, conversation-paced responses with natural intonation and cadence.
+- **Real-Time Tool Calling (*Function Calling*)**: When conversational voice requests require local actions (playing Spotify tracks, adjusting PC volume, opening applications, checking weather, or web searches), Gemini Live issues `toolCall` events. J.A.R.V.I.S. executes the corresponding tool through its non-blocking dispatcher and streams the verified output back to Gemini, which synthesizes spoken confirmation in real time.
+- **Client-Side Barge-In Interruption**: The browser HUD utilizes an RMS audio energy detector on the microphone stream. If you speak while J.A.R.V.I.S. is speaking, playback is cancelled instantly, and the assistant pivots to listening.
+- **Gapless 24 kHz PCM Playback**: Web Audio API AudioBufferQueue player ensures smooth, jitter-buffered audio output.
+- **Live Console Telemetry**: The terminal console streams live Chain-of-Thought reasoning (`[GEMINI LIVE RAZONAMIENTO]`), tool invocations (`[GEMINI LIVE TOOL]`), execution durations, and spoken transcripts (`[GEMINI LIVE ASISTENTE]`).
+
+Configure the live model in `.env`:
+
+```env
+JARVIS_GEMINI_LIVE_MODEL="gemini-3.1-flash-live-preview"
+```
+
+*(Also supports `models/gemini-2.5-flash-native-audio-latest`).*
 
 ## Stable Core Mode
 
