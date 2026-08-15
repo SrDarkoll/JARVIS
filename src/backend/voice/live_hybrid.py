@@ -68,26 +68,26 @@ class HybridLiveStreamer:
         if self.orchestrator:
             try:
                 from core.command_pipeline.models import CommandRequest
-                request = CommandRequest(
+                request = CommandRequest.create(
                     text=user_text,
                     channel="voice",
                     language=self.session.language,
                     profile_id=self.session.profile_id,
                 )
                 resp = await asyncio.to_thread(self.orchestrator.process, request)
-                response_text = resp.response_text or resp.direct_response or ""
+                response_text = getattr(resp, "text", "")
             except Exception as e:
                 log_error("hybrid_orchestrator_error", error=str(e))
 
         if not response_text:
             try:
-                from core import jarvis_brain
-                reply, _ = await asyncio.to_thread(
-                    jarvis_brain.procesar_mensaje,
+                from core.brain import processor
+                reply_tuple = await asyncio.to_thread(
+                    processor.procesar_mensaje,
                     user_text,
                     profile_id=self.session.profile_id,
                 )
-                response_text = str(reply or "").strip()
+                response_text = str(reply_tuple[0] or "").strip()
             except Exception as exc:
                 log_warning("hybrid_brain_fallback_error", error=str(exc))
 

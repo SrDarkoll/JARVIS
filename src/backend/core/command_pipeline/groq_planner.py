@@ -50,7 +50,8 @@ class GroqPlanner:
             ]
 
         response = self._model.invoke(planner_messages)
-        tool_calls = tuple(getattr(response, "tool_calls", None) or ())
+        raw_tool_calls: Any = getattr(response, "tool_calls", None) or ()
+        tool_calls: tuple[Any, ...] = tuple(raw_tool_calls)
         raw_content = str(getattr(response, "content", "") or "")
         if "<think>" in raw_content:
             import re
@@ -60,7 +61,7 @@ class GroqPlanner:
                     print(f"\n[LLM RAZONAMIENTO] {th.strip()}", flush=True)
         content = brain_utils._limpiar_thinking(raw_content)
         if tool_calls:
-            print(f"[LLM PLAN] Herramientas propuestas: {[tc.get('name') for tc in tool_calls]}", flush=True)
+            print(f"[LLM PLAN] Herramientas propuestas: {[tc.get('name') for tc in tool_calls if isinstance(tc, dict)]}", flush=True)
 
         if not tool_calls:
             return ActionPlan(
