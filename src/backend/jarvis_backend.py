@@ -506,6 +506,7 @@ _ORIGIN_PROTECTED_API_PATHS = {
     "/api/chat/stream",
     "/api/tts",
     "/api/voice",
+    "/api/voice/live/status",
 }
 
 

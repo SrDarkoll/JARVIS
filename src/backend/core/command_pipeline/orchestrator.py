@@ -146,6 +146,7 @@ class CommandOrchestrator:
         emit: EventCallback | None = None,
     ) -> CommandResponse:
         send = emit or (lambda _event: None)
+        print(f"\n[COMANDO] >> RECIBIDO: '{request.text}' | canal={request.channel} | perfil={request.profile_id}", flush=True)
         send(
             {
                 "type": "status",
@@ -158,6 +159,11 @@ class CommandOrchestrator:
         candidate = self._deterministic.plan(request)
         plan = self._select_plan(request, history, candidate, send)
         self._validate_plan(request, plan)
+
+        if plan.steps:
+            print(f"[PLANIFICADOR] Plan con herramientas: {[s.tool_name for s in plan.steps]} (fuente={plan.source.value})", flush=True)
+        elif plan.direct_response:
+            print(f"[PLANIFICADOR] Plan de respuesta directa (fuente={plan.source.value})", flush=True)
 
         receipts: tuple[ExecutionReceipt, ...] = ()
         if plan.steps:
@@ -178,6 +184,7 @@ class CommandOrchestrator:
                     raise ValueError("receipt_operation_mismatch")
 
         response = self._responses.compose(request, plan, receipts)
+        print(f"[RESPUESTA JARVIS] << '{response.text}'\n", flush=True)
         self._history.append_interaction(request, response)
         send({"type": "done", **response.to_dict()})
         return response

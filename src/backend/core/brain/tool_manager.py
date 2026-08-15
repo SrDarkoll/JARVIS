@@ -151,7 +151,7 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
     """Anti-hallucination guard: blocks critical tools if user context does not request them."""
     import re
 
-    if source in {"auth_resume", "routine", "control_panel", "router", "router_dynamic", "router_directo"}:
+    if source in {"auth_resume", "routine", "control_panel", "router", "router_dynamic", "router_directo", "gemini_live", "live_voice"}:
         return True
     t = (user_input or "").lower()
     t = re.sub(r"[^\wáéíóúñü\s]", " ", t)
@@ -314,6 +314,14 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             # Compatibility for tests and legacy plugins that still mutate
             # brain_state.tool_map directly.
             tool = brain_state.tool_map.get(tool_name)
+        if tool is None:
+            from core import core_tools
+            tool = getattr(core_tools, tool_name, None)
+            if tool is None:
+                for base_t in core_tools.get_base_tools():
+                    if getattr(base_t, "name", "") == tool_name:
+                        tool = base_t
+                        break
 
     started = _time.perf_counter()
     obs_inc("tool_calls_total", 1)
@@ -326,6 +334,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         result_preview = str(value or "")[:2000]
         return value
 
+    print(f"\n[TOOL] >> INICIO: {tool_name} | args={args} | canal={source}", flush=True)
     write_log(
         "TOOL",
         f"START {tool_name}",
@@ -452,6 +461,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         raise RuntimeError("tool_execution_failed") from exc
     finally:
         elapsed = (_time.perf_counter() - started) * 1000.0
+        print(f"[TOOL] << FIN: {tool_name} | estado={outcome} | tiempo={round(elapsed, 2)}ms | resultado={result_preview[:160]}\n", flush=True)
         write_log(
             "TOOL",
             f"END {tool_name}",

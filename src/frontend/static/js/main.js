@@ -14,6 +14,7 @@ import {
     detectVoiceCapabilities,
 } from './modules/voice-capabilities.js';
 import { classifyVoiceApiFailure } from './modules/voice-api.js';
+import { LiveVoiceClient } from './modules/live-voice.js';
 import { t, setLanguage, currentLang, updateUI } from './i18n.js';
 
 // --- CONSTANTES GLOBALES ---
@@ -37,6 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
         progressBar: document.querySelector('.progress-fill'),
         transcriptText: document.getElementById('transcript'),
         activateBtn: document.getElementById('activate-btn'),
+        liveVoiceBtn: document.getElementById('live-voice-btn'),
+        btnLiveVoiceText: document.getElementById('btn-live-voice-text'),
         logContent: document.getElementById('log-content'),
         clock: document.getElementById('clock'),
         date: document.getElementById('date'),
@@ -611,6 +614,108 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // --- LIVE FULL-DUPLEX VOZ ---
+    let liveVoiceClient = null;
+    let isLiveVoiceActive = false;
+
+    async function stopLiveVoiceStream() {
+        if (!isLiveVoiceActive) return;
+        isLiveVoiceActive = false;
+        if (liveVoiceClient) {
+            liveVoiceClient.disconnect();
+            liveVoiceClient = null;
+        }
+        if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_live_voice');
+        if (dom.liveVoiceBtn) dom.liveVoiceBtn.classList.remove('live-active');
+        setCurrentMode('idle', 'stop_live_voice');
+        updateButtonUI('idle');
+        startPassiveListening();
+    }
+
+    async function startLiveVoiceStream() {
+        if (isLiveVoiceActive) return;
+        safeStopRecognition('passive');
+        safeStopRecognition('active');
+        if (isSpeaking) {
+            interrumpirAudio();
+        }
+        clearPassiveRestartTimer();
+        clearActiveStartTimer();
+
+        liveVoiceClient = new LiveVoiceClient({
+            language: currentLang,
+            profileId: lastIdentifiedProfileId || 'default',
+            mode: 'auto'
+        });
+
+        liveVoiceClient.onStateChange = (state) => {
+            if (state === 'speaking') {
+                setCurrentMode('processing', 'live_speaking');
+                if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_speaking');
+                if (reactor && reactor.triggerPulse) reactor.triggerPulse(0.8);
+            } else if (state === 'listening') {
+                setCurrentMode('active', 'live_listening');
+                if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connected');
+            } else if (state === 'closed') {
+                if (isLiveVoiceActive) {
+                    stopLiveVoiceStream();
+                }
+            }
+        };
+
+        liveVoiceClient.onTranscript = (data) => {
+            const role = data.role === 'assistant' ? 'jarvis' : 'user';
+            const text = data.text || '';
+            if (text) {
+ui.addConversationSegment(role, text);
+                if (dom.transcriptText) dom.transcriptText.textContent = text;
+            }
+        };
+
+        liveVoiceClient.onToolExecuting = (data) => {
+            const toolName = data.tool || data.name || 'herramienta';
+            ui.addLogEntry(`> [LIVE TOOL] Ejecutando: ${toolName}...`);
+            if (dom.transcriptText) dom.transcriptText.textContent = `[Ejecutando ${toolName}...]`;
+            if (reactor && reactor.triggerPulse) reactor.triggerPulse(0.9);
+        };
+
+        liveVoiceClient.onInterrupted = (data) => {
+            ui.addLogEntry(t('mode_live_interrupted'));
+            if (reactor && reactor.triggerPulse) reactor.triggerPulse(1.0);
+        };
+
+        liveVoiceClient.onError = (err) => {
+            console.warn('[LIVE_VOICE] Error:', err);
+            ui.addLogEntry(`> LIVE ERROR: ${err.message || 'Error de conexión'}`);
+        };
+
+        liveVoiceClient.onSessionReady = (data) => {
+            ui.addLogEntry(`> LIVE FULL-DUPLEX: Enlace establecido (Modo: ${data.mode || 'live'}).`);
+        };
+
+        try {
+            await liveVoiceClient.startStreaming();
+            isLiveVoiceActive = true;
+            if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_stop_live');
+            if (dom.liveVoiceBtn) dom.liveVoiceBtn.classList.add('live-active');
+            setCurrentMode('active', 'live_stream_started');
+            if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connected');
+        } catch (err) {
+            console.error('[LIVE_VOICE] Failed to start:', err);
+            ui.addLogEntry(`> LIVE ERROR: No se pudo iniciar el streaming de audio.`);
+            stopLiveVoiceStream();
+        }
+    }
+
+    dom.liveVoiceBtn?.addEventListener('click', () => {
+        dom.liveVoiceBtn.blur();
+        if (isLiveVoiceActive) {
+            stopLiveVoiceStream();
+        } else {
+            startLiveVoiceStream();
+        }
+    });
+
     async function cancelVoiceRegistration() {
         try {
             await fetch('/api/voice/cancelar', { method: 'POST' });
@@ -866,6 +971,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 for (let j = 0; j < event.results[i].length; j++) {
                     const transcript = event.results[i][j].transcript.toLowerCase().trim();
+
+                    // If assistant is currently speaking, allow instant barge-in / stop keywords
+                    if (isSpeaking) {
+                        const stopPattern = /\b(para|parar|cállate|callate|silencio|stop|detente|alto|ya|cancela|basta|shut\s*up|quiet)\b/i;
+                        if (stopPattern.test(transcript)) {
+                            interrumpirAudio();
+                            ui.addLogEntry('> [INTERRUPCIÓN] Audio detenido por comando de voz.');
+                            return;
+                        }
+                    }
 
                     // Only extract inline commands from FINAL results to avoid
                     // cutting off the user's sentence on a partial interim match.
@@ -1719,8 +1834,24 @@ document.addEventListener('DOMContentLoaded', () => {
             voice.audioCtx.close();
         }
         voice.stopSilenceDetector();
+        if (liveVoiceClient) {
+            liveVoiceClient.disconnect();
+            liveVoiceClient = null;
+        }
         if (reactor && reactor.dispose) reactor.dispose();
     }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isSpeaking) {
+            interrumpirAudio();
+        }
+    });
+
+    document.getElementById('transcript')?.addEventListener('click', () => {
+        if (isSpeaking) {
+            interrumpirAudio();
+        }
+    });
 
     window.addEventListener('beforeunload', cleanupOnUnload);
     window.addEventListener('pagehide', cleanupOnUnload);

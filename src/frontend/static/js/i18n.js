@@ -89,6 +89,10 @@ export const translations = {
         "cog_fail_msg": "I am sorry, Administrator. I cannot access my reasoning core.",
         "cog_connecting": "> Cognition: Connecting to core (streaming)...",
         "cog_status": "> Cognition: {text}...",
+        "cog_error": "> Classic ERROR ({detail}).",
+        "cog_fail_msg": "I am sorry, Administrator. I cannot access my reasoning core.",
+        "cog_connecting": "> Cognition: Connecting to core (streaming)...",
+        "cog_status": "> Cognition: {text}...",
         "streaming_fail": "> Streaming failed ({detail}).",
         "streaming_fallback": "> Streaming unavailable; using classic mode.",
         "tts_error": "> TTS: Error in sentence {index}, continuing.",
@@ -96,7 +100,12 @@ export const translations = {
         "tts_empty": "> TTS: speak() called with empty text.",
         "briefing_intro": "Daily informative briefing, Administrator.",
         "bio_start": "> BIO: Administrator enrollment started...",
-        "log_user": "> Administrator: \"{text}\""
+        "log_user": "> Administrator: \"{text}\"",
+        "btn_live_voice": "LIVE FULL-DUPLEX",
+        "btn_stop_live": "CLOSE LIVE LINK",
+        "mode_live_connected": "LIVE FULL-DUPLEX ACTIVE - Speak freely",
+        "mode_live_speaking": "JARVIS IS SPEAKING (Speak anytime to interrupt)",
+        "mode_live_interrupted": "> User interruption detected (barge-in)."
     },
     es: {
         "init_text": "INICIALIZANDO J.A.R.V.I.S.",
@@ -136,10 +145,15 @@ export const translations = {
         "no_voice_events": "Sin eventos de voz.",
         "btn_init_voice": "INICIAR ENLACE DE VOZ",
         "btn_stop_voice": "CERRAR ENLACE DE VOZ",
+        "btn_live_voice": "VOZ FULL-DUPLEX",
+        "btn_stop_live": "CERRAR ENLACE LIVE",
         "mode_passive": "MODO CENTINELA - diga \"JARVIS\"",
         "mode_active": "ESCUCHANDO COMANDO...",
         "mode_processing": "PROCESANDO...",
         "mode_idle": "ACTIVAR CONTROL DE VOZ",
+        "mode_live_connected": "FULL-DUPLEX EN VIVO - Hable libremente",
+        "mode_live_speaking": "JARVIS HABLANDO (Hable para interrumpir)",
+        "mode_live_interrupted": "> Interrupción de usuario detectada (barge-in).",
         "label_admin": "Administrador",
         "label_guest": "Invitado",
         "wake_admin": [
@@ -194,7 +208,12 @@ export const translations = {
         "tts_empty": "> TTS: speak() llamado con texto vacío.",
         "briefing_intro": "Briefing informativo del día, Administrador.",
         "bio_start": "> BIO: Registro del Administrador iniciado...",
-        "log_user": "> Administrador: \"{text}\""
+        "log_user": "> Administrador: \"{text}\"",
+        "btn_live_voice": "VOZ FULL-DUPLEX",
+        "btn_stop_live": "CERRAR ENLACE LIVE",
+        "mode_live_connected": "FULL-DUPLEX EN VIVO - Hable libremente",
+        "mode_live_speaking": "JARVIS HABLANDO (Hable para interrumpir)",
+        "mode_live_interrupted": "> Interrupción de usuario detectada (barge-in)."
     }
 };
 

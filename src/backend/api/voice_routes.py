@@ -271,3 +271,100 @@ async def process_voice():
         "content_type": (request.headers.get("Content-Type", "") or "").strip(),
     }
     return _service_response(await asyncio.to_thread(voice_service.process_voice, audio_bytes, voice_request))
+
+
+@voice_bp.route("/api/voice/live/status", methods=["GET"])
+async def live_voice_status():
+    from core.llm_providers import resolve_llm_provider_config
+    cfg = resolve_llm_provider_config()
+    gemini_available = bool(cfg.primary_provider == "gemini" and cfg.primary_api_key)
+    return jsonify({
+        "ok": True,
+        "live_supported": True,
+        "gemini_live_available": gemini_available,
+        "hybrid_available": True,
+        "preferred_mode": "gemini_live" if gemini_available else "hybrid_stream",
+    })
+
+
+@voice_bp.websocket("/api/voice/stream")
+async def live_voice_stream():
+    import json
+    import uuid
+
+    from quart import websocket
+    from voice.live_gemini import GeminiLiveStreamer
+    from voice.live_hybrid import HybridLiveStreamer
+    from voice.live_session import live_session_manager
+
+    session_id = str(uuid.uuid4())
+    language = websocket.args.get("lang", "es")
+    profile_id = websocket.args.get("profile_id", "default")
+    requested_mode = websocket.args.get("mode", "auto")
+
+    async def _send_text(text: str) -> None:
+        await websocket.send(text)
+
+    async def _send_bytes(data: bytes) -> None:
+        await websocket.send(data)
+
+    session = await live_session_manager.create_session(
+        session_id=session_id,
+        send_text=_send_text,
+        send_bytes=_send_bytes,
+        profile_id=profile_id,
+        language=language,
+        mode=requested_mode,
+    )
+
+    from core.llm_providers import resolve_llm_provider_config
+    cfg = resolve_llm_provider_config()
+    use_gemini_live = (
+        (requested_mode == "gemini_live" or (requested_mode == "auto" and cfg.primary_provider == "gemini"))
+        and bool(cfg.primary_api_key)
+    )
+
+    streamer_task: asyncio.Task | None = None
+    hybrid_streamer: HybridLiveStreamer | None = None
+    if use_gemini_live:
+        gemini_streamer = GeminiLiveStreamer(session=session, api_key=cfg.primary_api_key)
+        streamer_task = asyncio.create_task(gemini_streamer.start())
+    else:
+        import jarvis_backend
+        hybrid_streamer = HybridLiveStreamer(
+            session=session,
+            tts_engine=getattr(jarvis_backend, "tts_engine", None),
+            command_orchestrator=getattr(jarvis_backend, "command_orchestrator", None),
+        )
+        streamer_task = asyncio.create_task(hybrid_streamer.start())
+
+    try:
+        while True:
+            msg = await websocket.receive()
+            if isinstance(msg, bytes):
+                await session.handle_audio_chunk(msg)
+            elif isinstance(msg, str):
+                try:
+                    event = json.loads(msg)
+                except Exception:
+                    continue
+
+                event_type = event.get("type", "")
+                if event_type == "interrupt":
+                    await session.interrupt()
+                elif event_type == "user_text":
+                    text = str(event.get("text", "")).strip()
+                    if hybrid_streamer and text:
+                        await hybrid_streamer.process_user_text(text)
+                elif event_type == "ping":
+                    await session.emit_json({"type": "pong"})
+                elif event_type == "stop":
+                    break
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        await session.emit_json({"type": "error", "message": str(e)})
+    finally:
+        if streamer_task and not streamer_task.done():
+            streamer_task.cancel()
+        await live_session_manager.remove_session(session_id)
