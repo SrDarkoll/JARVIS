@@ -5,11 +5,23 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.11-3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](#system-requirements)
 
-**A local desktop AI assistant for voice interaction, Spotify control, system tools, memory persistence, and guarded Windows automation.**
+**A local desktop AI assistant powered by Gemini 3.1 Flash Live for real-time full-duplex voice streaming, Spotify control, system tools, memory persistence, and guarded Windows automation.**
 
-J.A.R.V.I.S. combines a high-performance Python/Quart backend with a modern browser-based desktop UI (WebView2 / Browser). Windows is the primary target, with clean degradation for Linux and macOS.
+J.A.R.V.I.S. delivers a true conversational experience: talk naturally, interrupt anytime (*barge-in*), control your PC and Spotify with your voice in sub-second speed, and enjoy an authentic British-style AI voice (`Charon`).
 
 ![J.A.R.V.I.S. UI](media/readme.png)
+
+---
+
+## 🌟 Star Feature: Real-Time Full-Duplex Voice (Gemini 3.1 Flash Live)
+
+Unlike traditional AI assistants that record, transcribe, think, and generate speech sequentially with seconds of delay, J.A.R.V.I.S. features **native bidirectional audio streaming**:
+
+- ⚡ **Sub-Second Speech-to-Speech**: Direct bidirectional audio streaming over WebSockets (16 kHz PCM input / 24 kHz gapless PCM output) without slow intermediary text-to-speech roundtrips.
+- 🛑 **Zero-Latency Barge-In Interruption**: Speak over J.A.R.V.I.S. mid-sentence and it stops immediately to listen to you, exactly like talking to a real human.
+- 🛠️ **Real-Time Tool Calling (*Function Calling*)**: Ask to play music on Spotify, adjust PC volume, open applications, or check the weather, and J.A.R.V.I.S. executes the tool instantly and confirms in the exact same voice stream.
+- 👑 **Authentic J.A.R.V.I.S. Voice (`Charon`)**: Sophisticated, calm, and natural voice persona that feels straight out of Iron Man.
+- 🧠 **Dynamic Speaker Awareness & Memory**: Remembers who you are and recalls past conversation context seamlessly.
 
 ---
 
