@@ -120,8 +120,10 @@ def choose_candidate(
 
     best = ranked[0]
     runner_up = ranked[1] if len(ranked) > 1 else None
+    best_artist_in_query = bool(best.artist and normalize_text(best.artist) in normalize_text(request.raw))
     same_title_different_artist = bool(
         not request.artist
+        and not best_artist_in_query
         and runner_up
         and normalize_text(best.title) == normalize_text(runner_up.title)
         and normalize_text(best.artist) != normalize_text(runner_up.artist)

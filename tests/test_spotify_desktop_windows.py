@@ -425,3 +425,58 @@ def test_playback_and_shuffle_states_use_exact_accessible_controls():
 
     assert adapter.playback_state(508) == "paused"
     assert adapter.shuffle_state(508) is True
+
+
+def test_invoke_control_tries_iface_invoke_and_legacy_before_click():
+    from modules.spotify.desktop.windows import _invoke_control
+
+    class LegacyControl:
+        def __init__(self):
+            self.action_done = False
+
+        @property
+        def iface_legacy_iaccessible(self):
+            class Legacy:
+                def __init__(self, parent):
+                    self.parent = parent
+
+                def DoDefaultAction(self):
+                    self.parent.action_done = True
+
+            return Legacy(self)
+
+    control = LegacyControl()
+    assert _invoke_control(control)
+    assert control.action_done
+
+
+def test_control_keyboard_shortcuts_fallback_when_buttons_are_missing():
+    shortcuts = []
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+    )
+
+    assert adapter.control(509, "pause")
+    assert shortcuts[-1] == " "
+
+    assert adapter.control(509, "next")
+    assert shortcuts[-1] == "^{RIGHT}"
+
+    assert adapter.control(509, "previous")
+    assert shortcuts[-1] == "^{LEFT}"
+
+    assert adapter.control(509, "shuffle_on")
+    assert shortcuts[-1] == "^s"
+
+    assert adapter.control(509, "repeat_on")
+    assert shortcuts[-1] == "^r"
+
+    assert adapter.control(509, "volume_up")
+    assert shortcuts[-1] == "^{UP}"
+
+    assert adapter.control(509, "volume_down")
+    assert shortcuts[-1] == "^{DOWN}"
+
+    assert adapter.control(509, "mute")
+    assert shortcuts[-1] == "^+{DOWN}"

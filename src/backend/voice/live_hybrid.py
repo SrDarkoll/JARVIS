@@ -49,7 +49,7 @@ class HybridLiveStreamer:
             return
 
         task = asyncio.create_task(self._execute_streaming_turn(text))
-        self.session.attach_task(task)
+        self.session.attach_turn_task(task)
         try:
             await task
         except asyncio.CancelledError:
@@ -92,7 +92,7 @@ class HybridLiveStreamer:
                 log_warning("hybrid_brain_fallback_error", error=str(exc))
 
         if not response_text:
-            response_text = "A sus órdenes, Administrador."
+            response_text = "Entendido, a su disposición."
 
         await self.session.set_state(LiveSessionState.SPEAKING)
         await self.session.emit_json({

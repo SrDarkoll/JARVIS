@@ -685,7 +685,38 @@ def analizar_pantalla() -> str:
         )
 
         llm_v = services.llm_vision
-        multimodal_res = "Análisis visual no available (motor no configurado)."
+        if not llm_v:
+            try:
+                from core.brain.llm_engine import GROQ_VISION_MODEL, _load_chat_openai
+                from core.brain.llm_providers import (
+                    provider_base_url,
+                    resolve_gemini_api_key,
+                    resolve_groq_api_key,
+                )
+
+                ChatOpenAI = _load_chat_openai()
+                gemini_key = resolve_gemini_api_key()
+                if gemini_key:
+                    vision_model = os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash")
+                    llm_v = ChatOpenAI(
+                        model=vision_model,
+                        temperature=0,
+                        api_key=gemini_key,
+                        base_url=provider_base_url("gemini"),
+                    )
+                else:
+                    groq_key = resolve_groq_api_key()
+                    if groq_key:
+                        llm_v = ChatOpenAI(
+                            model=GROQ_VISION_MODEL,
+                            temperature=0,
+                            api_key=groq_key,
+                            base_url=provider_base_url("groq"),
+                        )
+            except Exception:
+                llm_v = None
+
+        multimodal_res = "Análisis visual no disponible (motor no configurado)."
 
         if llm_v:
             from langchain_core.messages import HumanMessage  # noqa: PLC0415
@@ -697,12 +728,12 @@ def analizar_pantalla() -> str:
                     "image_url": {"url": f"data:image/png;base64,{encoded}"},
                 },
             ]
-            multimodal_res = "Análisis visual no available."
+            multimodal_res = "Análisis visual no disponible."
             try:
                 res_v = llm_v.invoke([HumanMessage(content=content)])
                 multimodal_res = res_v.content.strip()
             except Exception as ev:
-                multimodal_res = f"Error en visor óptico Groq: {ev}"
+                multimodal_res = f"Error en visor óptico: {ev}"
 
         resumen = (
             f"Análisis HUD completado: [{w}x{h} px]. Luminosidad {nivel_luz}. "

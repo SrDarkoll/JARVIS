@@ -65,8 +65,10 @@ from core.service_container import services
 from engines.tts_engine import TTSEngine
 from quart import (
     Quart,
+    abort,
     jsonify,
     request,
+    websocket,
 )  # pyright: ignore[reportMissingImports]
 from services import security_manager
 from services.monitoring_service import monitoring_service
@@ -507,6 +509,7 @@ _ORIGIN_PROTECTED_API_PATHS = {
     "/api/tts",
     "/api/voice",
     "/api/voice/live/status",
+    "/api/voice/stream",
 }
 
 
@@ -527,15 +530,19 @@ def _normalize_origin(value: str | None) -> str:
     return f"{scheme}://{host}{port}"
 
 
-def _is_trusted_browser_origin() -> bool:
+def _is_trusted_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
     allowed = {origin for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins()) if origin}
-    origin = _normalize_origin(request.headers.get("Origin"))
+    origin = _normalize_origin(origin_header)
     if origin:
         return origin in allowed
-    referer = _normalize_origin(request.headers.get("Referer"))
+    referer = _normalize_origin(referer_header)
     if referer:
         return referer in allowed
     return True
+
+
+def _is_trusted_browser_origin() -> bool:
+    return _is_trusted_origin_header(request.headers.get("Origin"), request.headers.get("Referer"))
 
 
 def _is_critical_api_path(path: str) -> bool:
@@ -557,6 +564,19 @@ def _has_valid_api_token() -> bool:
     if not configured_token:
         return False
     supplied = (request.headers.get("X-JARVIS-API-TOKEN") or "").strip()
+    return hmac.compare_digest(supplied, configured_token)
+
+
+def _has_valid_websocket_token() -> bool:
+    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
+    if not configured_token:
+        return False
+    supplied = (
+        websocket.headers.get("X-JARVIS-API-TOKEN")
+        or websocket.args.get("token")
+        or websocket.args.get("api_token")
+        or ""
+    ).strip()
     return hmac.compare_digest(supplied, configured_token)
 
 
@@ -588,6 +608,43 @@ async def _require_token_for_critical_routes():
 
     obs_event("api_token_required", path=request.path, ip=request.remote_addr)
     return jsonify({"error": "Token required for critical routes."}), 401
+
+
+@app.before_websocket
+async def _require_token_for_websocket_routes():
+    path = websocket.path
+    is_critical = _is_critical_api_path(path)
+    is_origin_protected = _is_origin_protected_api_path(path)
+
+    origin_trusted = _is_trusted_origin_header(
+        websocket.headers.get("Origin"),
+        websocket.headers.get("Referer"),
+    )
+    token_valid = _has_valid_websocket_token()
+
+    if (is_origin_protected or is_critical) and not origin_trusted and not token_valid:
+        obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
+        abort(403)
+
+    if not is_critical:
+        return None
+
+    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
+    if configured_token:
+        if token_valid:
+            return None
+        obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
+        abort(401)
+
+    if not origin_trusted:
+        obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
+        abort(403)
+
+    if _is_loopback(websocket.remote_addr):
+        return None
+
+    obs_event("ws_token_required", path=path, ip=websocket.remote_addr)
+    abort(401)
 
 
 @app.after_request

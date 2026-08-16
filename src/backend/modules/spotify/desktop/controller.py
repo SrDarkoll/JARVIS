@@ -136,7 +136,7 @@ class SpotifyDesktopController:
         query: str,
         generation: int,
         *,
-        readiness_timeout: float,
+        readiness_timeout: float = 0.5,
     ) -> str:
         deadline = self._monotonic() + max(0.0, readiness_timeout)
         while True:
@@ -566,6 +566,8 @@ class SpotifyDesktopController:
                 observed = self._uia.shuffle_state(window.handle)
                 if observed is expected:
                     return True
+            elif action in {"like", "unlike", "repeat_on", "repeat_off", "volume_up", "volume_down", "mute"}:
+                return True
             elif action in {"next", "previous"}:
                 current_track = self._track_key(
                     self._uia.now_playing(window.handle),
@@ -625,6 +627,154 @@ class SpotifyDesktopController:
             return SpotifyDesktopResult(
                 status=DesktopResultStatus.FAILED,
                 message_key="spotify_automation_failed",
+            )
+        finally:
+            self._lock.release()
+
+    def queue(self, request: SpotifyRequest) -> SpotifyDesktopResult:
+        if not self._lock.acquire(blocking=False):
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                message_key="spotify_automation_busy",
+            )
+        generation = self._next_generation()
+        states = [AutomationState.STARTING]
+        try:
+            window = self._windows.ensure_window(self._start_timeout)
+            if not self._windows.focus(window) or not self._windows.is_foreground(window):
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_focus_lost",
+                    states=tuple(states),
+                )
+            cold_start = not bool(self._windows.current_title(window))
+            readiness_timeout = 2.0 if cold_start else 0.5
+            states.append(AutomationState.SEARCHING)
+            search_status = self._search_when_ready(
+                window,
+                request.query,
+                generation,
+                readiness_timeout=readiness_timeout,
+            )
+            if search_status == "cancelled":
+                return self._cancelled_result(states)
+            if search_status == "focus_lost":
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_focus_lost",
+                    states=tuple(states),
+                )
+            if search_status == "unavailable":
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_search_unavailable",
+                    states=tuple(states),
+                )
+
+            decision, ranked, decision_error = self._wait_for_decision(
+                window,
+                request,
+                generation,
+                retry_search=cold_start,
+            )
+            if decision_error is not None:
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key=decision_error,
+                    states=tuple(states),
+                )
+            if decision is None:
+                return self._cancelled_result(states)
+            if decision.status is MatchStatus.NOT_FOUND:
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.NOT_FOUND,
+                    message_key="spotify_no_results",
+                    states=tuple(states),
+                )
+            if decision.status is MatchStatus.AMBIGUOUS:
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.AMBIGUOUS,
+                    message_key="spotify_ambiguous_results",
+                    choices=decision.alternatives,
+                    states=tuple(states),
+                )
+
+            selected = decision.selected
+            if selected is None:
+                raise RuntimeError("spotify_candidate_missing")
+            if not self._windows.is_foreground(window):
+                states.append(AutomationState.FAILED)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_focus_lost",
+                    states=tuple(states),
+                )
+
+            states.append(AutomationState.SELECTING)
+            queue_fn = getattr(self._uia, "queue_candidate", None)
+            queued = False
+            if callable(queue_fn):
+                queued = bool(queue_fn(selected))
+
+            if queued:
+                states.append(AutomationState.COMPLETE)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.SUCCESS,
+                    title=selected.title,
+                    artist=selected.artist,
+                    message_key="spotify_queue_added",
+                    states=tuple(states),
+                )
+
+            # Fallback: play the track directly instead of queueing
+            if self._uia.activate(selected):
+                states.append(AutomationState.COMPLETE)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.SUCCESS,
+                    title=selected.title,
+                    artist=selected.artist,
+                    message_key="spotify_queue_played_fallback",
+                    states=tuple(states),
+                )
+
+            states.append(AutomationState.FAILED)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                title=selected.title,
+                artist=selected.artist,
+                message_key="spotify_queue_failed",
+                states=tuple(states),
+            )
+        except (FileNotFoundError, ImportError):
+            states.append(AutomationState.FAILED)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.UNAVAILABLE,
+                message_key="spotify_desktop_unavailable",
+                states=tuple(states),
+            )
+        except TimeoutError:
+            states.append(AutomationState.FAILED)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.UNAVAILABLE,
+                message_key="spotify_start_timeout",
+                states=tuple(states),
+            )
+        except Exception as error:
+            states.append(AutomationState.FAILED)
+            self._logger.warning(
+                "spotify_desktop_queue_failed error_type=%s",
+                type(error).__name__,
+            )
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                message_key="spotify_automation_failed",
+                states=tuple(states),
             )
         finally:
             self._lock.release()

@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any
 
-from core.llm_providers import resolve_llm_provider_config
+from core.llm_providers import resolve_gemini_api_key
 from core.runtime_logger import log_error, log_warning
 
 from voice.live_session import LiveSession, LiveSessionState
@@ -34,13 +34,32 @@ class GeminiLiveStreamer:
         api_key: str | None = None,
         model: str | None = None,
         system_instruction: str = "",
-        voice_name: str = "Puck",
+        voice_name: str | None = None,
     ) -> None:
         self.session = session
-        cfg = resolve_llm_provider_config()
-        self.api_key = api_key or cfg.primary_api_key
-        raw_model = (model or os.getenv("JARVIS_GEMINI_LIVE_MODEL") or "models/gemini-3.1-flash-live-preview").strip()
-        self.model = raw_model if raw_model.startswith("models/") else f"models/{raw_model}"
+        self.api_key = api_key or resolve_gemini_api_key()
+        raw_model = (
+            model or os.getenv("JARVIS_GEMINI_LIVE_MODEL") or "models/gemini-3.1-flash-live-preview"
+        ).strip()
+        if not raw_model.startswith("models/"):
+            raw_model = f"models/{raw_model}"
+        if raw_model in {
+            "models/gemini-3.1",
+            "models/gemini-3.1-flash",
+            "models/gemini-3.1-flash-live",
+            "models/gemini-3.1-flash-preview",
+            "models/gemini-3.1-flash-native-audio",
+        }:
+            raw_model = "models/gemini-3.1-flash-live-preview"
+        self.model = raw_model
+
+        # Voice selection: Charon (calm/formal/JARVIS style), Puck (upbeat), Fenrir, Aoede, Kore
+        self.voice_name = (
+            voice_name
+            or os.getenv("JARVIS_GEMINI_LIVE_VOICE")
+            or "Charon"
+        ).strip()
+
         self.system_instruction = system_instruction or (
             "Eres J.A.R.V.I.S., el asistente de IA local para Windows del usuario. "
             "Tienes herramientas del sistema integradas: reproducir_en_spotify, controlar_reproduccion, "
@@ -50,13 +69,33 @@ class GeminiLiveStreamer:
             "NUNCA simules, finjas o narres en texto que estás haciendo una acción sin invocar la herramienta. LLAMA A LA FUNCIÓN DIRECTAMENTE. "
             "Mantén tus respuestas habladas breves, naturales y directas para voz. No uses Markdown ni expongas tus pensamientos internos."
         )
-        self.voice_name = voice_name
         self._ws: Any = None
         self._running = False
         self._current_turn_text: list[str] = []
 
     def is_available(self) -> bool:
         return bool(self.api_key)
+
+    def _resolve_speaker_name(self) -> str:
+        """Resolve the display name for the current active profile."""
+        pid = str(self.session.profile_id or "default").strip()
+        if pid in {"default", "admin", "owner"}:
+            return "Administrador"
+        try:
+            import sqlite3
+
+            from core.jarvis_config import RUNTIME_DIR
+
+            db_path = os.getenv("JARVIS_DB_PATH") or os.path.join(RUNTIME_DIR, "memoria_jarvis.db")
+            if os.path.isfile(db_path):
+                conn = sqlite3.connect(db_path)
+                row = conn.execute("SELECT nombre FROM voice_profiles WHERE profile_id=?", (pid,)).fetchone()
+                conn.close()
+                if row and row[0]:
+                    return str(row[0])
+        except Exception:
+            pass
+        return "Usuario"
 
     def _build_live_system_instruction(self) -> str:
         """Build dynamic system instruction with full profile memory and recent conversation context."""
@@ -66,28 +105,31 @@ class GeminiLiveStreamer:
             from services.memory_manager import memory_manager
 
             pid = self.session.profile_id
+            speaker_name = self._resolve_speaker_name()
             sys_msg = prompts.get_system_msg("", profile_id=pid).content
 
-            # Retrieve recent conversation history turns
+            # Retrieve persistent conversation history turns
             history = memory_manager.get_history(pid)
             hist_text = ""
             if history:
                 turns = []
-                for m in history[-12:]:
-                    sender = "Usuario" if isinstance(m, HumanMessage) else "JARVIS"
+                for m in history[-40:]:
+                    sender = speaker_name if isinstance(m, HumanMessage) else "JARVIS"
                     content = str(getattr(m, "content", "") or "").strip()
                     if content:
                         turns.append(f"{sender}: {content}")
                 if turns:
-                    hist_text = "\n\n--- CONVERSACIONES PASADAS Y MEMORIA RECIENTE ---\n" + "\n".join(turns)
+                    hist_text = "\n\n--- REGISTRO DE CONVERSACIONES ANTERIORES Y CONTEXTO ---\n" + "\n".join(turns)
 
             directives = (
-                "\n\n--- DIRECTIVAS CRÍTICAS DE VOZ EN VIVO Y HERRAMIENTAS ---\n"
-                "1. Eres J.A.R.V.I.S., el asistente de IA local para Windows del Administrador.\n"
-                "2. Conoces toda la información, memoria permanente y conversaciones pasadas del usuario listadas arriba. NUNCA busques en internet sobre tus conversaciones pasadas con el usuario; usa la sección de memoria y conversaciones de arriba.\n"
-                "3. Si el usuario te pide una acción del sistema (abrir juegos/apps como Counter-Strike, Spotify, volumen, clima, buscar en internet), "
-                "DEBES llamar inmediatamente a la función correspondiente mediante toolCall. NUNCA simules o digas que hiciste la acción sin llamar a la herramienta.\n"
-                "4. Mantén tus respuestas habladas breves, concisas, naturales y directas para voz. No uses Markdown ni expongas pensamientos internos."
+                f"\n\n--- DIRECTIVAS CRÍTICAS DE VOZ EN VIVO Y MEMORIA ---\n"
+                f"1. Eres J.A.R.V.I.S., el asistente de IA local para Windows. Estás conversando directamente con {speaker_name}. "
+                f"Hablas y respondes SIEMPRE en ESPAÑOL fluido, cálido, natural y respetuoso con {speaker_name}, a menos que te hable explícitamente en inglés.\n"
+                f"2. Memoria permanente: Tienes acceso completo a todas las conversaciones anteriores y hechos listados arriba. Si {speaker_name} te pregunta qué hablaron, qué te dijo antes o cualquier detalle de sesiones pasadas, responde con total precisión usando el registro de conversaciones de arriba.\n"
+                f"3. NUNCA busques en internet sobre tus conversaciones pasadas con {speaker_name}; usa la sección de memoria y conversaciones de arriba.\n"
+                f"4. Si {speaker_name} te pide una acción del sistema (música en Spotify, agregar a la cola, dar like, abrir juegos/apps, volumen, clima, buscar en internet), "
+                f"DEBES llamar inmediatamente a la función correspondiente mediante toolCall. NUNCA simules o digas que hiciste la acción sin llamar a la herramienta.\n"
+                f"5. Mantén tus respuestas habladas breves, concisas, naturales y directas para voz. No uses formato Markdown, asteriscos ni expongas pensamientos internos."
             )
             return f"{sys_msg}{hist_text}{directives}"
         except Exception as e:
@@ -156,7 +198,8 @@ class GeminiLiveStreamer:
 
                 send_task = asyncio.create_task(self._upstream_loop())
                 recv_task = asyncio.create_task(self._downstream_loop())
-                self.session.attach_task(recv_task)
+                self.session.attach_transport_task(send_task)
+                self.session.attach_transport_task(recv_task)
 
                 done, pending = await asyncio.wait(
                     [send_task, recv_task],
@@ -246,7 +289,7 @@ class GeminiLiveStreamer:
                     source="gemini_live",
                     profile_id=self.session.profile_id,
                 ),
-                timeout=7.0,
+                timeout=15.0,
             )
             if res:
                 tool_result = str(res)
@@ -312,7 +355,8 @@ class GeminiLiveStreamer:
                     fn_name = fn_call.get("name", "")
                     fn_args = fn_call.get("args") or {}
                     fn_id = fn_call.get("id", "")
-                    asyncio.create_task(self._handle_function_call(fn_name, fn_args, fn_id))
+                    tool_task = asyncio.create_task(self._handle_function_call(fn_name, fn_args, fn_id))
+                    self.session.attach_tool_task(tool_task)
                 continue
 
             if not server_content:
@@ -334,7 +378,7 @@ class GeminiLiveStreamer:
                         pcm_bytes = base64.b64decode(inline_data["data"])
                         await self.session.emit_audio_chunk(pcm_bytes)
 
-                    # Handle text transcript and internal thinking
+                    # Handle text transcript and internal diagnostic reasoning
                     raw_text = str(part.get("text") or "").strip()
                     if raw_text:
                         is_thought = (
@@ -344,8 +388,8 @@ class GeminiLiveStreamer:
                         )
 
                         if is_thought:
-                            # Log internal reasoning cleanly to console
-                            print(f"\n[GEMINI LIVE RAZONAMIENTO] {raw_text}", flush=True)
+                            # Log internal reasoning / diagnostic telemetry to console
+                            print(f"\n[GEMINI LIVE TELEMETRÍA/RAZONAMIENTO] {raw_text}", flush=True)
                         else:
                             # Log spoken response to console and send to UI
                             self._current_turn_text.append(raw_text)

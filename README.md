@@ -3,105 +3,64 @@
 [![CI](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml/badge.svg)](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SrDarkoll/JARVIS?include_prereleases&sort=semver)](https://github.com/SrDarkoll/JARVIS/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python 3.11-3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](#requirements)
+[![Python 3.11-3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](#system-requirements)
 
-**A local desktop AI assistant for voice interaction, Spotify control, web
-tools, memory, and guarded Windows automation.**
+**A local desktop AI assistant for voice interaction, Spotify control, system tools, memory persistence, and guarded Windows automation.**
 
-J.A.R.V.I.S. combines a Python/Quart backend with a browser-based desktop UI.
-Windows is the primary target; backend and web features degrade cleanly on
-macOS and Linux when platform-specific integrations are unavailable.
+J.A.R.V.I.S. combines a high-performance Python/Quart backend with a modern browser-based desktop UI (WebView2 / Browser). Windows is the primary target, with clean degradation for Linux and macOS.
 
 ![J.A.R.V.I.S. UI](media/readme.png)
 
-> [!WARNING]
-> J.A.R.V.I.S. is alpha software. Expect hardware-specific behavior around
-> microphones, speakers, Spotify, desktop control, and WebView2. Security
-> sensitive system tools are disabled by default.
+---
 
-## Install J.A.R.V.I.S.
+## ⚡ Quick Start (For Users)
 
-### Windows Alpha Package
+If you just want to download and run J.A.R.V.I.S. without dealing with source code:
 
-The recommended path for Windows users is the
-[v0.1.0-alpha.2 release](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.2):
+### 1. Download & Install (Windows)
+1. Download the **`v0.1.0-alpha.2`** release package (`JARVIS-v0.1.0-alpha.2-windows.zip`) from the [Releases page](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.2).
+2. Extract the complete ZIP to any folder on your PC.
+3. Run **`Install-JARVIS.bat`** (automatically sets up the environment and prerequisites).
 
-1. Download `JARVIS-v0.1.0-alpha.2-windows.zip`.
-2. Extract the complete ZIP to a permanent folder.
-3. Run `Install-JARVIS.bat`.
-4. Add `GROQ_API_KEY` or `GEMINI_API_KEY` to the generated `.env`.
-5. Start J.A.R.V.I.S. from the desktop shortcut or `Start-JARVIS.bat`.
-
-The release ZIP includes the two required Piper voice models, so Git and Git
-LFS are not required for this installation path. The setup validates these
-external prerequisites and prints exact `winget` commands when one is missing:
-
-- Python 3.11 or 3.12
-- FFmpeg
-- eSpeak NG
-- Microsoft Edge WebView2 Runtime
-
-### Install From Source
-
-Use this path for development or contributing:
-
-```powershell
-git lfs install
-git clone https://github.com/SrDarkoll/JARVIS.git
-cd JARVIS
-git lfs pull
-.\setup.ps1 -Dev
-```
-
-Linux or macOS:
-
-```bash
-git lfs install
-git clone https://github.com/SrDarkoll/JARVIS.git
-cd JARVIS
-git lfs pull
-chmod +x setup.sh
-./setup.sh --dev
-```
-
-Setup creates `.env` automatically. Configure at least one provider:
-
+### 2. Configure Your API Key
+Open the generated **`.env`** file and add your free Google Gemini or Groq API key:
 ```env
-GROQ_API_KEY="your_groq_key"
-# Or:
-GEMINI_API_KEY="your_gemini_key"
+GEMINI_API_KEY="your_gemini_api_key_here"
+# or:
+GROQ_API_KEY="your_groq_api_key_here"
 ```
 
-Then launch:
-
+### 3. Launch J.A.R.V.I.S.
+Double-click **`Start-JARVIS.bat`** or run:
 ```powershell
-.\Start-JARVIS.bat
+python start_app.py
 ```
+That's it! The graphical desktop HUD will open on your screen.
 
-## What Jarvis Can Do
+---
 
-- **Live Full-Duplex Voice (Gemini 3.1 Flash Live)**: Real-time, sub-second audio-to-audio streaming with barge-in interruption and live tool execution (*function calling*).
-- **Voice chat & Local TTS**: Standard voice input with browser speech hints, Whisper fallback, and offline Piper neural TTS (`en_GB` / `es_MX`).
-- **Complete System & Media Control**: Spotify Desktop / Web API playback, Windows volume adjustments, application launcher, and window management.
-- **English/Spanish Multilingual Mode**: Bi-directional real-time conversation and UI in English and Spanish.
-- **Memory & Context Persistence**: Per-profile memory, intertwined facts, and critical data extraction.
-- **Web & Live Information Tools**: Weather, ESPN sports scores, news synthesis, YouTube candidate search, and Tavily/Brave dynamic web queries.
-- **Auditable Security & Tool Boundary**: Zero silent arbitrary code execution; critical actions require authorization/confirmation.
-- **Telegram Bot Integration**: Remote interaction with `TELEGRAM_CHAT_ID` filtering and OGG/Opus voice synthesis.
-- **Console Telemetry & Live Reasoning**: Real-time terminal logs displaying model thoughts (*Chain of Thought*), tool dispatches, execution timings, and assistant dialogue.
-- **Desktop Shell**: High-performance browser HUD or native WebView2 desktop container.
+## 🎙️ What J.A.R.V.I.S. Can Do
 
-## Requirements
+- 🗣️ **Real-Time Full-Duplex Voice (Gemini 3.1 Flash Live)**: Talk naturally and fluidly with sub-second latency and zero-latency interruption (*barge-in*).
+- 🎵 **Complete Spotify Control**: Ask to play songs (*"Play Blinding Lights by The Weeknd"*), add to queue, pause, skip, or save to liked songs (compatible with both Spotify Desktop native automation and Web API).
+- 🧠 **Memory & Speaker Identification**: Remembers past conversations and facts, and recognizes who is speaking.
+- 💻 **System & PC Control**: Adjust Windows master volume, launch applications and games (*"Open Steam"*, *"Launch Counter-Strike"*), check weather forecasts, and search the web.
+- 🌐 **Bilingual (English & Spanish)**: Seamless speech recognition and neural voice synthesis (Piper TTS) in both languages.
+- 🔒 **Safe & Auditable**: No silent arbitrary code execution; critical operations require explicit user confirmation.
 
-Recommended:
+---
 
-- Python 3.11 or 3.12. Python 3.13 is unsupported due to ML dependency compatibility windows.
-- Git LFS installed before cloning.
-- FFmpeg on `PATH` for browser voice, voice identity, and audio conversion.
-- Windows: eSpeak NG for Piper phonemization (usually at `C:\Program Files\eSpeak NG`).
+## 🛠️ Developer & Modder Guide
 
-Useful Windows install commands:
+For developers who want to clone the repository, customize features, or build new integrations.
 
+### System Requirements
+- **Python 3.11 or 3.12** (Python 3.13 is unsupported due to ML dependency wheels).
+- **Git & Git LFS** (required to pull neural `.onnx` voice models).
+- **FFmpeg** on system `PATH` (for audio conversion and voice capture).
+- **eSpeak NG** on Windows (for Piper TTS phonemization).
+
+Quick prerequisite installation on Windows:
 ```powershell
 winget install Git.Git
 winget install GitHub.GitLFS
@@ -109,505 +68,107 @@ winget install Gyan.FFmpeg
 winget install eSpeak-NG.eSpeak-NG
 ```
 
-## Piper Voice Models
-
-The Windows package and Git LFS checkout include two offline Piper voices:
-
-| J.A.R.V.I.S. language | Included model | Quality |
-| --- | --- | --- |
-| English | `en_GB-northern_english_male-medium.onnx` | Medium |
-| Spanish | `es_MX-claude-high.onnx` | High |
-
-The repository MIT license applies to J.A.R.V.I.S. source code. It does not
-replace the terms of bundled models or installed runtimes. Their sources,
-hashes, model cards, modification status, and license texts are preserved in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and `third_party/`.
-
-The English model card declares its dataset as CC-BY-SA 4.0 and says the model
-was fine-tuned from a Lessac voice without identifying that base voice's
-license. J.A.R.V.I.S. keeps the model unmodified and documents this unresolved
-lineage rather than representing it as purely MIT-licensed. The Spanish model
-card declares its dataset/training source as Apache-2.0. Piper itself is
-installed as `piper-tts==1.6.0`, whose package metadata declares
-GPL-3.0-or-later.
-
-A Piper voice is a pair of files:
-
-- `voice-name.onnx`: the neural voice model.
-- `voice-name.onnx.json`: phoneme, speaker, sample-rate, and synthesis
-  configuration.
-
-Both files must remain together with the same base filename. J.A.R.V.I.S.
-cannot load a downloaded `.onnx` file without its matching `.onnx.json`.
-
-### Install Another Piper Voice
-
-List available voices:
-
+### Clone & Development Setup
 ```powershell
-.\venv\Scripts\python.exe -m piper.download_voices
-```
-
-Download a voice and its configuration into `models/`:
-
-```powershell
-.\venv\Scripts\python.exe -m piper.download_voices `
-  en_US-lessac-medium `
-  --download-dir models
-```
-
-Then select it in `.env`. A relative value is resolved inside `models/`;
-absolute paths are also accepted:
-
-```env
-JARVIS_TTS_MODEL_EN="en_US-lessac-medium.onnx"
-JARVIS_TTS_MODEL_ES="es_ES-sharvard-medium.onnx"
-```
-
-Restart J.A.R.V.I.S. after changing these variables. The English and Spanish
-language switch will use the configured voice for that language. Adding an
-entirely new language still requires translations and a new
-`LANGUAGE_CONFIG` entry; installing a voice alone does not add UI or speech
-recognition support for a new language.
-
-Official voice downloads are available from the
-[Piper voice repository](https://huggingface.co/rhasspy/piper-voices/tree/main).
-Review each model card and license before redistributing a voice. Adding a
-downloaded model to a private installation does not add it to J.A.R.V.I.S.
-release archives; distributors who bundle another model must add its
-provenance and license to `THIRD_PARTY_NOTICES.md` and `third_party/`.
-
-RVC is a separate, experimental voice-conversion stage applied after Piper
-synthesis. It is disabled by default, is not included in the Windows alpha
-package, and is not required to install additional Piper voices.
-
-## Detailed Installation Options
-
-If you prefer manual virtual environment setup or full optional ML dependencies:
-
-### Advanced Windows Flags
-- Standard dev setup: `.\setup.ps1 -Dev`
-- Complete optional dependencies (experimental Voice ID, RAG, Vision): `.\setup.ps1 -Dev -Full`
-
-### Advanced Linux/macOS Flags
-- Standard dev setup: `./setup.sh --dev`
-- Complete optional dependencies: `./setup.sh --dev --full`
-
-### Manual Setup Fallback
-```bash
-python -m venv venv
-# Windows:
-.\venv\Scripts\python.exe -m pip install --upgrade pip
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
-.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-# Linux/macOS:
-venv/bin/python -m pip install --upgrade pip
-venv/bin/python -m pip install -r requirements.txt
-venv/bin/python -m pip install -r requirements-dev.txt
-```
-
-Run `setup.ps1` or `setup.sh` before the launcher. When the project `venv`
-exists, `start_app.py` automatically relaunches itself through that interpreter
-to avoid conflicts with packages installed in the user's global Python.
-
-## Environment
-
-Copy `.env.example` to `.env`:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Linux/macOS:
-
-```bash
-cp .env.example .env
-```
-
-The complete list of supported environment variables lives in `.env.example`. Keep real secrets only in `.env`.
-
-Minimum for real LLM responses:
-
-- `GEMINI_API_KEY` (Google Gemini)
-- `GROQ_API_KEY` (Groq)
-
-When both keys are present, Jarvis uses Gemini (`gemini-3.5-flash`) as primary and Groq (`qwen/qwen3.6-27b`) as automatic fallback. Set `JARVIS_LLM_PROVIDER=groq` to reverse that order. Provider-specific model variables are validated so a Gemini model cannot silently be sent to Groq, or vice versa. `GOOGLE_API_KEY` remains a compatibility alias for Gemini but is also used by Google search integrations, so new installations should prefer the dedicated `GEMINI_API_KEY`.
-
-Without an API key, status and setup diagnostics, Piper TTS, and local preflight tools continue to work. Chat requests that need an AI provider return the controlled `llm_unconfigured` error with HTTP 503.
-
-## 🎙️ Real-Time Full-Duplex Voice (Gemini 3.1 Flash Live)
-
-J.A.R.V.I.S. features native bidirectional full-duplex voice streaming powered by Google's **Gemini 3.1 Flash Live** Multimodal Live WebSocket API:
-
-- **End-to-End Speech-to-Speech**: Eliminates intermediary Speech-to-Text and Text-to-Speech round-trips for sub-second, conversation-paced responses with natural intonation and cadence.
-- **Real-Time Tool Calling (*Function Calling*)**: When conversational voice requests require local actions (playing Spotify tracks, adjusting PC volume, opening applications, checking weather, or web searches), Gemini Live issues `toolCall` events. J.A.R.V.I.S. executes the corresponding tool through its non-blocking dispatcher and streams the verified output back to Gemini, which synthesizes spoken confirmation in real time.
-- **Client-Side Barge-In Interruption**: The browser HUD utilizes an RMS audio energy detector on the microphone stream. If you speak while J.A.R.V.I.S. is speaking, playback is cancelled instantly, and the assistant pivots to listening.
-- **Gapless 24 kHz PCM Playback**: Web Audio API AudioBufferQueue player ensures smooth, jitter-buffered audio output.
-- **Live Console Telemetry**: The terminal console streams live Chain-of-Thought reasoning (`[GEMINI LIVE RAZONAMIENTO]`), tool invocations (`[GEMINI LIVE TOOL]`), execution durations, and spoken transcripts (`[GEMINI LIVE ASISTENTE]`).
-
-Configure the live model in `.env`:
-
-```env
-JARVIS_GEMINI_LIVE_MODEL="gemini-3.1-flash-live-preview"
-```
-
-*(Also supports `models/gemini-2.5-flash-native-audio-latest`).*
-
-## Stable Core Mode
-
-`JARVIS_CORE_MODE=true` is the default and the recommended starting point for new installations. It keeps LLM chat, local voice input, Piper TTS, basic memory, Spotify, base tools, and the web UI active.
-
-Core mode skips the subsystems most likely to make startup slow or fragile:
-
-- SpeechBrain voice biometrics
-- Hugging Face/FAISS RAG
-- Groq vision model initialization
-- Dynamic plugins
-- Startup news briefing
-- Telegram and proactive background behavior
-
-To enable the complete optional feature set, set `JARVIS_CORE_MODE=false`.
-Voice biometrics remain disabled in every mode unless
-`JARVIS_VOICE_ID_ENABLED=true` is explicitly configured. Other features can be
-enabled with
-`JARVIS_RAG_ENABLED`, `JARVIS_VISION_ENABLED`, `JARVIS_PLUGINS_ENABLED`,
-`JARVIS_BRIEFING_ENABLED`, `JARVIS_TELEGRAM_ENABLED`, and
-`JARVIS_MONITORING_ENABLED`.
-
-`JARVIS_MONITORING_ENABLED` defaults to `false` in core mode and `true` in full
-mode. Installing APScheduler does not enable background jobs by itself.
-
-## Safe Local Defaults
-
-Voice biometrics are experimental and are not used for authorization in the
-stable configuration. Browser microphone capture remains optional input for
-speech-to-text; text input always remains available.
-
-`JARVIS_SYSTEM_TOOLS_ENABLED=false` removes arbitrary terminal execution and
-text-file creation from the LLM tool catalog. Advanced users can opt in, but
-both tools remain critical and require explicit confirmation. File writes are
-confined to `JARVIS_FILE_WRITE_ROOTS`; when it is empty, Jarvis uses
-`JARVIS_DESKTOP_HOME` or the current user's Desktop.
-
-Public-IP geolocation is also disabled by default. Configure a location
-normally, or set `JARVIS_IP_GEOLOCATION_ENABLED=true` to opt in. IP lookups use
-HTTPS providers, one in-flight request, and a failure cooldown controlled by
-`JARVIS_IP_GEOLOCATION_COOLDOWN_SECONDS`.
-
-## Reliable Command Pipeline
-
-Chat, streaming chat, and voice commands use the same five-stage pipeline:
-
-1. normalize and understand the request;
-2. build a deterministic candidate and let the configured reasoning policy
-   validate or replace it;
-3. validate every planned operation;
-4. execute each unique operation through one tool boundary;
-5. synthesize verified results with a tool-free model, then persist one
-   user-facing response.
-
-Routers and the LLM planner cannot execute tools. `ToolExecutionService` owns
-all side effects and deduplicates request/step identifiers, so retries cannot
-silently run the same planned action twice. `/api/status` exposes each major
-feature as `available`, `unconfigured`, `degraded`, `failed`, or `disabled`;
-missing optional integrations do not prevent stable core startup.
-
-`JARVIS_REASONING_MODE` controls the planning policy:
-
-- `always` (default): the configured primary LLM reviews every deterministic
-  candidate. Successful tool results may use a second, tool-free LLM call to produce a concise
-  response suitable for TTS.
-- `hybrid`: deterministic commands use the lower-latency local path and the LLM
-  handles only unresolved requests.
-- `offline`: no LLM is called. Supported local commands continue to work;
-  unresolved requests return a controlled clarification.
-
-In `always` mode, provider failures try the configured fallback once before
-using a valid deterministic candidate. The pipeline never converts an
-unplanned action into a claimed success. Blocked,
-unavailable, failed, and duplicate tool receipts bypass AI synthesis so their
-security and diagnostic messages remain exact.
-
-Strongly recommended before LAN access or shared-machine use:
-
-- `JARVIS_API_TOKEN`
-
-Optional integrations:
-
-- Spotify Desktop on Windows: `SPOTIFY_PLAYBACK_MODE=desktop` (no developer keys required)
-- Spotify Web API: `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`
-- Telegram: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`
-- Search/news providers: `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`
-- Hugging Face/RAG: `HF_TOKEN`, `EMBEDDING_MODEL`, `JARVIS_HF_CACHE`
-- Optional RVC voice conversion: `JARVIS_USE_RVC`, `RVC_MODEL_PATH`, `RVC_INDEX_PATH`
-
-Environment groups:
-
-| Group | Required? | Variables |
-| --- | --- | --- |
-| LLM core | One provider required for real chat | `GEMINI_API_KEY`, `GROQ_API_KEY`, `JARVIS_LLM_PROVIDER`, `JARVIS_GEMINI_MODEL`, `JARVIS_GROQ_MODEL` |
-| Reasoning policy | Optional; defaults to `always` | `JARVIS_REASONING_MODE` |
-| Local security | Recommended for LAN/shared machines | `JARVIS_API_TOKEN`, `JARVIS_CORS_ORIGINS`, `JARVIS_SYSTEM_TOOLS_ENABLED`, `JARVIS_FILE_WRITE_ROOTS` |
-| Spotify | Optional | `SPOTIFY_PLAYBACK_MODE`, `SPOTIFY_DESKTOP_START_TIMEOUT`, `SPOTIFY_DESKTOP_ACTION_TIMEOUT`, `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, `SPOTIPY_REDIRECT_URI`, `SPOTIFY_MARKET`, `SPOTIFY_EXTENDED_QUOTA_MODE` |
-| Telegram | Optional | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
-| Search/news | Optional | `BRAVE_API_KEY`, `TAVILY_API_KEY`, `NEWSAPI_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`, `YOUTUBE_API_KEY` |
-| Weather location | Optional; IP lookup disabled by default | `JARVIS_IP_GEOLOCATION_ENABLED`, `JARVIS_IP_GEOLOCATION_COOLDOWN_SECONDS`, `JARVIS_DEFAULT_LAT`, `JARVIS_DEFAULT_LON` |
-| Voice/audio | Optional tuning | `JARVIS_STT_PROVIDER`, `JARVIS_GROQ_STT_MODEL`, `JARVIS_LOCAL_STT_ENABLED`, `JARVIS_STT_TIMEOUT_SECONDS`, `JARVIS_WHISPER_*`, `ESPEAK_ROOT`, `VOICE_ID_*`, `JARVIS_TTS_MAX_CHARS` |
-| Runtime paths | Optional relocation | `JARVIS_DATA_DIR`, `JARVIS_RUNTIME_DIR` (legacy alias), `JARVIS_DB_PATH`, `JARVIS_FAISS_DIR`, `JARVIS_CACHE_DIR`, `JARVIS_LOG_DIR` |
-| Readable logging | Optional tuning | `JARVIS_UNIFIED_LOG_ENABLED`, `JARVIS_UNIFIED_LOG_MAX_BYTES`, `JARVIS_UNIFIED_LOG_BACKUP_COUNT` |
-
-Do not commit `.env`, OAuth caches, voice profiles, logs, memory files, or runtime databases.
-
-Useful safety checks before publishing:
-
-```powershell
-git ls-files -- .env
-git check-ignore -v .env
-```
-
-The first command should print nothing. The second should show that `.env` is ignored by `.gitignore`.
-
-## Running
-
-Recommended desktop app:
-
-```powershell
-python start_app.py
-```
-
-The launcher uses the project `venv` automatically. If it is missing, the
-launcher exits with the exact setup command instead of importing from global
-site-packages.
-
-Backend only:
-
-```powershell
-python src/backend/jarvis_backend.py
-```
-
-Then open:
-
-```text
-http://localhost:5002
-```
-
-## Voice And Browser Support
-
-`python start_app.py` with the WebView2 desktop shell is the primary Windows
-path. `http://localhost:5002` is the stable loopback URL when using a regular
-browser. Opening Jarvis from any non-loopback address, including a LAN IP,
-requires HTTPS before browsers will expose microphone capture.
-
-Browser voice uses two independent capabilities:
-
-- `MediaRecorder` captures the command audio sent to `/api/voice`.
-- `SpeechRecognition` is an optional browser hint and enables the passive
-  "Jarvis" wake word when the browser speech service works.
-
-The absence or network failure of `SpeechRecognition` no longer disables voice
-commands. Use the existing **voice link** button, speak normally, and Jarvis will
-send the captured audio to the backend. Edge and Chrome can provide both the
-wake word and a transcript hint. Firefox and Safari can use backend
-transcription when their current browser/runtime does not expose compatible
-browser speech recognition; passive wake-word support is best effort there.
-Text input remains available in every case.
-
-The default `JARVIS_STT_PROVIDER=auto` order is:
-
-1. Accept a sufficiently reliable browser transcript hint.
-2. Transcribe recorded audio with Groq using
-   `JARVIS_GROQ_STT_MODEL=whisper-large-v3-turbo` when `GROQ_API_KEY` is set.
-3. Fall back to local `faster-whisper` when
-   `JARVIS_LOCAL_STT_ENABLED=true`.
-4. Return a controlled unavailable response while leaving text input active.
-
-Set `JARVIS_STT_PROVIDER` to `browser`, `groq`, or `local` to restrict the
-backend provider path. The local Whisper model is downloaded and loaded lazily,
-only when a request reaches that fallback; its first request can therefore take
-longer and requires enough disk space for the selected `JARVIS_WHISPER_MODEL`.
-`/api/status` reports the selected provider and safe availability state without
-returning keys or model paths.
-
-Voice diagnostics distinguish these cases:
-
-- **Permission denied:** allow microphone access for the Jarvis origin and
-  check Windows/macOS privacy settings.
-- **Device missing:** connect or enable an input microphone.
-- **Device busy:** close another application holding exclusive microphone
-  access, then press the voice link again.
-- **Insecure context:** use `http://localhost:5002` locally or HTTPS for LAN
-  access.
-- **Browser speech network failure:** continue with the existing voice link;
-  recorded audio will use backend STT.
-
-On Windows, if permission was previously denied, reset it in the browser's site
-settings and in **Settings > Privacy & security > Microphone**, then reload
-Jarvis and press the voice link. Browser support details for secure microphone
-contexts and speech recognition are documented by MDN under
-[`getUserMedia`](https://developer.mozilla.org/docs/Web/API/MediaDevices/getUserMedia)
-and [`SpeechRecognition`](https://developer.mozilla.org/docs/Web/API/SpeechRecognition).
-
-## Testing
-
-Install dev tools first:
-
-```powershell
+# 1. Install Git LFS and clone
+git lfs install
+git clone https://github.com/SrDarkoll/JARVIS.git
+cd JARVIS
+git lfs pull
+
+# 2. Set up virtual environment and developer dependencies
 .\setup.ps1 -Dev
+
+# (Optional) If you want full optional ML dependencies (SpeechBrain voice biometrics, RAG, Vision):
+.\setup.ps1 -Dev -Full
 ```
 
-Run all tests:
+On Linux or macOS:
+```bash
+chmod +x setup.sh
+./setup.sh --dev
+```
+
+### Local Piper Voice Models
+The pre-bundled `.onnx` and `.onnx.json` models are downloaded via Git LFS into the `models/` directory. You can download additional voices with:
+```powershell
+.\venv\Scripts\python.exe -m piper.download_voices en_US-lessac-medium --download-dir models
+```
+
+### Key Environment Variables (`.env`)
+
+Copy `.env.example` to `.env` to configure optional features:
+
+| Variable | Description | Default |
+|---|---|---|
+| `GEMINI_API_KEY` | Google AI Studio API Key (Gemini 2.5 Flash / 3.1 Live) | `""` |
+| `GROQ_API_KEY` | Groq API Key (Qwen 2.5 / Llama fallback) | `""` |
+| `JARVIS_GEMINI_LIVE_VOICE` | Live voice personality (`Charon`, `Puck`, `Aoede`, `Fenrir`, `Kore`) | `"Charon"` |
+| `SPOTIFY_PLAYBACK_MODE` | Playback mode (`auto`, `desktop`, `api`). `SPOTIFY_PLAYBACK_MODE=desktop` controls Spotify Desktop without developer keys but does not bypass Spotify Free restrictions | `"auto"` |
+| `JARVIS_VOICE_ID_ENABLED` | Enable SpeechBrain ECAPA speaker identification | `"false"` |
+| `JARVIS_CORE_MODE` | Stable lightweight mode without heavy optional dependencies | `"true"` |
+| `JARVIS_RUNTIME_DIR` | Local runtime directory for logs and cache | `%LOCALAPPDATA%\Jarvis` |
+
+> [!NOTE]
+> The unified diagnostic log (`log.txt`) records conversation text in plaintext locally under `JARVIS_RUNTIME_DIR` for diagnostic purposes and is never transmitted.
+
+### Browser & Audio Recognition Support
+The web HUD uses native `SpeechRecognition` in Chrome/Edge for fast client-side hints, and provides adaptive audio fallback in Firefox, Safari, and other browsers. For non-loopback network access over LAN, HTTPS is required for microphone permissions.
+
+### Live Testing Scripts (Without Mocks)
+
+Test integrations directly against your real running hardware and desktop applications:
 
 ```powershell
-pytest -q
+# Test Spotify Desktop live (search, playback, queueing, and controls)
+python scripts\test_live_spotify.py --queue "Save Your Tears The Weeknd"
+python scripts\test_live_spotify.py --controls
+
+# Test Voice Recognition & Biometrics live
+python scripts\test_live_voice_id.py --status
+python scripts\test_live_voice_id.py --register "Administrator"
+python scripts\test_live_voice_id.py --identify
+python scripts\test_live_voice_id.py --list
 ```
 
-Current verified baseline:
+### Automated Testing & Quality Checks
+
+```powershell
+# Run complete test suite (680+ tests)
+pytest -q
+
+# Run Ruff linter
+python -m ruff check src/backend
+
+# Verify syntax compilation
+python -m compileall -q start_app.py src/backend
+```
+
+---
+
+## 📁 Repository Architecture
 
 ```text
-645 passed, 1 skipped
+JARVIS/
+├── src/
+│   ├── backend/
+│   │   ├── api/             # HTTP & WebSocket endpoints (chat, voice, status)
+│   │   ├── core/            # Command pipeline, LLM planner & security boundaries
+│   │   ├── modules/spotify/ # Spotify Desktop (UIA) & Web API controller
+│   │   ├── services/        # Memory manager & local SQLite database
+│   │   ├── tools/           # Tool catalog (volume, weather, apps, web search)
+│   │   └── voice/           # Gemini Live (Full-Duplex), Piper TTS & Biometrics
+│   └── frontend/            # Web HUD interface (HTML5, Vanilla CSS, JS)
+├── scripts/                 # Live test scripts and release packaging
+├── tests/                   # Unit & integration regression suites
+├── models/                  # Local Piper neural voice models (.onnx)
+└── start_app.py             # Main launcher with automatic venv detection
 ```
 
-Release checks:
+---
 
-```powershell
-python -m pip check
-python -m pip_audit -r requirements.txt
-python -m ruff check src/backend tests
-python -m pyright src/backend
-python -m compileall -q start_app.py src/backend
-node --check src/frontend/static/js/main.js
-node --check src/frontend/static/js/modules/api.js
-git diff --check
-```
+## 📜 License & Third-Party Notices
 
-`pytest.ini` restricts collection to `tests/` and ignores local runtime/cache
-folders. CI enforces Ruff and Pyright before tests and compilation.
+The J.A.R.V.I.S. source code is licensed under the [MIT License](LICENSE).
 
-## Unified Readable Log
-
-Jarvis writes a chronological UTF-8 diagnostic journal named `log.txt` under
-the platform runtime directory. The defaults are:
-
-- Windows: `%LOCALAPPDATA%\Jarvis\logs\log.txt`
-- macOS: `~/Library/Application Support/Jarvis/logs/log.txt`
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/jarvis/logs/log.txt`
-
-Set `JARVIS_DATA_DIR` to relocate all mutable data, or `JARVIS_LOG_DIR` to move
-only logs. `JARVIS_RUNTIME_DIR` remains a compatible alias for existing
-installations. Every line includes a local timestamp with milliseconds and a
-category. The journal combines:
-
-- user and Jarvis conversation turns from voice, classic chat, and streaming;
-- tool starts, results, duration, source, and blocked/error states;
-- every event sent to the frontend `SYSTEM LOG` panel;
-- structured observability, runtime warnings/errors, and legacy backend console
-  output.
-
-The default file rotates at 5 MiB and keeps `log.txt.1` through `log.txt.3`.
-Change those limits with `JARVIS_UNIFIED_LOG_MAX_BYTES` and
-`JARVIS_UNIFIED_LOG_BACKUP_COUNT`, or disable the journal with
-`JARVIS_UNIFIED_LOG_ENABLED=false`.
-
-The log intentionally contains conversation text in plaintext. Known API keys,
-tokens, authorization headers, passwords, client secrets, and sensitive URL
-parameters are redacted, but the file must still be treated as private runtime
-data and must never be committed. The old `src/backend/logs/` location remains
-ignored so an upgrade cannot accidentally publish historical logs.
-
-## Spotify Notes
-
-Spotify is organized under `src/backend/modules/spotify/`: `service.py` owns
-provider selection and fallback policy, `api/` contains Spotipy/OAuth playback
-and recommendations, `desktop/` contains Windows UI Automation, and
-`followup.py` resolves conversational result selection. The legacy
-`src/backend/tools/spotify.py` path is only a compatibility facade; new Spotify
-logic belongs in the feature module.
-
-### Spotify playback modes
-
-- `SPOTIFY_PLAYBACK_MODE=auto` uses an already-authorized Web API token when
-  one is valid. If no cached token exists or the API cannot perform playback,
-  Jarvis controls the Windows Spotify Desktop client instead without opening an
-  OAuth browser during the command.
-- `SPOTIFY_PLAYBACK_MODE=desktop` does not require Spotify developer keys. It
-  opens or restores Spotify, briefly focuses it, searches through Windows UI
-  Automation, ranks accessible results, activates one match, and verifies the
-  now-playing metadata before reporting success.
-- `SPOTIFY_PLAYBACK_MODE=api` keeps the Spotipy/OAuth integration and requires
-  an eligible Spotify developer application and account.
-
-Desktop mode requires Windows, the installed Spotify Desktop client, and a
-signed-in Spotify session. It does not bypass Spotify Free restrictions,
-advertisements, regional availability, account limits, or DRM. Search and
-control may hold foreground focus for a few seconds, bounded by
-`SPOTIFY_DESKTOP_ACTION_TIMEOUT`; switching to another window cancels the click
-instead of sending input to the wrong application. Desktop mix requests start
-the requested seed and then rely on Spotify's own autoplay and recommendations.
-When UI Automation is unavailable, Jarvis may send a Windows global media key
-only while Spotify is running. Because Windows does not identify which
-application consumed that key, Jarvis reports this fallback as unverified.
-
-Deterministic UI Automation is always attempted first and does not use fixed
-screen coordinates. Optional visual recovery requires full mode, Pillow, and a
-configured vision model. It captures only the Spotify window, sends that image
-to the configured model provider, validates the returned bounds and foreground
-window, and deletes the local image immediately after the attempt.
-
-For Web API mode, register exactly `http://127.0.0.1:8888/callback` in the
-Spotify developer dashboard and use the same value in `.env`; Spotify does not
-accept `localhost` redirect aliases. Delete the `spotify-oauth-cache` file under
-the configured runtime cache directory and authenticate again after changing
-the redirect URI or scopes.
-
-Jarvis builds an API-backed AutoMix playlist/queue after a seed song or mix
-request when Web API access is available. The development-mode mix strategy
-uses endpoints available to current apps:
-
-- start from the requested song/artist/genre seed;
-- add user top tracks when `user-top-read` is granted;
-- add recently played tracks when `user-read-recently-played` is granted;
-- add genre-based search results from seed artist genres and user top artist genres;
-- add tracks from the seed album;
-- add artist, genre, and text-search matches, with search pages capped at Spotify's current limit;
-- use playlist contents only for playlists the current user owns or collaborates on.
-
-Set `SPOTIFY_EXTENDED_QUOTA_MODE=true` only for an app that Spotify has actually approved for extended quota mode. In that mode Jarvis may also try Recommendations, Audio Features, Related Artists, and artist top tracks, while still degrading to the development-mode strategy if an endpoint fails.
-
-Spotify API limitations:
-
-- Spotify does not expose a general "users also listen to" endpoint for arbitrary users. Jarvis approximates it with the user's top/recent history, genres, album context, and catalog search.
-- Development-mode apps cannot rely on Recommendations, Audio Features, Related Artists, Spotify editorial playlists, or artist top tracks. Extended-quota apps are not affected by those development-mode restrictions.
-- Development-mode apps require the app owner to have Premium; new apps are limited to five authorized users.
-- Playlist contents are available only for playlists the current user owns or collaborates on.
-- Web API playback control requires Spotify Premium and an active device. This
-  requirement does not apply to local desktop UI Automation, although normal
-  Spotify Free account restrictions still apply.
-
-See Spotify's official [Web API endpoint changes](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), [February 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), and [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
-
-## GitHub-Ready Checklist
-
-Before publishing or tagging a release:
-
-- `git lfs ls-files` shows the `.onnx` models.
-- `.env` is not tracked.
-- `.env.example` is up to date.
-- `python -m pip check` reports no broken requirements.
-- `python -m pip_audit -r requirements.txt` reports no known vulnerable runtime dependency.
-- `pytest -q` passes.
-- `python -m compileall -q start_app.py src/backend` passes.
-- `node --check src/frontend/static/js/main.js` passes.
-- `node --check src/frontend/static/js/modules/api.js` passes.
-- A clean clone can import `jarvis_backend` and answer `/api/status`.
-
-## Troubleshooting
-
-- Missing model files: run `git lfs pull`.
-- Spotify Web API says auth expired, redirect invalid, or scopes missing: register `http://127.0.0.1:8888/callback`, delete `spotify-oauth-cache` from the runtime cache directory, restart, and authenticate again.
-- Spotify Desktop cannot search: keep Spotify signed in, restore its main window, use an English or Spanish accessible interface, and verify `SPOTIFY_PLAYBACK_MODE=desktop`.
-- No Spotify API device: open Spotify on a device and play one song once, or use desktop mode on Windows.
-- TTS unavailable: verify model files, eSpeak NG, and `ESPEAK_ROOT`.
-- Audio conversion fails: verify FFmpeg is on `PATH`. Browser voice, voice identity, and Telegram OGG/Opus output all use FFmpeg; `pydub` is not required.
-- Browser wake word unavailable: press the existing voice link and use backend STT; Firefox and Safari may not expose `SpeechRecognition`.
-- Microphone works on localhost but not a LAN IP: use HTTPS for the non-loopback origin.
-- Missing API keys: Jarvis should still start, but provider-specific tools will return setup/configuration messages instead of crashing.
+Bundled voice models (`Piper TTS`, `ECAPA-VoxCeleb`), third-party libraries, and assets retain their respective original licenses documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

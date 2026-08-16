@@ -10,7 +10,14 @@ from core.media_state import set_last_media_source
 
 from modules.spotify import config
 from modules.spotify.api.client import _spotify_has_valid_cached_token
-from modules.spotify.api.playback import _spotify_control_api, _spotify_play_api
+from modules.spotify.api.playback import (
+    _spotify_add_to_queue_api,
+    _spotify_control_api,
+    _spotify_current_track_api,
+    _spotify_like_track_api,
+    _spotify_play_api,
+    _spotify_unlike_track_api,
+)
 from modules.spotify.desktop import (
     DesktopResultStatus,
     SpotifyDesktopResult,
@@ -40,6 +47,7 @@ _PREFIJOS_SPOTIFY = re.compile(
     re.IGNORECASE,
 )
 _DESKTOP_CONTROL_ALIASES = {
+    "pause": "pause",
     "pausar": "pause",
     "pausa": "pause",
     "detener": "pause",
@@ -51,6 +59,7 @@ _DESKTOP_CONTROL_ALIASES = {
     "siguiente": "next",
     "next": "next",
     "skip": "next",
+    "previous": "previous",
     "anterior": "previous",
     "prev": "previous",
     "atras": "previous",
@@ -65,6 +74,61 @@ _DESKTOP_CONTROL_ALIASES = {
     "desactiva shuffle": "shuffle_off",
     "mezcla off": "shuffle_off",
     "aleatorio off": "shuffle_off",
+    "desactivar aleatorio": "shuffle_off",
+    "repetir": "repeat_on",
+    "activar repetir": "repeat_on",
+    "activar repeticion": "repeat_on",
+    "activar repetición": "repeat_on",
+    "repeat on": "repeat_on",
+    "repeat": "repeat_on",
+    "activar bucle": "repeat_on",
+    "bucle on": "repeat_on",
+    "no repetir": "repeat_off",
+    "desactivar repeticion": "repeat_off",
+    "desactivar repetición": "repeat_off",
+    "desactivar repetir": "repeat_off",
+    "repeat off": "repeat_off",
+    "desactivar bucle": "repeat_off",
+    "bucle off": "repeat_off",
+    "subir volumen": "volume_up",
+    "mas volumen": "volume_up",
+    "más volumen": "volume_up",
+    "aumentar volumen": "volume_up",
+    "volume up": "volume_up",
+    "bajar volumen": "volume_down",
+    "menos volumen": "volume_down",
+    "disminuir volumen": "volume_down",
+    "volume down": "volume_down",
+    "silenciar": "mute",
+    "mute": "mute",
+    "mutear": "mute",
+    "like": "like",
+    "dar like": "like",
+    "me gusta": "like",
+    "guardar": "like",
+    "guardar cancion": "like",
+    "favorito": "like",
+    "anadir a favoritos": "like",
+    "añadir a favoritos": "like",
+    "guardar en favoritos": "like",
+    "marcar como favorito": "like",
+    "unlike": "unlike",
+    "quitar like": "unlike",
+    "dislike": "unlike",
+    "no me gusta": "unlike",
+    "eliminar de me gusta": "unlike",
+    "quitar me gusta": "unlike",
+    "eliminar de favoritos": "unlike",
+    "quitar de favoritos": "unlike",
+    "info": "info",
+    "cancion actual": "info",
+    "canción actual": "info",
+    "que suena": "info",
+    "qué suena": "info",
+    "now playing": "info",
+    "estado": "info",
+    "que cancion es": "info",
+    "qué canción es": "info",
 }
 
 
@@ -189,6 +253,9 @@ def _spotify_control_desktop(action: str) -> str:
             f"Accion '{action}' no reconocida.",
         )
 
+    if canonical == "info":
+        return current_track()
+
     result = _get_desktop_controller().control(canonical)
     messages = {
         "pause": _spotify_text("Playback paused.", "Reproduccion pausada."),
@@ -197,6 +264,13 @@ def _spotify_control_desktop(action: str) -> str:
         "previous": _spotify_text("Previous track.", "Cancion anterior."),
         "shuffle_on": _spotify_text("Shuffle enabled.", "Shuffle activado."),
         "shuffle_off": _spotify_text("Shuffle disabled.", "Shuffle desactivado."),
+        "repeat_on": _spotify_text("Repeat mode enabled.", "Modo repeticion activado."),
+        "repeat_off": _spotify_text("Repeat mode disabled.", "Modo repeticion desactivado."),
+        "volume_up": _spotify_text("Volume increased.", "Volumen aumentado."),
+        "volume_down": _spotify_text("Volume decreased.", "Volumen disminuido."),
+        "mute": _spotify_text("Spotify muted.", "Spotify silenciado."),
+        "like": _spotify_text("Saved to your Liked Songs on Spotify.", "Guardado en tus Me Gusta de Spotify."),
+        "unlike": _spotify_text("Removed from your Liked Songs on Spotify.", "Eliminado de tus Me Gusta de Spotify."),
     }
     if result.status is DesktopResultStatus.SUCCESS:
         return messages[canonical]
@@ -307,3 +381,199 @@ def control(action: str) -> str:
         _spotify_api_capability_failed = True
         return _spotify_control_desktop(clean_action)
     return api_result.message
+
+
+def _spotify_add_to_queue_desktop(cancion: str) -> str:
+    clean_song = str(cancion or "").strip()
+    if not clean_song:
+        return _spotify_text(
+            "Please specify a song to add to the queue.",
+            "Por favor indique una canción para añadir a la cola.",
+        )
+    result = _get_desktop_controller().queue(_spotify_desktop_request(clean_song))
+    if result.status is DesktopResultStatus.SUCCESS:
+        if result.message_key == "spotify_queue_played_fallback":
+            return _spotify_text(
+                f"Could not add to queue. Instead, now playing: {_spotify_track_label(result.title, result.artist)}.",
+                f"No se pudo añadir a la cola. En su lugar, reproduciendo: {_spotify_track_label(result.title, result.artist)}.",
+            )
+        return _spotify_text(
+            f"Added to Spotify Desktop queue: {_spotify_track_label(result.title, result.artist)}.",
+            f"Añadido a la cola en Spotify Desktop: {_spotify_track_label(result.title, result.artist)}.",
+        )
+    if result.status is DesktopResultStatus.AMBIGUOUS:
+        choices = "; ".join(_spotify_track_plain_label(item.title, item.artist) for item in result.choices)
+        return _spotify_text(
+            f"I found several close matches: {choices}. Which one should I queue?",
+            f"Encontré varias coincidencias: {choices}. ¿Cuál debo añadir a la cola?",
+        )
+    return _spotify_text(
+        f"Could not add '{clean_song}' to Spotify Desktop queue.",
+        f"No se pudo añadir '{clean_song}' a la cola en Spotify Desktop.",
+    )
+
+
+def add_to_queue(cancion: str) -> str:
+    """Add a song to the Spotify playback queue."""
+    clean_song = str(cancion or "").strip()
+    if not clean_song:
+        return _spotify_text(
+            "Please specify a song to add to the queue.",
+            "Por favor indique una canción para añadir a la cola.",
+        )
+    if SPOTIFY_PLAYBACK_MODE == "desktop":
+        return _spotify_add_to_queue_desktop(clean_song)
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (_spotify_api_capability_failed or not _spotify_has_valid_cached_token()):
+        return _spotify_add_to_queue_desktop(clean_song)
+
+    res = _spotify_add_to_queue_api(clean_song)
+    if res.ok or SPOTIFY_PLAYBACK_MODE == "api":
+        return res.message
+    if res.capability_failure:
+        return _spotify_add_to_queue_desktop(clean_song)
+    return res.message
+
+
+def _spotify_like_desktop(cancion: str = "") -> str:
+    clean_song = _PREFIJOS_SPOTIFY.sub("", str(cancion or "")).strip().lower()
+    is_current = not clean_song or clean_song in {
+        "esta",
+        "esta cancion",
+        "cancion actual",
+        "actual",
+        "lo que suena",
+        "this",
+        "this song",
+        "current",
+    }
+    if is_current:
+        res = _spotify_control_desktop("like")
+        try:
+            controller = _get_desktop_controller()
+            window = controller._windows.ensure_window(1.0)
+            now_playing = controller._uia.now_playing(window.handle)
+            title = now_playing[0] if now_playing else controller._windows.current_title(window)
+            if title and title.lower() != "spotify":
+                artist = f" de {now_playing[1]}" if (now_playing and now_playing[1]) else ""
+                return _spotify_text(
+                    f"Saved to your Liked Songs on Spotify Desktop: '{title}'{artist}.",
+                    f"Guardado en tus Me Gusta en Spotify Desktop: '{title}'{artist}.",
+                )
+        except Exception:
+            pass
+        return res
+
+    play_msg = _spotify_play_desktop(cancion)
+    _spotify_control_desktop("like")
+    return _spotify_text(
+        f"{play_msg} (Guardado en tus Me Gusta).",
+        f"{play_msg} (Guardado en tus Me Gusta).",
+    )
+
+
+def like_track(cancion: str = "") -> str:
+    """Save the currently playing or specified track to Liked Songs."""
+    if SPOTIFY_PLAYBACK_MODE == "desktop":
+        return _spotify_like_desktop(cancion)
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (_spotify_api_capability_failed or not _spotify_has_valid_cached_token()):
+        return _spotify_like_desktop(cancion)
+
+    res = _spotify_like_track_api(cancion)
+    if res.ok or SPOTIFY_PLAYBACK_MODE == "api":
+        return res.message
+    if res.capability_failure:
+        return _spotify_like_desktop(cancion)
+    return res.message
+
+
+def _spotify_unlike_desktop(cancion: str = "") -> str:
+    clean_song = _PREFIJOS_SPOTIFY.sub("", str(cancion or "")).strip().lower()
+    is_current = not clean_song or clean_song in {
+        "esta",
+        "esta cancion",
+        "cancion actual",
+        "actual",
+        "lo que suena",
+        "this",
+        "this song",
+        "current",
+    }
+    if is_current:
+        res = _spotify_control_desktop("unlike")
+        try:
+            controller = _get_desktop_controller()
+            window = controller._windows.ensure_window(1.0)
+            now_playing = controller._uia.now_playing(window.handle)
+            title = now_playing[0] if now_playing else controller._windows.current_title(window)
+            if title and title.lower() != "spotify":
+                artist = f" de {now_playing[1]}" if (now_playing and now_playing[1]) else ""
+                return _spotify_text(
+                    f"Removed from your Liked Songs on Spotify Desktop: '{title}'{artist}.",
+                    f"Eliminado de tus Me Gusta en Spotify Desktop: '{title}'{artist}.",
+                )
+        except Exception:
+            pass
+        return res
+    return _spotify_control_desktop("unlike")
+
+
+def unlike_track(cancion: str = "") -> str:
+    """Remove the currently playing or specified track from Liked Songs."""
+    if SPOTIFY_PLAYBACK_MODE == "desktop":
+        return _spotify_unlike_desktop(cancion)
+    if SPOTIFY_PLAYBACK_MODE == "auto" and (_spotify_api_capability_failed or not _spotify_has_valid_cached_token()):
+        return _spotify_unlike_desktop(cancion)
+
+    res = _spotify_unlike_track_api(cancion)
+    if res.ok or SPOTIFY_PLAYBACK_MODE == "api":
+        return res.message
+    if res.capability_failure:
+        return _spotify_unlike_desktop(cancion)
+    return res.message
+
+
+def current_track() -> str:
+    """Get information about the currently playing track on Spotify."""
+    if SPOTIFY_PLAYBACK_MODE != "desktop":
+        res = _spotify_current_track_api()
+        if res.ok:
+            return res.message
+
+    # Fallback to desktop inspection
+    try:
+        controller = _get_desktop_controller()
+        window = controller._windows.ensure_window(1.0)
+        now_playing = controller._uia.now_playing(window.handle)
+        state = controller._uia.playback_state(window.handle)
+        state_str = "Pausado" if state == "paused" else "Reproduciendo"
+        state_en = "Paused" if state == "paused" else "Playing"
+
+        if now_playing and now_playing[0]:
+            title, artist = now_playing
+            artist_str = f" de {artist}" if artist else ""
+            artist_en = f" by {artist}" if artist else ""
+            return _spotify_text(
+                f"{state_en} on Spotify Desktop: '{title}'{artist_en}.",
+                f"{state_str} en Spotify Desktop: '{title}'{artist_str}.",
+            )
+
+        title = controller._windows.current_title(window)
+        if title and title.lower() != "spotify":
+            clean_title = title.replace("Spotify - ", "").replace("Spotify – ", "").strip()
+            return _spotify_text(
+                f"{state_en} on Spotify Desktop: '{clean_title}'.",
+                f"{state_str} en Spotify Desktop: '{clean_title}'.",
+            )
+        return _spotify_text(
+            "No track is currently playing on Spotify Desktop.",
+            "No hay ninguna canción reproduciéndose actualmente en Spotify Desktop.",
+        )
+    except Exception:
+        pass
+
+    if SPOTIFY_PLAYBACK_MODE == "api":
+        return res.message
+    return _spotify_text(
+        "No track is currently playing on Spotify.",
+        "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+    )

@@ -30,8 +30,10 @@ def _spotify_process_ids() -> set[int]:
     for process in psutil.process_iter(["pid", "name"]):
         try:
             if str(process.info.get("name") or "").lower() == "spotify.exe":
-                result.add(int(process.info["pid"]))
-        except (psutil.Error, OSError, TypeError, ValueError):
+                pid = process.info.get("pid") or getattr(process, "pid", None)
+                if pid:
+                    result.add(int(pid))
+        except (psutil.Error, OSError, TypeError, ValueError, KeyError):
             continue
     return result
 
@@ -222,15 +224,132 @@ _CONTROL_NAMES = {
         "disable shuffle",
         "deshabilitar el modo aleatorio",
     },
-    "repeat_on": {"activar repeticion", "enable repeat"},
-    "repeat_off": {"desactivar repeticion", "disable repeat"},
+    "repeat_on": {
+        "activar repeticion",
+        "activar repetición",
+        "enable repeat",
+        "repetir",
+        "activar bucle",
+        "modo repeticion",
+        "repeat",
+    },
+    "repeat_off": {
+        "desactivar repeticion",
+        "desactivar repetición",
+        "disable repeat",
+        "no repetir",
+        "desactivar bucle",
+    },
+    "volume_up": {
+        "subir volumen",
+        "aumentar volumen",
+        "volume up",
+    },
+    "volume_down": {
+        "bajar volumen",
+        "disminuir volumen",
+        "volume down",
+    },
+    "mute": {
+        "silenciar",
+        "mute",
+        "mutear",
+        "desilenciar",
+        "unmute",
+    },
+    "like": {
+        "guardar en tus me gusta",
+        "guardar en tu biblioteca",
+        "guardar en tus canciones que te gustan",
+        "guardar en canciones que te gustan",
+        "anadir a canciones que te gustan",
+        "anadir a tus canciones que te gustan",
+        "anadir a tu biblioteca",
+        "anadir a la biblioteca",
+        "save to your library",
+        "save to your liked songs",
+        "add to your library",
+        "add to liked songs",
+        "save to liked songs",
+        "guardar en me gusta",
+    },
+    "unlike": {
+        "quitar de tus me gusta",
+        "quitar de tu biblioteca",
+        "quitar de canciones que te gustan",
+        "quitar de tus canciones que te gustan",
+        "eliminar de tus me gusta",
+        "eliminar de tu biblioteca",
+        "eliminar de canciones que te gustan",
+        "eliminar de tus canciones que te gustan",
+        "remove from your library",
+        "remove from liked songs",
+        "remove from your liked songs",
+        "ya no me gusta",
+    },
 }
 _ACTION_ALIASES = {
-    "anterior": "previous",
+    "pause": "pause",
     "pausar": "pause",
+    "pausa": "pause",
+    "detener": "pause",
+    "deten": "pause",
+    "resume": "resume",
     "reanudar": "resume",
     "reproducir": "resume",
+    "next": "next",
     "siguiente": "next",
+    "previous": "previous",
+    "anterior": "previous",
+    "prev": "previous",
+    "atras": "previous",
+    "shuffle on": "shuffle_on",
+    "activar shuffle": "shuffle_on",
+    "activa shuffle": "shuffle_on",
+    "mezcla on": "shuffle_on",
+    "aleatorio on": "shuffle_on",
+    "aleatorio": "shuffle_on",
+    "shuffle off": "shuffle_off",
+    "desactivar shuffle": "shuffle_off",
+    "desactiva shuffle": "shuffle_off",
+    "mezcla off": "shuffle_off",
+    "aleatorio off": "shuffle_off",
+    "desactivar aleatorio": "shuffle_off",
+    "dar like": "like",
+    "me gusta": "like",
+    "guardar": "like",
+    "favorito": "like",
+    "anadir a favoritos": "like",
+    "añadir a favoritos": "like",
+    "guardar en favoritos": "like",
+    "quitar like": "unlike",
+    "dislike": "unlike",
+    "no me gusta": "unlike",
+    "quitar me gusta": "unlike",
+    "eliminar de favoritos": "unlike",
+    "quitar de favoritos": "unlike",
+    "repetir": "repeat_on",
+    "activar repetir": "repeat_on",
+    "activar repeticion": "repeat_on",
+    "activar repetición": "repeat_on",
+    "repeat on": "repeat_on",
+    "repeat": "repeat_on",
+    "no repetir": "repeat_off",
+    "desactivar repeticion": "repeat_off",
+    "desactivar repetición": "repeat_off",
+    "repeat off": "repeat_off",
+    "subir volumen": "volume_up",
+    "mas volumen": "volume_up",
+    "más volumen": "volume_up",
+    "aumentar volumen": "volume_up",
+    "volume up": "volume_up",
+    "bajar volumen": "volume_down",
+    "menos volumen": "volume_down",
+    "disminuir volumen": "volume_down",
+    "volume down": "volume_down",
+    "silenciar": "mute",
+    "mute": "mute",
+    "mutear": "mute",
 }
 _PLAY_PATTERNS = (
     re.compile(r"^(?:Reproducir|Reanudar)\s+(?P<title>.+),\s+de\s+(?P<artist>.+)$", re.I),
@@ -246,9 +365,14 @@ _NOW_PLAYING_PATTERNS = (
 
 
 def _default_uia_root(handle: int):
-    from pywinauto import Desktop
+    try:
+        from pywinauto.application import Application
 
-    return Desktop(backend="uia").window(handle=handle)
+        return Application(backend="uia").connect(handle=handle).top_window()
+    except Exception:
+        from pywinauto import Desktop
+
+        return Desktop(backend="uia").window(handle=handle)
 
 
 def _default_shortcut(shortcut: str) -> None:
@@ -283,15 +407,52 @@ def _control_type(control: Any) -> str:
 
 
 def _invoke_control(control: Any) -> bool:
-    try:
-        control.invoke()
-        return True
-    except Exception:
+    # 1. Direct UIA Invoke pattern
+    invoke = getattr(control, "invoke", None)
+    if callable(invoke):
         try:
-            control.click_input()
+            invoke()
             return True
         except Exception:
-            return False
+            pass
+
+    # 2. iface_invoke pattern COM call
+    iface_invoke = getattr(control, "iface_invoke", None)
+    if iface_invoke is not None:
+        try:
+            iface_invoke.Invoke()
+            return True
+        except Exception:
+            pass
+
+    # 3. Legacy IAccessible DoDefaultAction
+    iface_legacy = getattr(control, "iface_legacy_iaccessible", None)
+    if iface_legacy is not None:
+        try:
+            iface_legacy.DoDefaultAction()
+            return True
+        except Exception:
+            pass
+
+    # 4. Selection item pattern
+    select = getattr(control, "select", None)
+    if callable(select):
+        try:
+            select()
+            return True
+        except Exception:
+            pass
+
+    # 5. Click fallback
+    click = getattr(control, "click_input", None)
+    if callable(click):
+        try:
+            click()
+            return True
+        except Exception:
+            pass
+
+    return False
 
 
 def _click_control(control: Any) -> bool:
@@ -337,6 +498,12 @@ def _is_player_control(control: Any) -> bool:
         "controlli del lettore",
         "controles do player",
         "wiedergabesteuerung",
+        "now playing",
+        "reproduciendo ahora",
+        "now playing bar",
+        "barra de reproduccion",
+        "now-playing-bar",
+        "bottom-bar",
     )
     for _depth in range(4):
         if parent is None:
@@ -395,7 +562,10 @@ class SpotifyUIAutomationAdapter:
         self._elements: dict[str, Any] = {}
 
     def _controls(self, handle: int) -> list[Any]:
-        return list(self._root_factory(handle).descendants())
+        try:
+            return list(self._root_factory(handle).descendants())
+        except Exception:
+            return []
 
     def _search_control(self, handle: int):
         fallback = None
@@ -504,6 +674,68 @@ class SpotifyUIAutomationAdapter:
         ready, _scrolled = _prepare_control_for_activation(control)
         return ready and _invoke_control(control)
 
+    def queue_candidate(self, candidate: SpotifyCandidate) -> bool:
+        control = self._elements.get(candidate.element_id)
+        if control is None:
+            return False
+        ready, _scrolled = _prepare_control_for_activation(control)
+        if not ready:
+            return False
+
+        # Step 1: Open context menu by right clicking on the track row
+        r = None
+        opened = False
+        try:
+            rect = getattr(control, "rectangle", None)
+            if callable(rect):
+                r = rect()
+                if r.top > 50 and r.bottom < 1000 and r.left > 50 and r.right > r.left:
+                    control.click_input(button="right")
+                    opened = True
+        except Exception:
+            pass
+
+        if not opened:
+            try:
+                control.set_focus()
+                control.click_input(button="right")
+                opened = True
+            except Exception:
+                pass
+
+        if not opened:
+            return False
+
+        # Step 2: Select option #3 ("Agregar a la fila de reproducción") via fast keyboard navigation
+        import time
+        time.sleep(0.15)
+
+        if IS_WINDOWS:
+            try:
+                user32 = ctypes.windll.user32
+                VK_DOWN = 0x28
+                VK_RETURN = 0x0D
+
+                def _press_key(vk: int):
+                    user32.keybd_event(vk, 0, 0, 0)
+                    time.sleep(0.04)
+                    user32.keybd_event(vk, 0, 2, 0)
+                    time.sleep(0.04)
+
+                _press_key(VK_DOWN)
+                _press_key(VK_DOWN)
+                _press_key(VK_DOWN)
+                _press_key(VK_RETURN)
+                return True
+            except Exception:
+                pass
+
+        try:
+            self._send_shortcut("{DOWN}{DOWN}{DOWN}{ENTER}")
+            return True
+        except Exception:
+            return False
+
     def control(self, handle: int, action: str) -> bool:
         normalized_action = normalize_text(action)
         canonical = _ACTION_ALIASES.get(normalized_action, normalized_action)
@@ -511,11 +743,87 @@ class SpotifyUIAutomationAdapter:
         for control in self._controls(handle):
             if _control_type(control).lower() not in {"button", "checkbox"}:
                 continue
-            if not _is_player_control(control):
-                continue
             observed = normalize_text(_control_name(control))
+            # Match if control is inside player controls or specifically matches like/unlike buttons
+            is_specific = canonical in {"like", "unlike"} and any(name in observed for name in names)
+            if not is_specific and not _is_player_control(control):
+                continue
             if any(name in observed for name in names) and _invoke_control(control):
                 return True
+
+        # Fallback shortcuts for Spotify Desktop controls (100% immune to UI changes/zoom)
+        if canonical in {"pause", "resume"}:
+            try:
+                self._send_shortcut(" ")
+                return True
+            except Exception:
+                pass
+        elif canonical == "next":
+            try:
+                self._send_shortcut("^{RIGHT}")
+                return True
+            except Exception:
+                pass
+        elif canonical == "previous":
+            try:
+                self._send_shortcut("^{LEFT}")
+                return True
+            except Exception:
+                pass
+        elif canonical in {"shuffle_on", "shuffle_off"}:
+            try:
+                self._send_shortcut("^s")
+                return True
+            except Exception:
+                pass
+        elif canonical in {"like", "unlike"}:
+            try:
+                self._send_shortcut("+%b")
+                return True
+            except Exception:
+                pass
+            try:
+                self._send_shortcut("%+b")
+                return True
+            except Exception:
+                pass
+            if IS_WINDOWS:
+                try:
+                    user32 = ctypes.windll.user32
+                    user32.keybd_event(0x12, 0, 0, 0)      # ALT down
+                    user32.keybd_event(0x10, 0, 0, 0)      # SHIFT down
+                    user32.keybd_event(0x42, 0, 0, 0)      # 'B' down
+                    user32.keybd_event(0x42, 0, 2, 0)      # 'B' up
+                    user32.keybd_event(0x10, 0, 2, 0)      # SHIFT up
+                    user32.keybd_event(0x12, 0, 2, 0)      # ALT up
+                    return True
+                except Exception:
+                    pass
+        elif canonical in {"repeat_on", "repeat_off"}:
+            try:
+                self._send_shortcut("^r")
+                return True
+            except Exception:
+                pass
+        elif canonical == "volume_up":
+            try:
+                self._send_shortcut("^{UP}")
+                return True
+            except Exception:
+                pass
+        elif canonical == "volume_down":
+            try:
+                self._send_shortcut("^{DOWN}")
+                return True
+            except Exception:
+                pass
+        elif canonical == "mute":
+            try:
+                self._send_shortcut("^+{DOWN}")
+                return True
+            except Exception:
+                pass
+
         return False
 
     def playback_state(self, handle: int) -> str | None:

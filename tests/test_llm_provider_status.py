@@ -73,7 +73,7 @@ def test_provider_defaults_use_current_stable_models():
         }
     )
 
-    assert config.primary_model == "gemini-3.5-flash"
+    assert config.primary_model == "gemini-2.5-flash"
     assert config.fallback_model == "qwen/qwen3.6-27b"
 
 

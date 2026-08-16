@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 _DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 
 
@@ -92,6 +92,18 @@ def resolve_llm_provider_config(
         fallback_model=fallback[1],
         fallback_api_key=fallback[2],
     )
+
+
+def resolve_gemini_api_key(env: Mapping[str, str] | None = None) -> str:
+    """Resolve Gemini API key independently of provider selection."""
+    source = os.environ if env is None else env
+    return str(source.get("GEMINI_API_KEY") or source.get("GOOGLE_API_KEY") or "").strip()
+
+
+def resolve_groq_api_key(env: Mapping[str, str] | None = None) -> str:
+    """Resolve Groq API key independently of provider selection."""
+    source = os.environ if env is None else env
+    return str(source.get("GROQ_API_KEY") or "").strip()
 
 
 def provider_base_url(provider: str) -> str:

@@ -121,3 +121,23 @@ def test_canonical_collaboration_beats_unrequested_quarantine_variant():
     assert decision.status is MatchStatus.SELECTED
     assert decision.selected is not None
     assert decision.selected.element_id == "canonical"
+
+
+def test_artist_in_raw_query_avoids_same_title_ambiguity():
+    request = SpotifyRequest(
+        raw="Blinding Lights The Weeknd",
+        query="Blinding Lights The Weeknd",
+        title="Blinding Lights The Weeknd",
+        artist="",
+    )
+    decision = choose_candidate(
+        request,
+        [
+            candidate("Blinding Lights", "The Weeknd", "weeknd"),
+            candidate("Blinding Lights", "Saint Asonia", "asonia"),
+        ],
+    )
+
+    assert decision.status is MatchStatus.SELECTED
+    assert decision.selected is not None
+    assert decision.selected.element_id == "weeknd"

@@ -95,6 +95,71 @@ def test_live_session_interrupt_barge_in_cancels_active_task():
     asyncio.run(_run())
 
 
+def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_and_playback():
+    async def _run():
+        session = LiveSession(
+            session_id="test-session-task-isolation",
+            send_text=lambda t: None,
+            send_bytes=lambda b: None,
+        )
+
+        transport_cancelled = False
+        turn_cancelled = False
+        playback_cancelled = False
+
+        async def _mock_transport_loop():
+            nonlocal transport_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                transport_cancelled = True
+                raise
+
+        async def _mock_turn_loop():
+            nonlocal turn_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                turn_cancelled = True
+                raise
+
+        async def _mock_playback_loop():
+            nonlocal playback_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                playback_cancelled = True
+                raise
+
+        transport_task = asyncio.create_task(_mock_transport_loop())
+        turn_task = asyncio.create_task(_mock_turn_loop())
+        playback_task = asyncio.create_task(_mock_playback_loop())
+
+        session.attach_transport_task(transport_task)
+        session.attach_turn_task(turn_task)
+        session.attach_playback_task(playback_task)
+        await asyncio.sleep(0.01)
+
+        # Trigger barge-in interrupt
+        await session.interrupt()
+
+        # Turn and playback tasks MUST be cancelled
+        assert turn_cancelled is True
+        assert turn_task.done()
+        assert playback_cancelled is True
+        assert playback_task.done()
+
+        # Transport receiver loop MUST REMAIN RUNNING
+        assert transport_cancelled is False
+        assert not transport_task.done()
+
+        # Session close terminates transport tasks cleanly
+        await session.close()
+        assert transport_task.done()
+
+    asyncio.run(_run())
+
+
 def test_live_session_manager_registration_and_cleanup():
     async def _run():
         manager = LiveSessionManager()
@@ -116,8 +181,16 @@ def test_live_session_manager_registration_and_cleanup():
     asyncio.run(_run())
 
 
-def test_live_voice_status_route_returns_capabilities():
+def test_live_voice_status_route_returns_capabilities(monkeypatch):
     async def _run():
+        monkeypatch.setenv("JARVIS_LLM_PROVIDER", "groq")
+        monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+        from core.llm_providers import resolve_gemini_api_key, resolve_groq_api_key
+        assert resolve_gemini_api_key() == "test-gemini-key"
+        assert resolve_groq_api_key() == "test-groq-key"
+
         import jarvis_backend
         client = jarvis_backend.app.test_client()
         res = await client.get("/api/voice/live/status")
@@ -125,8 +198,9 @@ def test_live_voice_status_route_returns_capabilities():
         data = await res.get_json()
         assert data["ok"] is True
         assert data["live_supported"] is True
-        assert "gemini_live_available" in data
-        assert "preferred_mode" in data
+        # Gemini Live MUST be available even though Groq is primary chat LLM
+        assert data["gemini_live_available"] is True
+        assert data["preferred_mode"] == "gemini_live"
 
     asyncio.run(_run())
 
@@ -135,7 +209,11 @@ def test_live_voice_websocket_connect():
     async def _run():
         import jarvis_backend
         client = jarvis_backend.app.test_client()
-        async with client.websocket("/api/voice/stream", query_string={"lang": "es", "mode": "hybrid"}, headers={"Origin": "http://127.0.0.1:5002"}) as ws:
+        async with client.websocket(
+            "/api/voice/stream",
+            query_string={"lang": "es", "mode": "hybrid"},
+            headers={"Origin": "http://127.0.0.1:5002"},
+        ) as ws:
             # Receive session_ready or state_change
             msg = await ws.receive()
             data = json.loads(msg)
@@ -148,6 +226,50 @@ def test_live_voice_websocket_connect():
             assert pong_data.get("type") in {"pong", "state_change", "session_ready"}
 
             # Close gracefully
+            await ws.send(json.dumps({"type": "stop"}))
+
+    asyncio.run(_run())
+
+
+def test_live_voice_websocket_security_origin_and_token(monkeypatch):
+    async def _run():
+        import jarvis_backend
+        client = jarvis_backend.app.test_client()
+
+        # 1. Untrusted origin should be rejected with 403
+        try:
+            async with client.websocket(
+                "/api/voice/stream",
+                query_string={"lang": "es", "mode": "hybrid"},
+                headers={"Origin": "http://malicious-site.example.com"},
+            ) as ws:
+                assert False, "Untrusted origin should not establish websocket"
+        except Exception:
+            pass  # Expected rejection
+
+        # 2. Token protection when configured
+        monkeypatch.setenv("JARVIS_API_TOKEN", "super-secret-token")
+
+        # Connection without token should fail
+        try:
+            async with client.websocket(
+                "/api/voice/stream",
+                query_string={"lang": "es", "mode": "hybrid"},
+                headers={"Origin": "http://127.0.0.1:5002"},
+            ) as ws:
+                assert False, "Websocket without required token should fail"
+        except Exception:
+            pass  # Expected rejection
+
+        # Connection with valid token in query param should succeed
+        async with client.websocket(
+            "/api/voice/stream",
+            query_string={"lang": "es", "mode": "hybrid", "token": "super-secret-token"},
+            headers={"Origin": "http://127.0.0.1:5002"},
+        ) as ws:
+            msg = await ws.receive()
+            data = json.loads(msg)
+            assert data["type"] in {"state_change", "session_ready"}
             await ws.send(json.dumps({"type": "stop"}))
 
     asyncio.run(_run())

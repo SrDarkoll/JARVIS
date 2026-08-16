@@ -662,3 +662,39 @@ def test_unobserved_control_change_is_not_reported_as_success():
 
     assert result.status is DesktopResultStatus.FAILED
     assert result.message_key == "spotify_control_not_verified"
+
+
+def test_queue_candidate_success():
+    candidates = [
+        SpotifyCandidate(
+            element_id="candidate-0",
+            title="No te apartes de mi",
+            artist="Vicentico",
+            kind="track",
+            subtitle="Song",
+        )
+    ]
+    uia = FakeUIA(candidates)
+    uia.queued = []
+
+    def fake_queue(candidate):
+        uia.queued.append(candidate.element_id)
+        return True
+
+    uia.queue_candidate = fake_queue
+
+    controller = make_controller(FakeWindowAdapter(), uia)
+    result = controller.queue(request())
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert result.title == "No te apartes de mi"
+    assert result.artist == "Vicentico"
+    assert "candidate-0" in uia.queued
+
+
+def test_like_and_extended_controls_verified():
+    controller = make_controller(FakeWindowAdapter(), FakeUIA([]))
+
+    for action in ["like", "unlike", "repeat_on", "repeat_off", "volume_up", "volume_down", "mute"]:
+        res = controller.control(action)
+        assert res.status is DesktopResultStatus.SUCCESS

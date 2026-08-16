@@ -422,7 +422,7 @@ def _spotify_play_api(song: str) -> SpotifyAPIPlaybackResult:
     message = _spotify_play_api_message(song)
     normalized = normalize_text(message)
     ok = _spotify_api_message_is_success(message)
-    capability_failure = not ok or any(normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS)
+    capability_failure = not ok and any(normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS)
     return SpotifyAPIPlaybackResult(
         ok=ok,
         message=message,
@@ -470,7 +470,7 @@ def _spotify_control_api_message(accion: str) -> str:
                 f"No pude {accion_humana} en este momento.",
             )
 
-        if accion in ["pausar", "pausa", "detener", "detén"]:
+        if accion in ["pausar", "pausa", "detener", "detén", "deten", "pause"]:
             err = _try_player_action(
                 lambda did: client.sp.pause_playback(device_id=did),
                 client.sp.pause_playback,
@@ -486,7 +486,7 @@ def _spotify_control_api_message(accion: str) -> str:
             if err is None:
                 return _spotify_text("Playback resumed.", "Reproducción reanudada.")
             return _resolver_error_player(err, _spotify_text("resume playback", "reanudar"))
-        elif accion in ["siguiente", "next", "skip"]:
+        elif accion in ["siguiente", "next", "skip", "adelantar"]:
             err = _try_player_action(
                 lambda did: client.sp.next_track(device_id=did),
                 client.sp.next_track,
@@ -494,7 +494,7 @@ def _spotify_control_api_message(accion: str) -> str:
             if err is None:
                 return _spotify_text("Next track.", "Siguiente canción.")
             return _resolver_error_player(err, _spotify_text("skip to the next track", "pasar a la siguiente canción"))
-        elif accion in ["anterior", "prev", "atrás", "atras"]:
+        elif accion in ["anterior", "prev", "atrás", "atras", "previous"]:
             err = _try_player_action(
                 lambda did: client.sp.previous_track(device_id=did),
                 client.sp.previous_track,
@@ -511,6 +511,7 @@ def _spotify_control_api_message(accion: str) -> str:
             "mezcla on",
             "aleatorio on",
             "aleatorio",
+            "modo aleatorio",
         ]:
             if _spotify_set_shuffle(True, device_id) or _spotify_set_shuffle(True, None):
                 return _spotify_text("Shuffle enabled.", "Shuffle activado.")
@@ -527,6 +528,7 @@ def _spotify_control_api_message(accion: str) -> str:
             "desactiva shuffle",
             "mezcla off",
             "aleatorio off",
+            "desactivar aleatorio",
         ]:
             if _spotify_set_shuffle(False, device_id) or _spotify_set_shuffle(False, None):
                 return _spotify_text("Shuffle disabled.", "Shuffle desactivado.")
@@ -539,12 +541,398 @@ def _spotify_control_api_message(accion: str) -> str:
             return _spotify_text(
                 "I could not disable shuffle right now.", "No pude desactivar shuffle en este momento."
             )
+        elif accion in [
+            "repeat on",
+            "activar repeat",
+            "activar repeticion",
+            "activar repetición",
+            "repetir",
+            "repeat",
+            "activar bucle",
+            "bucle on",
+        ]:
+            err = _try_player_action(
+                lambda did: client.sp.repeat(state="context", device_id=did),
+                lambda: client.sp.repeat(state="context"),
+            )
+            if err is None:
+                return _spotify_text("Repeat mode enabled.", "Modo repetición activado.")
+            return _resolver_error_player(err, _spotify_text("enable repeat", "activar repetición"))
+        elif accion in [
+            "repeat off",
+            "desactivar repeat",
+            "desactivar repeticion",
+            "desactivar repetición",
+            "no repetir",
+            "desactivar bucle",
+            "bucle off",
+        ]:
+            err = _try_player_action(
+                lambda did: client.sp.repeat(state="off", device_id=did),
+                lambda: client.sp.repeat(state="off"),
+            )
+            if err is None:
+                return _spotify_text("Repeat mode disabled.", "Modo repetición desactivado.")
+            return _resolver_error_player(err, _spotify_text("disable repeat", "desactivar repetición"))
+        elif accion in [
+            "like",
+            "me gusta",
+            "guardar",
+            "favorito",
+            "añadir a favoritos",
+            "guardar en favoritos",
+            "dar like",
+        ]:
+            res = _spotify_like_track_api("")
+            return res.message
+        elif accion in [
+            "unlike",
+            "dislike",
+            "quitar me gusta",
+            "eliminar de favoritos",
+            "no me gusta",
+            "quitar like",
+        ]:
+            res = _spotify_unlike_track_api("")
+            return res.message
+        elif accion in [
+            "info",
+            "cancion actual",
+            "que suena",
+            "now playing",
+            "canción actual",
+            "qué suena",
+            "estado",
+        ]:
+            res = _spotify_current_track_api()
+            return res.message
         return _spotify_text(f"Action '{accion}' not recognized.", f"Acción '{accion}' no reconocida.")
     except Exception as error:
         _spotify_log_error("control_playback", error)
         return _spotify_text(
             "Spotify could not complete that playback action.",
             "Spotify no pudo completar esa acción de reproducción.",
+        )
+
+
+def _spotify_add_to_queue_api(cancion: str) -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no está configurada.",
+            ),
+            capability_failure=True,
+        )
+    clean = _PREFIJOS_SPOTIFY.sub("", str(cancion or "")).strip()
+    if not clean:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=_spotify_text(
+                "Please specify a song to add to the queue.",
+                "Por favor indique una canción para añadir a la cola.",
+            ),
+            capability_failure=False,
+        )
+
+    try:
+        items = _spotify_search_tracks(clean, limit=10)
+        track = _spotify_mejor_track(clean, items)
+        if not track or not track.get("uri"):
+            return SpotifyAPIPlaybackResult(
+                ok=False,
+                message=_spotify_text(
+                    f"Could not find song '{clean}' on Spotify.",
+                    f"No se encontró la canción '{clean}' en Spotify.",
+                ),
+                capability_failure=False,
+            )
+
+        device_id = _spotify_dispositivo_objetivo()
+        track_uri = track["uri"]
+        track_name = track.get("name") or clean
+        artists = ", ".join(a.get("name", "") for a in track.get("artists", []) if a.get("name")) or ""
+        track_label = _spotify_track_label(track_name, artists)
+
+        try:
+            if device_id:
+                client.sp.add_to_queue(uri=track_uri, device_id=device_id)
+            else:
+                client.sp.add_to_queue(uri=track_uri)
+        except Exception as queue_err:
+            error_type = _spotify_classify_error(queue_err)
+            _spotify_log_error(f"add_to_queue_{error_type}", queue_err)
+            if error_type == "no_device":
+                _spotify_activar_cliente()
+                return SpotifyAPIPlaybackResult(
+                    ok=False,
+                    message=_spotify_text(
+                        "No active Spotify device is available. Open Spotify, play any song once, and repeat the command.",
+                        "No hay dispositivo activo de Spotify. Abra Spotify, reproduzca cualquier canción una vez y repita el comando.",
+                    ),
+                    capability_failure=True,
+                )
+            return SpotifyAPIPlaybackResult(
+                ok=False,
+                message=_spotify_text(
+                    "Could not add song to queue right now.",
+                    "No se pudo añadir la canción a la cola en este momento.",
+                ),
+                capability_failure=error_type in {"auth", "premium", "quota"},
+            )
+
+        return SpotifyAPIPlaybackResult(
+            ok=True,
+            message=_spotify_text(
+                f"Added to Spotify queue: {track_label}.",
+                f"Añadido a la cola de Spotify: {track_label}.",
+            ),
+            capability_failure=False,
+        )
+    except Exception as e:
+        _spotify_log_error("add_to_queue", e)
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=_spotify_text(
+                "Failed to add to Spotify queue.",
+                "Error al añadir a la cola de Spotify.",
+            ),
+            capability_failure=False,
+        )
+
+
+def _spotify_like_track_api(cancion: str = "") -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no está configurada.",
+            ),
+            capability_failure=True,
+        )
+
+    clean = _PREFIJOS_SPOTIFY.sub("", str(cancion or "")).strip().lower()
+    is_current = not clean or clean in {
+        "esta",
+        "esta cancion",
+        "cancion actual",
+        "actual",
+        "lo que suena",
+        "this",
+        "this song",
+        "current",
+    }
+
+    try:
+        if is_current:
+            playback = client.sp.current_playback()
+            item = (playback or {}).get("item")
+            if not item or not item.get("id"):
+                return SpotifyAPIPlaybackResult(
+                    ok=False,
+                    message=_spotify_text(
+                        "No song is currently playing on Spotify.",
+                        "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+                    ),
+                    capability_failure=False,
+                )
+            track_id = item.get("id")
+            track_name = item.get("name") or "Desconocido"
+            artists = ", ".join(a.get("name", "") for a in item.get("artists", []) if a.get("name")) or ""
+            label = _spotify_track_label(track_name, artists)
+        else:
+            items = _spotify_search_tracks(cancion, limit=10)
+            track = _spotify_mejor_track(cancion, items)
+            if not track or not track.get("id"):
+                return SpotifyAPIPlaybackResult(
+                    ok=False,
+                    message=_spotify_text(
+                        f"Could not find song '{cancion}' on Spotify.",
+                        f"No se encontró la canción '{cancion}' en Spotify.",
+                    ),
+                    capability_failure=False,
+                )
+            track_id = track.get("id")
+            track_name = track.get("name") or cancion
+            artists = ", ".join(a.get("name", "") for a in track.get("artists", []) if a.get("name")) or ""
+            label = _spotify_track_label(track_name, artists)
+
+        client.sp.current_user_saved_tracks_add(tracks=[track_id])
+        return SpotifyAPIPlaybackResult(
+            ok=True,
+            message=_spotify_text(
+                f"Saved to your Liked Songs: {label}.",
+                f"Guardado en tus Me Gusta de Spotify: {label}.",
+            ),
+            capability_failure=False,
+        )
+    except Exception as e:
+        error_type = _spotify_classify_error(e)
+        _spotify_log_error(f"like_track_{error_type}", e)
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=_spotify_text(
+                "Could not like song on Spotify right now.",
+                "No se pudo guardar la canción en Me Gusta en este momento.",
+            ),
+            capability_failure=error_type in {"auth", "quota"},
+        )
+
+
+def _spotify_unlike_track_api(cancion: str = "") -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no está configurada.",
+            ),
+            capability_failure=True,
+        )
+
+    clean = _PREFIJOS_SPOTIFY.sub("", str(cancion or "")).strip().lower()
+    is_current = not clean or clean in {
+        "esta",
+        "esta cancion",
+        "cancion actual",
+        "actual",
+        "lo que suena",
+        "this",
+        "this song",
+        "current",
+    }
+
+    try:
+        if is_current:
+            playback = client.sp.current_playback()
+            item = (playback or {}).get("item")
+            if not item or not item.get("id"):
+                return SpotifyAPIPlaybackResult(
+                    ok=False,
+                    message=_spotify_text(
+                        "No song is currently playing on Spotify.",
+                        "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+                    ),
+                    capability_failure=False,
+                )
+            track_id = item.get("id")
+            track_name = item.get("name") or "Desconocido"
+            artists = ", ".join(a.get("name", "") for a in item.get("artists", []) if a.get("name")) or ""
+            label = _spotify_track_label(track_name, artists)
+        else:
+            items = _spotify_search_tracks(cancion, limit=10)
+            track = _spotify_mejor_track(cancion, items)
+            if not track or not track.get("id"):
+                return SpotifyAPIPlaybackResult(
+                    ok=False,
+                    message=_spotify_text(
+                        f"Could not find song '{cancion}' on Spotify.",
+                        f"No se encontró la canción '{cancion}' en Spotify.",
+                    ),
+                    capability_failure=False,
+                )
+            track_id = track.get("id")
+            track_name = track.get("name") or cancion
+            artists = ", ".join(a.get("name", "") for a in track.get("artists", []) if a.get("name")) or ""
+            label = _spotify_track_label(track_name, artists)
+
+        client.sp.current_user_saved_tracks_delete(tracks=[track_id])
+        return SpotifyAPIPlaybackResult(
+            ok=True,
+            message=_spotify_text(
+                f"Removed from your Liked Songs: {label}.",
+                f"Eliminado de tus Me Gusta de Spotify: {label}.",
+            ),
+            capability_failure=False,
+        )
+    except Exception as e:
+        error_type = _spotify_classify_error(e)
+        _spotify_log_error(f"unlike_track_{error_type}", e)
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=_spotify_text(
+                "Could not remove song from Liked Songs right now.",
+                "No se pudo eliminar la canción de Me Gusta en este momento.",
+            ),
+            capability_failure=error_type in {"auth", "quota"},
+        )
+
+
+def _spotify_current_track_api() -> SpotifyAPIPlaybackResult:
+    ready, error_message = _spotify_ready()
+    if not ready:
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=error_message
+            or _spotify_text(
+                "Spotify API is not configured.",
+                "La API de Spotify no está configurada.",
+            ),
+            capability_failure=True,
+        )
+
+    try:
+        playback = client.sp.current_playback()
+        if not playback or not playback.get("item"):
+            return SpotifyAPIPlaybackResult(
+                ok=False,
+                message=_spotify_text(
+                    "No song is currently playing on Spotify.",
+                    "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+                ),
+                capability_failure=False,
+            )
+
+        item = playback.get("item") or {}
+        track_id = item.get("id")
+        title = item.get("name", "Desconocido")
+        artists = ", ".join(a.get("name", "") for a in item.get("artists", []) if a.get("name")) or "Desconocido"
+        album = (item.get("album") or {}).get("name", "")
+        progress_ms = playback.get("progress_ms") or 0
+        duration_ms = item.get("duration_ms") or 0
+        is_playing = playback.get("is_playing", False)
+
+        prog_min, prog_sec = divmod(progress_ms // 1000, 60)
+        dur_min, dur_sec = divmod(duration_ms // 1000, 60)
+        time_str = f"{prog_min}:{prog_sec:02d} / {dur_min}:{dur_sec:02d}"
+
+        is_liked = False
+        if track_id:
+            try:
+                contains = client.sp.current_user_saved_tracks_contains(tracks=[track_id])
+                if contains and isinstance(contains, list):
+                    is_liked = bool(contains[0])
+            except Exception:
+                pass
+
+        state_word = _spotify_text("Playing", "Reproduciendo") if is_playing else _spotify_text("Paused", "En pausa")
+        liked_tag = " (❤️ En Me Gusta)" if is_liked else ""
+        album_str = f" | Álbum: {album}" if album else ""
+
+        msg = f"{state_word}: '{title}' de {artists}{album_str} [{time_str}]{liked_tag}."
+        return SpotifyAPIPlaybackResult(
+            ok=True,
+            message=msg,
+            capability_failure=False,
+        )
+    except Exception as e:
+        error_type = _spotify_classify_error(e)
+        _spotify_log_error(f"current_track_{error_type}", e)
+        return SpotifyAPIPlaybackResult(
+            ok=False,
+            message=_spotify_text(
+                "Could not inspect current Spotify track.",
+                "No se pudo consultar la canción actual de Spotify.",
+            ),
+            capability_failure=error_type in {"auth", "quota"},
         )
 
 
@@ -575,10 +963,28 @@ def _spotify_control_api(action: str) -> SpotifyAPIPlaybackResult:
         "shuffle activado",
         "shuffle disabled",
         "shuffle desactivado",
+        "saved to your liked songs",
+        "guardado en tus me gusta",
+        "removed from your liked songs",
+        "eliminado de tus me gusta",
+        "repeat mode enabled",
+        "modo repeticion activado",
+        "repeat mode disabled",
+        "modo repeticion desactivado",
+        "volume increased",
+        "volumen aumentado",
+        "volume decreased",
+        "volumen disminuido",
+        "spotify muted",
+        "spotify silenciado",
+        "playing",
+        "paused",
+        "reproduciendo",
+        "en pausa",
     )
     ok = normalized.startswith(success_prefixes)
     unrecognized = "not recognized" in normalized or "no reconocida" in normalized
-    capability_failure = (not ok and not unrecognized) or any(
+    capability_failure = not ok and not unrecognized and any(
         normalize_text(marker) in normalized for marker in _API_CAPABILITY_MARKERS
     )
     return SpotifyAPIPlaybackResult(

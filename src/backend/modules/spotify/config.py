@@ -40,7 +40,8 @@ SPOTIFY_REDIRECT_URI = jarvis_config.SPOTIPY_REDIRECT_URI
 SPOTIFY_SCOPE = (
     "user-modify-playback-state user-read-playback-state "
     "playlist-read-private playlist-modify-private "
-    "user-top-read user-read-recently-played"
+    "user-top-read user-read-recently-played "
+    "user-library-modify user-library-read"
 )
 SPOTIFY_REDIRECT_ERROR = redirect_error(SPOTIFY_REDIRECT_URI)
 SPOTIFY_ENABLED = bool(SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_ERROR is None)

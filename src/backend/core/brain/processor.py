@@ -236,6 +236,72 @@ def _resolve_pending_spotify_selection(
     return str(result), False
 
 
+def _resolve_pending_auth_confirmation(
+    user_input: str,
+    profile_id: str,
+) -> tuple[str | None, bool]:
+    pid = str(profile_id or DEFAULT_PROFILE_ID).strip().lower() or DEFAULT_PROFILE_ID
+    pending = history_manager._extraer_accion_pendiente_auth(pid, pop=False)
+    if pending is None:
+        return None, False
+
+    normalized = reparar_unicode(str(user_input or "")).strip().lower()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    affirmative = {
+        "si", "sí", "yes", "yeah", "yep", "claro", "por supuesto",
+        "adelante", "hazlo", "proceder", "procede", "confirmo",
+        "confirmar", "autorizo", "autorizar", "ejecutar", "ejecuta",
+        "si hazlo", "sí hazlo", "si procede", "sí procede", "dale",
+        "de acuerdo", "ok", "okay", "afirmativo", "correcto", "autorizado",
+    }
+    cancellation = {
+        "no", "cancela", "cancelar", "abortar", "aborta", "no lo hagas",
+        "detener", "deten", "para", "negativo", "rechazar",
+    }
+
+    tokens = set(normalized.split())
+    is_cancellation = (
+        normalized in cancellation
+        or bool(tokens & {"cancela", "cancelar", "abortar", "aborta", "detener", "rechazar"})
+        or normalized == "no"
+        or normalized.startswith(("no ", "cancela", "cancelar", "abortar", "no quiero", "no lo hagas"))
+    )
+    if is_cancellation:
+        history_manager._extraer_accion_pendiente_auth(pid, pop=True)
+        english = get_current_language().startswith("en")
+        return ("Action cancelled." if english else "Acción cancelada."), False
+
+    is_affirmative = (
+        normalized in affirmative
+        or bool(tokens & {"si", "sí", "yes", "adelante", "confirmo", "autorizo", "procede", "proceder", "hazlo", "afirmativo"})
+        or normalized.startswith(("si ", "sí ", "yes ", "adelante", "hazlo", "confirmo", "autorizo", "dale", "procede"))
+    )
+    if is_affirmative:
+        action = history_manager._extraer_accion_pendiente_auth(pid, pop=True)
+        if not action:
+            return None, False
+        tool_name = action.get("tool")
+        args = dict(action.get("args") or {})
+        args["_confirmed"] = True
+        args["confirmed"] = True
+        args["el_usuario_ya_confirmo"] = True
+        try:
+            res = tool_manager._invocar_tool_entry(
+                tool_name,
+                args,
+                user_input,
+                "auth_resume",
+                pid,
+            )
+            return str(res), False
+        except Exception as exc:
+            return f"Error al ejecutar la acción confirmada: {exc}", False
+
+    return None, False
+
+
 def _is_briefing_request(text: str) -> bool:
     normalized = reparar_unicode(str(text or "")).strip().lower()
     normalized = re.sub(r"[^\w\s]", " ", normalized)
@@ -273,6 +339,13 @@ def _preflight(
         compound_reply, compound_should_listen = _preflight_compuesto(user_input_norm, pid)
         if compound_reply is not None:
             return compound_reply, compound_should_listen
+
+    auth_reply, auth_should_listen = _resolve_pending_auth_confirmation(
+        user_input_norm,
+        pid,
+    )
+    if auth_reply is not None:
+        return auth_reply, auth_should_listen
 
     spotify_reply, spotify_should_listen = _resolve_pending_spotify_selection(
         user_input_norm,

@@ -161,13 +161,14 @@ def modo_no_molestar(activar: bool) -> str:
 # ─────────────────────────────────────────
 @tool
 def controlar_pc(accion: str, el_usuario_ya_confirmo: bool = False) -> str:
-    """Controlar hardware: apagar, reiniciar, hibernar, bloquear, cancelar.
-    REGLA: Para apagar o reiniciar, DEBES primero preguntarle al usuario si esta seguro.
-    No llames esta tool con el_usuario_ya_confirmo=True hasta que el usuario te diga que SI.
+    """Controlar hardware del PC: apagar, reiniciar, hibernar, bloquear, cancelar.
+    ADVERTENCIA: Usar UNICAMENTE cuando el usuario solicite de forma EXPLICITA apagar, reiniciar, hibernar o bloquear la computadora (ej. 'apaga la pc', 'reinicia el equipo', 'bloquea la computadora').
+    REGLA: Para apagar, reiniciar o bloquear la PC, DEBES primero preguntarle al usuario si esta seguro.
+    No llames esta tool con el_usuario_ya_confirmo=True a menos que el usuario haya confirmado afirmativamente de forma explicita.
     """
     accion = accion.lower().strip()
-    if accion in ["apagar", "reiniciar", "hibernar"] and not el_usuario_ya_confirmo:
-        return "ACCION_DENEGADA: Antes de apagar o reiniciar la PC, preguntale al usuario si esta seguro y espera su respuesta afirmativa."
+    if accion in ["apagar", "reiniciar", "hibernar", "bloquear", "lock", "shutdown", "reboot"] and not el_usuario_ya_confirmo:
+        return "ACCION_DENEGADA: Antes de apagar, reiniciar o bloquear la PC, preguntale al usuario si esta seguro y espera su confirmacion explicita."
 
     pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
     if accion in ["apagar", "reiniciar", "hibernar"] and not verificar_autorizacion(pid):
@@ -175,29 +176,29 @@ def controlar_pc(accion: str, el_usuario_ya_confirmo: bool = False) -> str:
 
     try:
         if IS_WINDOWS:
-            if "apag" in accion:
+            if accion in {"apagar", "apaga", "shutdown"}:
                 subprocess.Popen(["shutdown", "/s", "/t", "10"])
                 return "Apagando (10s)."
-            if "rein" in accion:
+            if accion in {"reiniciar", "reinicia", "reboot", "restart"}:
                 subprocess.Popen(["shutdown", "/r", "/t", "10"])
                 return "Reiniciando (10s)."
-            if "hiber" in accion:
+            if accion in {"hibernar", "hiberna", "hibernate"}:
                 subprocess.Popen(["shutdown", "/h"])
                 return "Hibernando."
-            if "bloq" in accion:
+            if accion in {"bloquear", "bloquea", "bloquear_pc", "lock", "bloquear_equipo"}:
                 subprocess.Popen(["rundll32", "user32.dll,LockWorkStation"])
                 return "Bloqueado."
-            if "canc" in accion:
+            if accion in {"cancelar", "cancela", "cancel", "abortar"}:
                 subprocess.Popen(["shutdown", "/a"])
                 return "Abortado."
         else:  # Linux/Mac hooks
-            if "apag" in accion:
+            if accion in {"apagar", "apaga", "shutdown"}:
                 subprocess.Popen(["sudo", "shutdown", "-h", "now"])
                 return "Apagando (Linux)."
-            if "rein" in accion:
+            if accion in {"reiniciar", "reinicia", "reboot", "restart"}:
                 subprocess.Popen(["sudo", "reboot"])
                 return "Reiniciando (Linux)."
-            if "bloq" in accion:
+            if accion in {"bloquear", "bloquea", "bloquear_pc", "lock"}:
                 subprocess.Popen(["gnome-screensaver-command", "-l"])
                 return "Bloqueado (Linux)."
         return f"Acción '{accion}' no soportada en este entorno."

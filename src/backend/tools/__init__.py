@@ -37,6 +37,22 @@ _LAZY_EXPORTS = {
         "modules.spotify.tools",
         "controlar_reproduccion",
     ),
+    "agregar_a_cola_spotify": (
+        "modules.spotify.tools",
+        "agregar_a_cola_spotify",
+    ),
+    "dar_like_spotify": (
+        "modules.spotify.tools",
+        "dar_like_spotify",
+    ),
+    "quitar_like_spotify": (
+        "modules.spotify.tools",
+        "quitar_like_spotify",
+    ),
+    "cancion_actual_spotify": (
+        "modules.spotify.tools",
+        "cancion_actual_spotify",
+    ),
     "ajustar_volumen": ("tools.system", "ajustar_volumen"),
     "modo_no_molestar": ("tools.system", "modo_no_molestar"),
     "controlar_pc": ("tools.system", "controlar_pc"),

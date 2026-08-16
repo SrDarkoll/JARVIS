@@ -233,7 +233,7 @@ def test_init_brain_configures_gemini_as_primary_and_groq_as_fallback(monkeypatc
     llm_engine.init_brain(app_ref=None)
 
     assert brain_state.llm is not None
-    assert brain_state.llm.model == "gemini-3.5-flash"
+    assert brain_state.llm.model == "gemini-2.5-flash"
     assert brain_state.llm_fallback is not None
     assert brain_state.llm_fallback.model == "qwen/qwen3.6-27b"
 

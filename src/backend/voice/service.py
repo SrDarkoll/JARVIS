@@ -1517,15 +1517,15 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         if pending_question:
             respuesta_pregunta, should_listen = _brain.procesar_mensaje(pending_question, profile_id=pid_nuevo)
             reply = _voice_text(
-                f"Done. I registered your voice as guest, {nombre_nuevo}. About what you asked: {respuesta_pregunta}",
-                f"Perfecto. He registrado tu voz como invitado, {nombre_nuevo}. "
+                f"Nice to meet you, {nombre_nuevo}. I've registered your voice as guest to remember you. Regarding your question: {respuesta_pregunta}",
+                f"Mucho gusto, {nombre_nuevo}. He registrado tu voz como invitado para recordarte. "
                 f"Sobre lo que preguntaste: {respuesta_pregunta}",
             )
         else:
             should_listen = False
             reply = _voice_text(
-                f"Done. I registered your voice as guest, {nombre_nuevo}.",
-                f"Perfecto. He registrado tu voz como invitado, {nombre_nuevo}.",
+                f"Nice to meet you, {nombre_nuevo}. I've registered your voice as guest to remember you.",
+                f"Mucho gusto, {nombre_nuevo}. He registrado tu voz como invitado para recordarte.",
             )
         _guest_persist_profile_registration(pid_nuevo, nombre_nuevo, texto_nombre, reply)
         nombre_final = (
@@ -1669,9 +1669,9 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             }
             _revocar_autorizacion(_brain.DEFAULT_PROFILE_ID)
             if soft_pid == _brain.DEFAULT_PROFILE_ID:
-                reply = "One moment. Is that you, Administrator?"
+                reply = _voice_text("One moment. Is that you, Administrator?", "Un momento. ¿Eres tú, Administrador?")
             else:
-                reply = f"One moment. Are you {soft_nombre}?"
+                reply = _voice_text(f"One moment. Are you {soft_nombre}?", f"Un momento. ¿Eres {soft_nombre}?")
             _set_voice_identity("soft_match_pending", similarity_value=soft_sim)
             return _voice_response(
                 {
@@ -1729,11 +1729,14 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         }
         _revocar_autorizacion(_brain.DEFAULT_PROFILE_ID)
         if not conversion_exitosa:
-            reply = "I couldn't process your audio. Who are you? I will answer your question afterwards."
+            reply = _voice_text(
+                "I couldn't process your audio clearly. Who are you? I will answer your question afterwards.",
+                "No pude procesar tu audio claramente. ¿Quién eres? Responderé a tu pregunta justo después.",
+            )
         else:
-            reply = (
-                "One moment. I don't recognize your voice. What is your name? "
-                "I will answer your question immediately after."
+            reply = _voice_text(
+                "One moment. I don't recognize your voice, who are you? Tell me your name and I will remember you.",
+                "Un momento. No reconozco tu voz, ¿quién eres? Dime tu nombre para recordarte.",
             )
         _set_voice_identity(source="unknown" if conversion_exitosa else "conversion_failed", similarity_value=similitud)
         return _voice_response(

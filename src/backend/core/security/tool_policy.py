@@ -36,9 +36,9 @@ PUBLIC_POLICY = ToolPolicy(
 
 DEFAULT_TOOL_POLICIES: dict[str, ToolPolicy] = {
     "leer_archivo": ToolPolicy("leer_archivo", "critical", ("admin",), True, True),
-    "analizar_pantalla": ToolPolicy("analizar_pantalla", "critical", ("admin",), True, True),
+    "analizar_pantalla": ToolPolicy("analizar_pantalla", "elevated", ("admin",), False, True),
     "controlar_pc": ToolPolicy("controlar_pc", "critical", ("admin",), True, True),
-    "controlar_ventana": ToolPolicy("controlar_ventana", "critical", ("admin",), True, True),
+    "controlar_ventana": ToolPolicy("controlar_ventana", "elevated", ("admin",), False, True),
     "matar_proceso": ToolPolicy("matar_proceso", "critical", ("admin",), True, True),
     "borrar_memoria": ToolPolicy("borrar_memoria", "critical", ("admin",), True, True),
     "abrir_aplicacion": ToolPolicy("abrir_aplicacion", "elevated", ("admin",), False, True),

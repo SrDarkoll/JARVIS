@@ -18,7 +18,7 @@ def test_tool_policy_covers_desktop_control_and_action_plans():
     expected = {
         "listar_ventanas": ("elevated", False),
         "enfocar_ventana": ("elevated", False),
-        "controlar_ventana": ("critical", True),
+        "controlar_ventana": ("elevated", False),
         "crear_plan_acciones": ("elevated", False),
         "ver_plan_acciones": ("elevated", False),
         "ejecutar_plan_acciones": ("critical", True),

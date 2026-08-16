@@ -7,7 +7,11 @@ TODO el código real vive ahora en el paquete `tools/`.
 """
 
 from modules.spotify.tools import (  # noqa: F401
+    agregar_a_cola_spotify,
+    cancion_actual_spotify,
     controlar_reproduccion,
+    dar_like_spotify,
+    quitar_like_spotify,
     reproducir_en_spotify,
     reproducir_mix_spotify,
 )

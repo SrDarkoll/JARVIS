@@ -217,7 +217,7 @@ def _limpiar_historial_memoria(history: list) -> list:
             if "no hay datos nuevos importantes" in txt and "vengadores" in txt:
                 continue
         cleaned.append(m)
-    return cleaned[-40:]
+    return cleaned[-60:]
 
 
 # ─────────────────────────────────────────
@@ -235,12 +235,12 @@ def _deserializar_history(items: list) -> list:
                 restored.append(AIMessage(content=contenido))
         except Exception:
             continue
-    return restored[-40:]
+    return restored[-60:]
 
 
 def _serializar_history(history: list) -> list:
     out = []
-    for m in (history or [])[-40:]:
+    for m in (history or [])[-60:]:
         try:
             out.append(
                 {

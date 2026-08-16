@@ -10,7 +10,7 @@ from core import jarvis_state
 from core.command_pipeline.models import CommandRequest, CommandResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-MAX_PROFILE_HISTORY = 40
+MAX_PROFILE_HISTORY = 60
 
 
 @dataclass(frozen=True, slots=True)

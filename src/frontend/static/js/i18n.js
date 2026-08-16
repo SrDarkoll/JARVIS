@@ -217,7 +217,7 @@ export const translations = {
     }
 };
 
-export let currentLang = localStorage.getItem("jarvis_lang") || "en";
+export let currentLang = localStorage.getItem("jarvis_lang") || "es";
 
 export function setLanguage(lang) {
     if (translations[lang]) {

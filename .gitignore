@@ -37,6 +37,7 @@ ENV/
 scratch/
 tmp/
 temp/
+*.zip
 .pytest_cache/
 .ruff_cache/
 .coverage

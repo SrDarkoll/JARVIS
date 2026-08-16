@@ -47,7 +47,10 @@ class LiveSession:
         self.mode = mode
         self.state = LiveSessionState.IDLE
         self._lock = asyncio.Lock()
-        self._active_task: asyncio.Task | None = None
+        self._transport_tasks: set[asyncio.Task] = set()
+        self._turn_task: asyncio.Task | None = None
+        self._playback_task: asyncio.Task | None = None
+        self._tool_tasks: set[asyncio.Task] = set()
         self._input_audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._closed = False
 
@@ -86,17 +89,36 @@ class LiveSession:
         await self._input_audio_queue.put(chunk)
 
     async def interrupt(self) -> None:
-        """Handle a barge-in event from client or voice activity detector."""
+        """Handle a barge-in event from client or voice activity detector.
+
+        Cancels active turn processing and audio playback tasks without interrupting
+        the underlying transport/receiver loops.
+        """
         async with self._lock:
-            if self._active_task and not self._active_task.done():
-                self._active_task.cancel()
+            # Cancel active turn task if any
+            if self._turn_task and not self._turn_task.done():
+                self._turn_task.cancel()
                 try:
-                    await self._active_task
+                    await self._turn_task
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    logger.debug("Task cancelled with exception: %s", e)
-                self._active_task = None
+                    logger.debug("Turn task cancelled with exception: %s", e)
+                self._turn_task = None
+
+            # Cancel active playback task if any
+            if self._playback_task and not self._playback_task.done():
+                self._playback_task.cancel()
+                try:
+                    await self._playback_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.debug("Playback task cancelled with exception: %s", e)
+                self._playback_task = None
+
+            # Clean up finished tool tasks
+            self._tool_tasks = {t for t in self._tool_tasks if not t.done()}
 
             # Clear any unprocessed input queue
             while not self._input_audio_queue.empty():
@@ -113,15 +135,48 @@ class LiveSession:
             })
             await self.set_state(LiveSessionState.LISTENING)
 
+    def attach_transport_task(self, task: asyncio.Task) -> None:
+        """Track long-lived transport and receiver loop tasks."""
+        self._transport_tasks = {t for t in self._transport_tasks if not t.done()}
+        self._transport_tasks.add(task)
+
+    def attach_turn_task(self, task: asyncio.Task) -> None:
+        """Track the currently executing generation or turn task."""
+        self._turn_task = task
+
+    def attach_playback_task(self, task: asyncio.Task) -> None:
+        """Track the currently executing audio playback task."""
+        self._playback_task = task
+
+    def attach_tool_task(self, task: asyncio.Task) -> None:
+        """Track an asynchronous tool execution task."""
+        self._tool_tasks = {t for t in self._tool_tasks if not t.done()}
+        self._tool_tasks.add(task)
+
     def attach_task(self, task: asyncio.Task) -> None:
-        """Track the currently executing generation/synthesis task."""
-        self._active_task = task
+        """Backwards-compatible alias to attach the active turn task."""
+        self.attach_turn_task(task)
 
     async def close(self) -> None:
-        """Cleanly terminate the session."""
+        """Cleanly terminate the session and all associated tasks."""
         self._closed = True
-        if self._active_task and not self._active_task.done():
-            self._active_task.cancel()
+        all_tasks = set(self._transport_tasks) | set(self._tool_tasks)
+        if self._turn_task:
+            all_tasks.add(self._turn_task)
+        if self._playback_task:
+            all_tasks.add(self._playback_task)
+
+        for task in all_tasks:
+            if not task.done():
+                task.cancel()
+
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        self._transport_tasks.clear()
+        self._tool_tasks.clear()
+        self._turn_task = None
+        self._playback_task = None
         self.state = LiveSessionState.CLOSED
 
 

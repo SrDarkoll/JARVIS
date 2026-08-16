@@ -275,15 +275,17 @@ async def process_voice():
 
 @voice_bp.route("/api/voice/live/status", methods=["GET"])
 async def live_voice_status():
-    from core.llm_providers import resolve_llm_provider_config
-    cfg = resolve_llm_provider_config()
-    gemini_available = bool(cfg.primary_provider == "gemini" and cfg.primary_api_key)
+    from core.llm_providers import resolve_gemini_api_key
+    gemini_key = resolve_gemini_api_key()
+    gemini_available = bool(gemini_key)
+    voice_provider = os.getenv("JARVIS_VOICE_PROVIDER", "").strip().lower()
+    preferred_mode = "gemini_live" if (gemini_available and voice_provider != "hybrid") else "hybrid_stream"
     return jsonify({
         "ok": True,
         "live_supported": True,
         "gemini_live_available": gemini_available,
         "hybrid_available": True,
-        "preferred_mode": "gemini_live" if gemini_available else "hybrid_stream",
+        "preferred_mode": preferred_mode,
     })
 
 
@@ -317,17 +319,24 @@ async def live_voice_stream():
         mode=requested_mode,
     )
 
-    from core.llm_providers import resolve_llm_provider_config
-    cfg = resolve_llm_provider_config()
+    from core.llm_providers import resolve_gemini_api_key
+    gemini_key = resolve_gemini_api_key()
+    voice_provider = os.getenv("JARVIS_VOICE_PROVIDER", "").strip().lower()
     use_gemini_live = (
-        (requested_mode == "gemini_live" or (requested_mode == "auto" and cfg.primary_provider == "gemini"))
-        and bool(cfg.primary_api_key)
+        (
+            requested_mode == "gemini_live"
+            or (
+                requested_mode == "auto"
+                and (voice_provider == "gemini_live" or (voice_provider != "hybrid" and bool(gemini_key)))
+            )
+        )
+        and bool(gemini_key)
     )
 
     streamer_task: asyncio.Task | None = None
     hybrid_streamer: HybridLiveStreamer | None = None
     if use_gemini_live:
-        gemini_streamer = GeminiLiveStreamer(session=session, api_key=cfg.primary_api_key)
+        gemini_streamer = GeminiLiveStreamer(session=session, api_key=gemini_key)
         streamer_task = asyncio.create_task(gemini_streamer.start())
     else:
         import jarvis_backend

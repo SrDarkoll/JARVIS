@@ -141,8 +141,15 @@ def _buscar_en_brave(query: str) -> str:
                 if r.status_code == 200:
                     data = r.json()
                     results = data.get("web", {}).get("results", [])
+                    if not results and query_mod != query:
+                        # Fallback to unquoted raw query if exact match yielded 0 results
+                        fallback_params = dict(params, q=query)
+                        fallback_r = http_requests.get(url, headers=headers, params=fallback_params, timeout=10)
+                        if fallback_r.status_code == 200:
+                            results = fallback_r.json().get("web", {}).get("results", [])
+
                     if not results:
-                        return f"Sin resultados para '{query_mod}' en la red."
+                        return f"Sin resultados para '{query}' en la red."
                     res = []
                     for it in results[:5]:
                         title = _clean_search_field(it.get("title"))
