@@ -18,7 +18,7 @@ J.A.R.V.I.S. combines a high-performance Python/Quart backend with a modern brow
 If you just want to download and run J.A.R.V.I.S. without dealing with source code:
 
 ### 1. Download & Install (Windows)
-1. Download the **`v0.1.0-alpha.3`** release package (`JARVIS-v0.1.0-alpha.3-windows.zip`) from the [Releases page](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.3).
+1. Download the **`v0.1.0-alpha.4`** release package (`JARVIS-v0.1.0-alpha.4-windows.zip`) from the [Releases page](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.4).
 2. Extract the complete ZIP to any folder on your PC.
 3. Run **`Install-JARVIS.bat`** (automatically sets up the environment and prerequisites).
 

@@ -314,7 +314,7 @@ directories, and remove entries as the corresponding modules are typed.
 Build the sanitized Windows ZIP from tracked runtime files:
 
 ```powershell
-.\scripts\build_windows_release.ps1 -Version 0.1.0-alpha.3
+.\scripts\build_windows_release.ps1 -Version 0.1.0-alpha.4
 ```
 
 The archive includes full Git LFS voice model contents and can therefore be
