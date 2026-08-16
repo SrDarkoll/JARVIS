@@ -90,7 +90,7 @@ def test_release_documentation_covers_windows_package_and_piper_voices():
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
     assert "Install-JARVIS.bat" in readme
-    assert "v0.1.0-alpha.2" in readme
+    assert "v0.1.0-alpha.3" in readme
     assert "piper.download_voices" in readme
     assert ".onnx.json" in readme
     assert "THIRD_PARTY_NOTICES.md" in readme
