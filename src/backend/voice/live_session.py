@@ -39,6 +39,8 @@ class LiveSession:
         language: str = "es",
         mode: str = "auto",
     ) -> None:
+        from voice.live_action_orchestrator import LiveActionOrchestrator, LiveDiagnosticsCollector
+
         self.session_id = session_id
         self._send_text = send_text
         self._send_bytes = send_bytes
@@ -53,6 +55,14 @@ class LiveSession:
         self._tool_tasks: set[asyncio.Task] = set()
         self._input_audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._closed = False
+
+        self.diagnostics = LiveDiagnosticsCollector()
+        self.orchestrator = LiveActionOrchestrator(
+            session_id=session_id,
+            profile_id=profile_id,
+            emit_json=self.emit_json,
+            diagnostics=self.diagnostics,
+        )
 
     async def emit_json(self, data: dict[str, Any]) -> None:
         """Send a JSON control message to the connected client."""
@@ -71,6 +81,8 @@ class LiveSession:
         if self._closed or not pcm_bytes:
             return
         try:
+            # Track first audio chunk latency
+            self.diagnostics.record_first_audio()
             res = self._send_bytes(pcm_bytes)
             if asyncio.iscoroutine(res):
                 await res
@@ -91,11 +103,13 @@ class LiveSession:
     async def interrupt(self) -> None:
         """Handle a barge-in event from client or voice activity detector.
 
-        Cancels active turn processing and audio playback tasks without interrupting
-        the underlying transport/receiver loops.
+        Cancels active turn processing, pending tool actions, and audio playback tasks.
         """
         async with self._lock:
-            # Cancel active turn task if any
+            # 1. Cancel active conversational actions in the orchestrator
+            await self.orchestrator.cancel_pending_actions(reason="user_barge_in")
+
+            # 2. Cancel active turn task if any
             if self._turn_task and not self._turn_task.done():
                 self._turn_task.cancel()
                 try:
@@ -106,7 +120,7 @@ class LiveSession:
                     logger.debug("Turn task cancelled with exception: %s", e)
                 self._turn_task = None
 
-            # Cancel active playback task if any
+            # 3. Cancel active playback task if any
             if self._playback_task and not self._playback_task.done():
                 self._playback_task.cancel()
                 try:
@@ -117,10 +131,13 @@ class LiveSession:
                     logger.debug("Playback task cancelled with exception: %s", e)
                 self._playback_task = None
 
-            # Clean up finished tool tasks
-            self._tool_tasks = {t for t in self._tool_tasks if not t.done()}
+            # 4. Cancel active tool execution tasks
+            for t in self._tool_tasks:
+                if not t.done():
+                    t.cancel()
+            self._tool_tasks.clear()
 
-            # Clear any unprocessed input queue
+            # 5. Clear any unprocessed input queue
             while not self._input_audio_queue.empty():
                 try:
                     self._input_audio_queue.get_nowait()
@@ -131,7 +148,7 @@ class LiveSession:
             await self.set_state(LiveSessionState.INTERRUPTED)
             await self.emit_json({
                 "type": "interrupted",
-                "message": "Assistant output cancelled by user barge-in",
+                "message": "Assistant output and pending actions cancelled by user barge-in",
             })
             await self.set_state(LiveSessionState.LISTENING)
 

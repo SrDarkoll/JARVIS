@@ -165,6 +165,11 @@ export class LiveVoiceClient {
         this.onInterrupted = null;
         this.onError = null;
         this.onSessionReady = null;
+        this.onToolExecuting = null;
+        this.onActionPlanUpdated = null;
+        this.onActionCancelled = null;
+        this.onDiagnostics = null;
+        this.onReconnecting = null;
 
         this.player.onPlaybackStateChange = (speaking) => {
             this.bargeInDetector.setAssistantSpeaking(speaking);
@@ -229,6 +234,18 @@ export class LiveVoiceClient {
                 case 'tool_call':
                     this.onToolExecuting?.(data);
                     break;
+                case 'action_plan_updated':
+                    this.onActionPlanUpdated?.(data.plan);
+                    break;
+                case 'action_cancelled':
+                    this.onActionCancelled?.(data);
+                    break;
+                case 'diagnostics':
+                    this.onDiagnostics?.(data.metrics);
+                    break;
+                case 'session_reconnecting':
+                    this.onReconnecting?.(data);
+                    break;
                 case 'transcript':
                     this.onTranscript?.(data);
                     break;
@@ -238,6 +255,9 @@ export class LiveVoiceClient {
                     break;
                 case 'turn_complete':
                     this.onStateChange?.('listening');
+                    if (data.diagnostics) {
+                        this.onDiagnostics?.(data.diagnostics);
+                    }
                     break;
                 case 'error':
                     this.onError?.(data);

@@ -163,7 +163,7 @@ class GeminiLiveStreamer:
             return []
 
     async def start(self) -> None:
-        """Start the bidirectional bridge."""
+        """Start the bidirectional bridge with automatic reconnection resilience."""
         if not self.is_available():
             await self.session.emit_json({
                 "type": "error",
@@ -185,41 +185,73 @@ class GeminiLiveStreamer:
 
         uri = f"{GEMINI_LIVE_WS_URL}?key={self.api_key}"
         self._running = True
+        max_reconnect_attempts = 3
+        reconnect_attempt = 0
 
-        try:
-            async with websockets.connect(uri) as ws:
-                self._ws = ws
-                await self._send_setup()
-                await self.session.set_state(LiveSessionState.LISTENING)
+        while self._running:
+            try:
+                async with websockets.connect(uri) as ws:
+                    self._ws = ws
+                    is_resume = reconnect_attempt > 0
+                    reconnect_attempt = 0
+                    await self._send_setup()
+                    await self.session.set_state(LiveSessionState.LISTENING)
+                    await self.session.emit_json({
+                        "type": "session_ready",
+                        "mode": "gemini_live",
+                        "model": self.model,
+                        "reconnected": is_resume,
+                    })
+
+                    if is_resume:
+                        print("\n[GEMINI LIVE] 🔄 Conexión restaurada con éxito (Session resumed).", flush=True)
+                        write_log("LIVE_SESSION", "Gemini Live connection restored", profile_id=self.session.profile_id)
+
+                    send_task = asyncio.create_task(self._upstream_loop())
+                    recv_task = asyncio.create_task(self._downstream_loop())
+                    self.session.attach_transport_task(send_task)
+                    self.session.attach_transport_task(recv_task)
+
+                    done, pending = await asyncio.wait(
+                        [send_task, recv_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in pending:
+                        task.cancel()
+
+                    # If closed cleanly while not running, exit loop
+                    if not self._running:
+                        break
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                if not self._running:
+                    break
+                reconnect_attempt += 1
+                self.session.diagnostics.record_reconnect()
+                if reconnect_attempt > max_reconnect_attempts:
+                    log_error("gemini_live_session_exhausted_retries", error=str(e))
+                    await self.session.emit_json({
+                        "type": "error",
+                        "code": "gemini_live_connection_failed",
+                        "message": f"Gemini Live stream closed after {max_reconnect_attempts} reconnect attempts: {e}",
+                    })
+                    break
+
+                backoff_delay = min(2.0, 0.4 * (2 ** (reconnect_attempt - 1)))
+                print(f"\n[GEMINI LIVE] ⚠️ Conexión perdida ({e}). Reintentando conexión ({reconnect_attempt}/{max_reconnect_attempts}) en {backoff_delay:.1f}s...", flush=True)
+                write_log("LIVE_SESSION", f"Reconnecting attempt {reconnect_attempt}/{max_reconnect_attempts}", error=str(e), profile_id=self.session.profile_id)
                 await self.session.emit_json({
-                    "type": "session_ready",
-                    "mode": "gemini_live",
-                    "model": self.model,
+                    "type": "session_reconnecting",
+                    "attempt": reconnect_attempt,
+                    "max_attempts": max_reconnect_attempts,
+                    "message": f"Reconectando sesión ({reconnect_attempt}/{max_reconnect_attempts})...",
                 })
+                await asyncio.sleep(backoff_delay)
+            finally:
+                self._ws = None
 
-                send_task = asyncio.create_task(self._upstream_loop())
-                recv_task = asyncio.create_task(self._downstream_loop())
-                self.session.attach_transport_task(send_task)
-                self.session.attach_transport_task(recv_task)
-
-                done, pending = await asyncio.wait(
-                    [send_task, recv_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in pending:
-                    task.cancel()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            log_error("gemini_live_session_error", error=str(e))
-            await self.session.emit_json({
-                "type": "error",
-                "code": "gemini_live_connection_failed",
-                "message": f"Gemini Live stream closed: {e}",
-            })
-        finally:
-            self._running = False
-            self._ws = None
+        self._running = False
 
     async def _send_setup(self) -> None:
         """Send the initial Gemini Bidi setup payload."""
@@ -245,7 +277,8 @@ class GeminiLiveStreamer:
             setup_payload["tools"] = [{"function_declarations": decls}]
 
         setup_msg = {"setup": setup_payload}
-        await self._ws.send(json.dumps(setup_msg))
+        if self._ws:
+            await self._ws.send(json.dumps(setup_msg))
 
     async def _upstream_loop(self) -> None:
         """Continuously sends incoming client audio chunks to Gemini."""
@@ -253,6 +286,7 @@ class GeminiLiveStreamer:
             try:
                 chunk = await self.session._input_audio_queue.get()
                 try:
+                    self.session.diagnostics.record_turn_start()
                     b64_data = base64.b64encode(chunk).decode("utf-8")
                     media_msg = {
                         "realtime_input": {
@@ -268,55 +302,15 @@ class GeminiLiveStreamer:
             except (asyncio.CancelledError, Exception):
                 break
 
-    async def _handle_function_call(self, name: str, args: dict, call_id: str) -> None:
-        """Execute a requested tool and send the result back to Gemini."""
-        from core.unified_log import write_log
-
-        print(f"\n[GEMINI LIVE TOOL] >> INVOCANDO: {name}(args={args}) [call_id={call_id}]", flush=True)
-        write_log("LIVE_TOOL_CALL", f"Invoking {name}", args=args, call_id=call_id, profile_id=self.session.profile_id)
-        await self.session.set_state(LiveSessionState.PROCESSING)
-        await self.session.emit_json({
-            "type": "tool_executing",
-            "tool": name,
-            "args": args,
-        })
-
-        tool_result = "Acción ejecutada."
-        try:
-            from core.brain.tool_manager import _invocar_tool_entry
-            res = await asyncio.wait_for(
-                asyncio.to_thread(
-                    _invocar_tool_entry,
-                    name,
-                    args,
-                    f"Live voice command: {name}",
-                    source="gemini_live",
-                    profile_id=self.session.profile_id,
-                ),
-                timeout=15.0,
-            )
-            if res:
-                tool_result = str(res)
-            print(f"[GEMINI LIVE TOOL] << RESULTADO: {tool_result}\n", flush=True)
-            write_log("LIVE_TOOL_RESULT", f"Result for {name}", result=tool_result, call_id=call_id, profile_id=self.session.profile_id)
-        except TimeoutError:
-            log_warning("gemini_live_tool_timeout", tool=name)
-            tool_result = f"La herramienta {name} tardó demasiado tiempo en responder."
-            print(f"[GEMINI LIVE TOOL] << TIMEOUT: {tool_result}\n", flush=True)
-            write_log("LIVE_TOOL_ERROR", f"Timeout executing {name}", call_id=call_id, profile_id=self.session.profile_id)
-        except Exception as e:
-            log_error("gemini_live_tool_execution_failed", tool=name, error=str(e))
-            tool_result = f"Error al ejecutar {name}: {e}"
-            print(f"[GEMINI LIVE TOOL] << ERROR: {tool_result}\n", flush=True)
-            write_log("LIVE_TOOL_ERROR", f"Error executing {name}: {e}", call_id=call_id, profile_id=self.session.profile_id)
-
+    async def _send_tool_response(self, call_id: str, result_text: str) -> None:
+        """Send a single tool execution result back to Gemini Bidi WebSocket."""
         tool_resp_msg = {
             "tool_response": {
                 "function_responses": [
                     {
                         "response": {
                             "output": {
-                                "result": tool_result[:2000],
+                                "result": str(result_text)[:2000],
                             }
                         },
                         "id": call_id,
@@ -329,6 +323,28 @@ class GeminiLiveStreamer:
                 await self._ws.send(json.dumps(tool_resp_msg))
             except Exception as exc:
                 log_warning("gemini_live_tool_response_send_failed", error=str(exc))
+
+    async def _execute_orchestrated_plan(self, function_calls: list[dict[str, Any]]) -> None:
+        """Execute a planned batch of actions sequentially through the LiveActionOrchestrator."""
+        plan = self.session.orchestrator.enqueue_batch(function_calls)
+        await self.session.set_state(LiveSessionState.PROCESSING)
+
+        for action in list(plan.actions):
+            # If session is closed or plan is no longer active, abort
+            if not self._running or not plan.is_active:
+                break
+            # Execute action through the orchestrator
+            action_task = asyncio.create_task(
+                self.session.orchestrator.execute_action(action, self._send_tool_response)
+            )
+            action._task = action_task
+            self.session.attach_tool_task(action_task)
+            try:
+                await action_task
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Action execution error: %s", e)
 
     async def _downstream_loop(self) -> None:
         """Continuously receives audio, text, and tool events from Gemini."""
@@ -358,12 +374,9 @@ class GeminiLiveStreamer:
                             break
 
             if tool_call and "functionCalls" in tool_call:
-                for fn_call in tool_call["functionCalls"]:
-                    fn_name = fn_call.get("name", "")
-                    fn_args = fn_call.get("args") or {}
-                    fn_id = fn_call.get("id", "")
-                    tool_task = asyncio.create_task(self._handle_function_call(fn_name, fn_args, fn_id))
-                    self.session.attach_tool_task(tool_task)
+                function_calls = tool_call["functionCalls"]
+                orchestrator_task = asyncio.create_task(self._execute_orchestrated_plan(function_calls))
+                self.session.attach_tool_task(orchestrator_task)
                 continue
 
             if not server_content:
@@ -373,11 +386,13 @@ class GeminiLiveStreamer:
             if server_content.get("interrupted"):
                 print("\n[GEMINI LIVE] << Interrupción de usuario (Barge-in) detectada.", flush=True)
                 write_log("LIVE_SESSION", "User interruption detected (barge-in)", profile_id=self.session.profile_id)
+                self.session.diagnostics.record_barge_in(85.0)
                 await self.session.interrupt()
                 continue
 
             model_turn = server_content.get("modelTurn")
             if model_turn:
+                self.session.diagnostics.record_first_token()
                 await self.session.set_state(LiveSessionState.SPEAKING)
                 for part in model_turn.get("parts", []):
                     # Handle audio data
@@ -426,6 +441,12 @@ class GeminiLiveStreamer:
                     except Exception as e:
                         log_warning("gemini_live_save_turn_failed", error=str(e))
                 self._current_turn_text.clear()
-                print("[GEMINI LIVE] << Fin de turno de respuesta.\n", flush=True)
+
+                # Emit turn complete and real-time latency diagnostics
+                diag_summary = self.session.diagnostics.get_summary()
+                print(f"[GEMINI LIVE] << Fin de turno de respuesta. [Latencia Voz P50: {diag_summary['voice_latency']['p50_ms']}ms | Tools P50: {diag_summary['tool_latency']['p50_ms']}ms]\n", flush=True)
                 await self.session.set_state(LiveSessionState.LISTENING)
-                await self.session.emit_json({"type": "turn_complete"})
+                await self.session.emit_json({
+                    "type": "turn_complete",
+                    "diagnostics": diag_summary,
+                })
