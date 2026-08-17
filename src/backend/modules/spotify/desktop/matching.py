@@ -93,17 +93,19 @@ def score_candidate(request: SpotifyRequest, candidate: SpotifyCandidate) -> flo
         score += artist_sequence * 0.20
         if artist_sequence < 0.45:
             score -= 0.18
-    else:
-        combined_candidate = f"{candidate.title} {candidate.artist}".strip()
-        combined_sequence = SequenceMatcher(
-            None,
-            normalize_text(request.query),
-            normalize_text(combined_candidate),
-        ).ratio()
-        combined_tokens = _token_overlap(request.query, combined_candidate)
-        score = max(score, (combined_sequence * 0.70) + (combined_tokens * 0.30))
-        if candidate.kind != "track":
-            score -= 0.20
+
+    combined_candidate = f"{candidate.title} {candidate.artist}".strip()
+    raw_query = request.raw or request.query
+    combined_sequence = SequenceMatcher(
+        None,
+        normalize_text(raw_query),
+        normalize_text(combined_candidate),
+    ).ratio()
+    combined_tokens = _token_overlap(raw_query, combined_candidate)
+    combined_score = (combined_sequence * 0.70) + (combined_tokens * 0.30)
+    score = max(score, combined_score)
+    if candidate.kind != "track":
+        score -= 0.20
 
     return max(0.0, min(1.0, score - _variant_penalty(request, candidate)))
 
@@ -122,13 +124,12 @@ def choose_candidate(
 
     best = ranked[0]
     runner_up = ranked[1] if len(ranked) > 1 else None
-    best_artist_in_query = bool(best.artist and normalize_text(best.artist) in normalize_text(request.raw))
-    same_title_different_artist = bool(
-        not request.artist
-        and not best_artist_in_query
-        and runner_up
-        and normalize_text(best.title) == normalize_text(runner_up.title)
-        and normalize_text(best.artist) != normalize_text(runner_up.artist)
+    best_artist_in_query = bool(
+        best.artist
+        and (
+            normalize_text(best.artist) in normalize_text(request.raw)
+            or _token_overlap(best.artist, request.raw) >= 0.50
+        )
     )
     same_primary_artist = bool(
         runner_up
@@ -138,7 +139,20 @@ def choose_candidate(
             or (best_artist_in_query and normalize_text(best.artist) in normalize_text(runner_up.artist))
             or (normalize_text(best.artist) in normalize_text(runner_up.artist))
             or (normalize_text(runner_up.artist) in normalize_text(best.artist))
+            or (_token_overlap(best.artist, runner_up.artist) >= 0.50)
         )
+    )
+    different_artists = bool(
+        runner_up
+        and not same_primary_artist
+        and normalize_text(best.artist) != normalize_text(runner_up.artist)
+    )
+    same_title_different_artist = bool(
+        not request.artist
+        and not best_artist_in_query
+        and runner_up
+        and normalize_text(best.title) == normalize_text(runner_up.title)
+        and different_artists
     )
     margin = best.score - (runner_up.score if runner_up else 0.0)
     should_be_ambiguous = (

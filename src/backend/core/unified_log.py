@@ -128,20 +128,39 @@ def configure_unified_log(
 
         if _enabled:
             _log_path.parent.mkdir(parents=True, exist_ok=True)
+            formatter = logging.Formatter(
+                "[%(asctime)s.%(msecs)03d] [%(category)s] %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
             handler = RotatingFileHandler(
                 _log_path,
                 maxBytes=max(1, int(max_bytes)),
                 backupCount=max(0, int(backup_count)),
                 encoding="utf-8",
-                delay=True,
+                delay=False,
             )
-            handler.setFormatter(
-                logging.Formatter(
-                    "[%(asctime)s.%(msecs)03d] [%(category)s] %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-            )
+            handler.setFormatter(formatter)
             logger.addHandler(handler)
+
+            # Also mirror to project root logs/log.txt for convenient access
+            if os.getenv("JARVIS_TEST_MODE") != "1":
+                try:
+                    from core import jarvis_config
+
+                    project_log = Path(jarvis_config.ROOT_DIR) / "logs" / "log.txt"
+                    if project_log.resolve() != _log_path.resolve():
+                        project_log.parent.mkdir(parents=True, exist_ok=True)
+                        local_handler = RotatingFileHandler(
+                            project_log,
+                            maxBytes=max(1, int(max_bytes)),
+                            backupCount=max(0, int(backup_count)),
+                            encoding="utf-8",
+                            delay=False,
+                        )
+                        local_handler.setFormatter(formatter)
+                        logger.addHandler(local_handler)
+                except Exception:
+                    pass
 
         _file_logger = logger
 

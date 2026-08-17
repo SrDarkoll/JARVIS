@@ -1,4 +1,4 @@
-# J.A.R.V.I.S.
+# J.A.R.V.I.S
 
 [![CI](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml/badge.svg)](https://github.com/SrDarkoll/JARVIS/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SrDarkoll/JARVIS?include_prereleases&sort=semver)](https://github.com/SrDarkoll/JARVIS/releases)

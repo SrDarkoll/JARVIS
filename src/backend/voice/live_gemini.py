@@ -14,6 +14,7 @@ from typing import Any
 
 from core.llm_providers import resolve_gemini_api_key
 from core.runtime_logger import log_error, log_warning
+from core.unified_log import write_log
 
 from voice.live_session import LiveSession, LiveSessionState
 
@@ -269,7 +270,10 @@ class GeminiLiveStreamer:
 
     async def _handle_function_call(self, name: str, args: dict, call_id: str) -> None:
         """Execute a requested tool and send the result back to Gemini."""
+        from core.unified_log import write_log
+
         print(f"\n[GEMINI LIVE TOOL] >> INVOCANDO: {name}(args={args}) [call_id={call_id}]", flush=True)
+        write_log("LIVE_TOOL_CALL", f"Invoking {name}", args=args, call_id=call_id, profile_id=self.session.profile_id)
         await self.session.set_state(LiveSessionState.PROCESSING)
         await self.session.emit_json({
             "type": "tool_executing",
@@ -294,14 +298,17 @@ class GeminiLiveStreamer:
             if res:
                 tool_result = str(res)
             print(f"[GEMINI LIVE TOOL] << RESULTADO: {tool_result}\n", flush=True)
+            write_log("LIVE_TOOL_RESULT", f"Result for {name}", result=tool_result, call_id=call_id, profile_id=self.session.profile_id)
         except TimeoutError:
             log_warning("gemini_live_tool_timeout", tool=name)
             tool_result = f"La herramienta {name} tardó demasiado tiempo en responder."
             print(f"[GEMINI LIVE TOOL] << TIMEOUT: {tool_result}\n", flush=True)
+            write_log("LIVE_TOOL_ERROR", f"Timeout executing {name}", call_id=call_id, profile_id=self.session.profile_id)
         except Exception as e:
             log_error("gemini_live_tool_execution_failed", tool=name, error=str(e))
             tool_result = f"Error al ejecutar {name}: {e}"
             print(f"[GEMINI LIVE TOOL] << ERROR: {tool_result}\n", flush=True)
+            write_log("LIVE_TOOL_ERROR", f"Error executing {name}: {e}", call_id=call_id, profile_id=self.session.profile_id)
 
         tool_resp_msg = {
             "tool_response": {
@@ -365,6 +372,7 @@ class GeminiLiveStreamer:
             # Check for turn completion / interruption
             if server_content.get("interrupted"):
                 print("\n[GEMINI LIVE] << Interrupción de usuario (Barge-in) detectada.", flush=True)
+                write_log("LIVE_SESSION", "User interruption detected (barge-in)", profile_id=self.session.profile_id)
                 await self.session.interrupt()
                 continue
 
@@ -388,12 +396,14 @@ class GeminiLiveStreamer:
                         )
 
                         if is_thought:
-                            # Log internal reasoning / diagnostic telemetry to console
+                            # Log internal reasoning / diagnostic telemetry to console and unified log
                             print(f"\n[GEMINI LIVE TELEMETRÍA/RAZONAMIENTO] {raw_text}", flush=True)
+                            write_log("LIVE_REASONING", raw_text, profile_id=self.session.profile_id)
                         else:
                             # Log spoken response to console and send to UI
                             self._current_turn_text.append(raw_text)
                             print(f"\n[JARVIS] << {raw_text}", flush=True)
+                            write_log("LIVE_SPEECH", raw_text, profile_id=self.session.profile_id)
                             await self.session.emit_json({
                                 "type": "transcript",
                                 "role": "assistant",

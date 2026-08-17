@@ -12,7 +12,7 @@ def candidate(title: str, artist: str, element_id: str) -> SpotifyCandidate:
 
 
 def test_normalize_text_removes_diacritics_and_noise():
-    assert normalize_text("  No te APARTES de m\u00ed! ") == "no te apartes de mi"
+    assert normalize_text("  No te APARTES de mí! ") == "no te apartes de mi"
 
 
 def test_artist_match_wins_over_cover_and_live_versions():
@@ -25,9 +25,9 @@ def test_artist_match_wins_over_cover_and_live_versions():
     decision = choose_candidate(
         request,
         [
-            candidate("No Te Apartes de M\u00ed (En Vivo)", "Tributo a Vicentico", "cover"),
-            candidate("No Te Apartes de M\u00ed", "Vicentico", "expected"),
-            candidate("No Te Apartes de M\u00ed", "Roberto Carlos", "original"),
+            candidate("No Te Apartes de Mí (En Vivo)", "Tributo a Vicentico", "cover"),
+            candidate("No Te Apartes de Mí", "Vicentico", "expected"),
+            candidate("No Te Apartes de Mí", "Roberto Carlos", "original"),
         ],
     )
 
@@ -45,8 +45,8 @@ def test_title_only_request_returns_ambiguity_for_close_artists():
     decision = choose_candidate(
         request,
         [
-            candidate("No Te Apartes de M\u00ed", "Vicentico", "one"),
-            candidate("No Te Apartes de M\u00ed", "Roberto Carlos", "two"),
+            candidate("No Te Apartes de Mí", "Vicentico", "one"),
+            candidate("No Te Apartes de Mí", "Roberto Carlos", "two"),
         ],
     )
 
@@ -106,12 +106,12 @@ def test_canonical_collaboration_beats_unrequested_quarantine_variant():
         request,
         [
             candidate(
-                "No Te Apartes de M\u00ed (feat. Valeria Bertuccelli)",
+                "No Te Apartes de Mí (feat. Valeria Bertuccelli)",
                 "Vicentico, Valeria Bertuccelli",
                 "canonical",
             ),
             candidate(
-                "No Te Apartes de M\u00ed - Mayo 2020 Cuarentena",
+                "No Te Apartes de Mí - Mayo 2020 Cuarentena",
                 "Vicentico",
                 "quarantine",
             ),
@@ -149,6 +149,27 @@ def test_same_artist_collaboration_does_not_block_with_ambiguity():
         query="Luz De Dia Los Enanitos Verdes",
         title="Luz De Dia",
         artist="Los Enanitos Verdes",
+    )
+    decision = choose_candidate(
+        request,
+        [
+            candidate("Luz De Dia", "Los Enanitos Verdes", "original"),
+            candidate("Luz de Día", "Los Enanitos Verdes, Marco Antonio Solís", "collab"),
+            candidate("Luz De Dia - En Vivo", "Los Enanitos Verdes", "live"),
+        ],
+    )
+
+    assert decision.status is MatchStatus.SELECTED
+    assert decision.selected is not None
+    assert decision.selected.element_id == "original"
+
+
+def test_natural_query_with_internal_connector_selects_track():
+    request = SpotifyRequest(
+        raw="Luz de Día Enanitos Verdes",
+        query="Luz de Día Enanitos Verdes",
+        title="Luz de Día Enanitos Verdes",
+        artist="",
     )
     decision = choose_candidate(
         request,

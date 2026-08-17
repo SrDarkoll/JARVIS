@@ -51,6 +51,7 @@ parse_patches*.py
 script.py
 
 # J.A.R.V.I.S. Logs & Cache
+logs/
 src/backend/logs/
 src/backend/faiss_index/
 src/backend/*.db
