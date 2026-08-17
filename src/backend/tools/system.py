@@ -163,37 +163,58 @@ def _ajustar_volumen_relativo(delta: float) -> str:
 
 @tool
 def ajustar_volumen(nivel: int | float | str) -> str:
-    """Ajusta el volumen maestro del sistema (0-100), o sube/baja relativamente ('subir', 'bajar', '+10', '-10', '50%')."""
+    """Ajusta el volumen maestro del sistema (0-100), o sube/baja relativamente ('subir', 'bajar', '+10', '-10', '50%', 'bajalo al 50', 'subelo al 100')."""
     try:
         raw = str(nivel).strip().lower()
 
-        # Handle non-numeric natural words
-        if any(w in raw for w in ("subir", "sube", "subele", "aumentar", "aumenta", "up", "mas", "más", "louder", "higher")):
-            num_match = re.search(r"\d+(?:[.,]\d+)?", raw)
-            amount = float(num_match.group(0).replace(",", ".")) if num_match else 10.0
-            return _ajustar_volumen_relativo(amount)
-
-        if any(w in raw for w in ("bajar", "baja", "bajale", "disminuir", "disminuye", "down", "menos", "softer", "lower")):
-            num_match = re.search(r"\d+(?:[.,]\d+)?", raw)
-            amount = float(num_match.group(0).replace(",", ".")) if num_match else 10.0
-            return _ajustar_volumen_relativo(-amount)
-
-        if any(w in raw for w in ("mute", "mutear", "silenciar", "silencio", "cállate", "callate")):
+        if any(w in raw for w in ("mute", "mutear", "silenciar", "silencio", "callate", "cállate")):
             return modo_no_molestar.invoke({"activar": True})
 
-        if any(w in raw for w in ("maximo", "máximo", "max", "todo")):
+        if any(w in raw for w in ("maximo", "máximo", "max", "todo", "a tope")):
             return _ajustar_volumen_absoluto(100.0)
 
         if any(w in raw for w in ("minimo", "mínimo", "min", "cero")):
             return _ajustar_volumen_absoluto(0.0)
 
+        # 1. Check for absolute target markers: 'al 50', 'a 80', 'en 40', 'hasta 70', '50%'
+        target_match = re.search(r"\b(?:al|a|en|en\s+el|hasta)\s+(\d+(?:[.,]\d+)?)\s*%?", raw)
+        if target_match:
+            return _ajustar_volumen_absoluto(float(target_match.group(1).replace(",", ".")))
+
+        percent_match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", raw)
+        if percent_match:
+            return _ajustar_volumen_absoluto(float(percent_match.group(1).replace(",", ".")))
+
+        # 2. Check for relative plus/minus explicitly (+10, -20)
+        if raw.startswith("+") or raw.startswith("-"):
+            num = re.search(r"-?\d+(?:[.,]\d+)?", raw)
+            if num:
+                return _ajustar_volumen_relativo(float(num.group(0).replace(",", ".")))
+
+        # 3. Check for relative phrases: 'sube 20', 'baja 15', 'subele un 10'
+        rel_up = re.search(r"\b(?:subir|sube|subele|súbele|aumentar|aumenta|mas|más|up)\s+(?:un\s+)?(\d+(?:[.,]\d+)?)", raw)
+        if rel_up:
+            return _ajustar_volumen_relativo(float(rel_up.group(1).replace(",", ".")))
+
+        rel_down = re.search(r"\b(?:bajar|baja|bajale|bájale|disminuir|disminuye|menos|down)\s+(?:un\s+)?(\d+(?:[.,]\d+)?)", raw)
+        if rel_down:
+            return _ajustar_volumen_relativo(-float(rel_down.group(1).replace(",", ".")))
+
+        # 4. Pure directional words without numbers
+        if any(w in raw for w in ("subir", "sube", "subelo", "súbelo", "subele", "súbele", "aumentar", "aumenta", "up", "mas", "más", "louder", "higher")):
+            return _ajustar_volumen_relativo(10.0)
+
+        if any(w in raw for w in ("bajar", "baja", "bajalo", "bájalo", "bajale", "bájale", "disminuir", "disminuye", "down", "menos", "softer", "lower")):
+            return _ajustar_volumen_relativo(-10.0)
+
+        # 5. Pure numeric fallback: '50', '80.0', 50
         m = re.search(r"-?\d+(?:[.,]\d+)?", raw)
         if not m:
             return "Indique un nivel numérico."
 
         valor = float(m.group(0).replace(",", "."))
-        if raw.startswith("+") or raw.startswith("-"):
-            return _ajustar_volumen_relativo(valor)
+        if 0.0 < valor < 1.0:
+            valor *= 100.0
         return _ajustar_volumen_absoluto(valor)
     except Exception as e:
         return f"Error: {e}"

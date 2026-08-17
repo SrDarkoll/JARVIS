@@ -64,6 +64,35 @@ class TestAjustarVolumen:
         system.ajustar_volumen.invoke({"nivel": "bajar"})
         assert 40.0 in calls
 
+    def test_ajustar_volumen_target_percentage_phrases(self, monkeypatch):
+        from tools import system
+
+        calls = []
+        monkeypatch.setattr(system, "_ajustar_volumen_absoluto", lambda v: calls.append(v) or f"vol={v}")
+
+        system.ajustar_volumen.invoke({"nivel": "bajalo al 50"})
+        assert 50.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "subelo al 100"})
+        assert 100.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "bájalo al 50%"})
+        assert 50.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "súbele al 80"})
+        assert 80.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "ponlo en 30"})
+        assert 30.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "50%"})
+        assert 50.0 in calls
+
 
 class TestModoNoMolestar:
     def test_modo_no_molestar_activar(self, monkeypatch):
