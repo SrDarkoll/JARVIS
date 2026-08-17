@@ -51,6 +51,19 @@ class TestAjustarVolumen:
         system.ajustar_volumen.invoke({"nivel": "-20"})
         assert 30.0 in calls
 
+    def test_ajustar_volumen_natural_words_subir_bajar(self, monkeypatch):
+        from tools import system
+
+        calls = []
+        monkeypatch.setattr(system, "_leer_volumen_actual", lambda: 50.0)
+        monkeypatch.setattr(system, "_ajustar_volumen_absoluto", lambda v: calls.append(v) or f"vol={v}")
+        system.ajustar_volumen.invoke({"nivel": "subir"})
+        assert 60.0 in calls
+
+        calls.clear()
+        system.ajustar_volumen.invoke({"nivel": "bajar"})
+        assert 40.0 in calls
+
 
 class TestModoNoMolestar:
     def test_modo_no_molestar_activar(self, monkeypatch):

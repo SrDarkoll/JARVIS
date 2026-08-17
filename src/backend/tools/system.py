@@ -100,25 +100,59 @@ def _obtener_control_volumen():
     raise RuntimeError("I could not get the volume controller del sistema.")
 
 
+def _windows_key_volume(delta: float) -> str:
+    """Send Windows virtual media key events (works out-of-the-box on all Windows systems)."""
+    import ctypes
+
+    vk = 0xAF if delta > 0 else 0xAE
+    steps = max(1, min(50, int(round(abs(delta) / 2.0))))
+    for _ in range(steps):
+        ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
+    action = "aumentado" if delta > 0 else "disminuido"
+    return f"Volumen {action}."
+
+
+def _windows_key_mute() -> str:
+    """Toggle mute via Windows virtual media key."""
+    import ctypes
+
+    ctypes.windll.user32.keybd_event(0xAD, 0, 0, 0)
+    ctypes.windll.user32.keybd_event(0xAD, 0, 2, 0)
+    return "Silencio alternado."
+
+
 def _leer_volumen_actual() -> float:
     try:
         if not _VOL_AVAILABLE:
-            return 0.0
+            return 50.0
         volume = _obtener_control_volumen()
         return max(0.0, min(100.0, volume.GetMasterVolumeLevelScalar() * 100.0))
     except Exception:
-        return 0.0
+        return 50.0
 
 
 def _ajustar_volumen_absoluto(objetivo: float) -> str:
     try:
         objetivo = max(0.0, min(100.0, float(objetivo)))
-        if not _VOL_AVAILABLE:
-            return "Control de volumen no available en este SO."
-        volume = _obtener_control_volumen()
-        volume.SetMasterVolumeLevelScalar(objetivo / 100.0, None)
-        return f"Volumen al {int(round(objetivo))}%."
+        if _VOL_AVAILABLE:
+            volume = _obtener_control_volumen()
+            volume.SetMasterVolumeLevelScalar(objetivo / 100.0, None)
+            return f"Volumen al {int(round(objetivo))}%."
+        if IS_WINDOWS:
+            # Fallback to virtual key events when pycaw is not installed
+            if objetivo == 0:
+                return _windows_key_mute()
+            actual = _leer_volumen_actual()
+            delta = objetivo - actual
+            return _windows_key_volume(delta if delta != 0 else 10.0)
+        return "Control de volumen no available en este SO."
     except Exception as e:
+        if IS_WINDOWS:
+            try:
+                return _windows_key_volume(10.0 if objetivo > 50 else -10.0)
+            except Exception:
+                pass
         return f"Error ajustando volumen: {e}"
 
 
@@ -129,12 +163,34 @@ def _ajustar_volumen_relativo(delta: float) -> str:
 
 @tool
 def ajustar_volumen(nivel: int | float | str) -> str:
-    """Ajusta el volumen maestro del sistema (0-100)."""
+    """Ajusta el volumen maestro del sistema (0-100), o sube/baja relativamente ('subir', 'bajar', '+10', '-10', '50%')."""
     try:
         raw = str(nivel).strip().lower()
+
+        # Handle non-numeric natural words
+        if any(w in raw for w in ("subir", "sube", "subele", "aumentar", "aumenta", "up", "mas", "más", "louder", "higher")):
+            num_match = re.search(r"\d+(?:[.,]\d+)?", raw)
+            amount = float(num_match.group(0).replace(",", ".")) if num_match else 10.0
+            return _ajustar_volumen_relativo(amount)
+
+        if any(w in raw for w in ("bajar", "baja", "bajale", "disminuir", "disminuye", "down", "menos", "softer", "lower")):
+            num_match = re.search(r"\d+(?:[.,]\d+)?", raw)
+            amount = float(num_match.group(0).replace(",", ".")) if num_match else 10.0
+            return _ajustar_volumen_relativo(-amount)
+
+        if any(w in raw for w in ("mute", "mutear", "silenciar", "silencio", "cállate", "callate")):
+            return modo_no_molestar.invoke({"activar": True})
+
+        if any(w in raw for w in ("maximo", "máximo", "max", "todo")):
+            return _ajustar_volumen_absoluto(100.0)
+
+        if any(w in raw for w in ("minimo", "mínimo", "min", "cero")):
+            return _ajustar_volumen_absoluto(0.0)
+
         m = re.search(r"-?\d+(?:[.,]\d+)?", raw)
         if not m:
             return "Indique un nivel numérico."
+
         valor = float(m.group(0).replace(",", "."))
         if raw.startswith("+") or raw.startswith("-"):
             return _ajustar_volumen_relativo(valor)
@@ -147,11 +203,14 @@ def ajustar_volumen(nivel: int | float | str) -> str:
 def modo_no_molestar(activar: bool) -> str:
     """Silencia o activa el sonido del sistema."""
     try:
-        if not _VOL_AVAILABLE:
-            return "Control de audio no available."
-        volume = _obtener_control_volumen()
-        volume.SetMute(1 if activar else 0, None)
-        return "Sistema silenciado." if activar else "Sonido activado."
+        if _VOL_AVAILABLE:
+            volume = _obtener_control_volumen()
+            volume.SetMute(1 if activar else 0, None)
+            return "Sistema silenciado." if activar else "Sonido activado."
+        if IS_WINDOWS:
+            _windows_key_mute()
+            return "Silencio alternado."
+        return "Control de audio no available."
     except Exception as e:
         return f"Error: {e}"
 
