@@ -480,3 +480,65 @@ def test_control_keyboard_shortcuts_fallback_when_buttons_are_missing():
 
     assert adapter.control(509, "mute")
     assert shortcuts[-1] == "^+{DOWN}"
+
+
+def test_is_safe_click_rect_rejects_taskbar_and_out_of_bounds():
+    from modules.spotify.desktop.windows import _is_safe_click_rect
+
+    class Rect:
+        def __init__(self, l, t, r, b):
+            self.left, self.top, self.right, self.bottom = l, t, r, b
+
+    win_bounds = (100, 100, 900, 700)
+
+    # Safe coordinate inside window
+    safe = Rect(200, 300, 300, 340)
+    assert _is_safe_click_rect(safe, win_bounds) is True
+
+    # Near bottom of window (potential taskbar overlap)
+    near_bottom = Rect(200, 680, 300, 710)
+    assert _is_safe_click_rect(near_bottom, win_bounds) is False
+
+    # Near top titlebar
+    near_top = Rect(200, 110, 300, 130)
+    assert _is_safe_click_rect(near_top, win_bounds) is False
+
+    # Outside window completely
+    outside = Rect(10, 20, 50, 60)
+    assert _is_safe_click_rect(outside, win_bounds) is False
+
+
+def test_queue_candidate_uses_shift_f10_when_clicks_are_unsafe():
+    shortcuts = []
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+    )
+
+    class UnsafeControl(FakeControl):
+        def __init__(self):
+            super().__init__(name="Play Song Artist", control_type="button")
+            self.focused = False
+
+        def rectangle(self):
+            class R:
+                left, top, right, bottom = 0, 1040, 100, 1080
+            return R()
+
+        def set_focus(self):
+            self.focused = True
+
+    control = UnsafeControl()
+    candidate = SpotifyCandidate(
+        element_id="c-unsafe",
+        title="Song",
+        artist="Artist",
+        kind="track",
+        subtitle="Song",
+    )
+    adapter._elements["c-unsafe"] = control
+
+    assert adapter.queue_candidate(candidate, handle=509)
+    assert control.focused
+    assert "+{F10}" in shortcuts
+    assert "{DOWN}{ENTER}" in shortcuts

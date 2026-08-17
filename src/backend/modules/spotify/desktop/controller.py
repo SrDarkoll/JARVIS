@@ -720,7 +720,10 @@ class SpotifyDesktopController:
             queue_fn = getattr(self._uia, "queue_candidate", None)
             queued = False
             if callable(queue_fn):
-                queued = bool(queue_fn(selected))
+                try:
+                    queued = bool(queue_fn(selected, handle=window.handle))
+                except TypeError:
+                    queued = bool(queue_fn(selected))
 
             if queued:
                 states.append(AutomationState.COMPLETE)

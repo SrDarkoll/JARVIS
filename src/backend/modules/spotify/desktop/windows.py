@@ -463,6 +463,36 @@ def _click_control(control: Any) -> bool:
         return False
 
 
+def _is_safe_click_rect(rect: Any, win_bounds: tuple[int, int, int, int] | None = None) -> bool:
+    """Validate that clicking this rectangle stays strictly inside Spotify and far from the taskbar."""
+    if rect is None:
+        return False
+    try:
+        left = int(getattr(rect, "left", 0))
+        right = int(getattr(rect, "right", 0))
+        top = int(getattr(rect, "top", 0))
+        bottom = int(getattr(rect, "bottom", 0))
+        if right <= left or bottom <= top:
+            return False
+        cx = (left + right) // 2
+        cy = (top + bottom) // 2
+
+        if win_bounds is not None:
+            w_left, w_top, w_right, w_bottom = win_bounds
+            # Verify coordinates are safely inside Spotify's window
+            if not (w_left + 15 < cx < w_right - 15):
+                return False
+            # Verify coordinates avoid window titlebar (top 45px) and taskbar (bottom 55px)
+            if not (w_top + 45 < cy < w_bottom - 55):
+                return False
+            return True
+
+        # Fallback when window bounds are unavailable: enforce general screen margins
+        return 60 < cy < 960 and 60 < cx < 1860
+    except Exception:
+        return False
+
+
 def _prepare_control_for_activation(control: Any) -> tuple[bool, bool]:
     visibility = getattr(control, "is_visible", None)
     if not callable(visibility):
@@ -674,7 +704,26 @@ class SpotifyUIAutomationAdapter:
         ready, _scrolled = _prepare_control_for_activation(control)
         return ready and _invoke_control(control)
 
-    def queue_candidate(self, candidate: SpotifyCandidate) -> bool:
+    def _find_queue_menu_item(self, handle: int) -> Any | None:
+        queue_terms = (
+            "anadir a la fila",
+            "añadir a la fila",
+            "agregar a la fila",
+            "anadir a la cola",
+            "añadir a la cola",
+            "agregar a la cola",
+            "add to queue",
+            "queue",
+        )
+        for control in self._controls(handle):
+            c_type = _control_type(control).lower()
+            if c_type in ("menuitem", "button", "text", "custom"):
+                name = normalize_text(_control_name(control))
+                if any(term in name for term in queue_terms):
+                    return control
+        return None
+
+    def queue_candidate(self, candidate: SpotifyCandidate, handle: int | None = None) -> bool:
         control = self._elements.get(candidate.element_id)
         if control is None:
             return False
@@ -682,14 +731,20 @@ class SpotifyUIAutomationAdapter:
         if not ready:
             return False
 
-        # Step 1: Open context menu by right clicking on the track row
-        r = None
+        win_bounds = None
+        if handle and IS_WINDOWS:
+            try:
+                win_bounds = _window_bounds(handle)
+            except Exception:
+                win_bounds = None
+
+        # Step 1: Open context menu safely (never clicking if outside verified safe bounds)
         opened = False
         try:
             rect = getattr(control, "rectangle", None)
             if callable(rect):
                 r = rect()
-                if r.top > 50 and r.bottom < 1000 and r.left > 50 and r.right > r.left:
+                if _is_safe_click_rect(r, win_bounds):
                     control.click_input(button="right")
                     opened = True
         except Exception:
@@ -698,7 +753,7 @@ class SpotifyUIAutomationAdapter:
         if not opened:
             try:
                 control.set_focus()
-                control.click_input(button="right")
+                self._send_shortcut("+{F10}")
                 opened = True
             except Exception:
                 pass
@@ -706,9 +761,27 @@ class SpotifyUIAutomationAdapter:
         if not opened:
             return False
 
-        # Step 2: Select option #3 ("Agregar a la fila de reproducción") via fast keyboard navigation
         import time
-        time.sleep(0.15)
+        time.sleep(0.18)
+
+        # Step 2: Try to locate and invoke queue menu item in UIA tree
+        if handle:
+            menu_item = self._find_queue_menu_item(handle)
+            if menu_item is not None:
+                if _invoke_control(menu_item):
+                    return True
+                try:
+                    menu_item.click_input()
+                    return True
+                except Exception:
+                    pass
+
+        # Step 3: Fast keyboard navigation (First option in Spotify track search menu is "Add to queue")
+        try:
+            self._send_shortcut("{DOWN}{ENTER}")
+            return True
+        except Exception:
+            pass
 
         if IS_WINDOWS:
             try:
@@ -723,18 +796,12 @@ class SpotifyUIAutomationAdapter:
                     time.sleep(0.04)
 
                 _press_key(VK_DOWN)
-                _press_key(VK_DOWN)
-                _press_key(VK_DOWN)
                 _press_key(VK_RETURN)
                 return True
             except Exception:
                 pass
 
-        try:
-            self._send_shortcut("{DOWN}{DOWN}{DOWN}{ENTER}")
-            return True
-        except Exception:
-            return False
+        return False
 
     def control(self, handle: int, action: str) -> bool:
         normalized_action = normalize_text(action)
