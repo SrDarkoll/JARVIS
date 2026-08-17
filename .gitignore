@@ -38,6 +38,7 @@ scratch/
 tmp/
 temp/
 *.zip
+*.rar
 .pytest_cache/
 .ruff_cache/
 .coverage
