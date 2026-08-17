@@ -141,3 +141,24 @@ def test_artist_in_raw_query_avoids_same_title_ambiguity():
     assert decision.status is MatchStatus.SELECTED
     assert decision.selected is not None
     assert decision.selected.element_id == "weeknd"
+
+
+def test_same_artist_collaboration_does_not_block_with_ambiguity():
+    request = SpotifyRequest(
+        raw="Luz De Dia by Los Enanitos Verdes",
+        query="Luz De Dia Los Enanitos Verdes",
+        title="Luz De Dia",
+        artist="Los Enanitos Verdes",
+    )
+    decision = choose_candidate(
+        request,
+        [
+            candidate("Luz De Dia", "Los Enanitos Verdes", "original"),
+            candidate("Luz de Día", "Los Enanitos Verdes, Marco Antonio Solís", "collab"),
+            candidate("Luz De Dia - En Vivo", "Los Enanitos Verdes", "live"),
+        ],
+    )
+
+    assert decision.status is MatchStatus.SELECTED
+    assert decision.selected is not None
+    assert decision.selected.element_id == "original"

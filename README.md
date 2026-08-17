@@ -107,7 +107,7 @@ If you only want to run J.A.R.V.I.S., you do not need to set up a development en
 
 ### 1. Download
 
-Download the newest Windows release package from the [Releases page](https://github.com/SrDarkoll/JARVIS/releases) and extract it to a folder on your PC.
+Download the newest Windows release package from the [Releases page](https://github.com/SrDarkoll/JARVIS/releases) (such as the [v0.1.0-alpha.4 release](https://github.com/SrDarkoll/JARVIS/releases/tag/v0.1.0-alpha.4)) and extract it to a folder on your PC.
 
 ### 2. Install
 
@@ -187,7 +187,7 @@ J.A.R.V.I.S. can touch real desktop applications, so tools are not treated as eq
 - **Secrets stay in `.env`** — API keys, tokens, caches, voice profiles, memory databases, and logs should never be committed.
 
 > [!WARNING]
-> The unified diagnostic log can contain conversation text, frontend events, tool activity, and backend output in plaintext. Keep the J.A.R.V.I.S. runtime/data directory private.
+> The unified diagnostic log (`log.txt`) can contain conversation text in plaintext, frontend events, tool activity, and backend output. Keep the J.A.R.V.I.S. runtime/data directory private.
 
 Mutable application data defaults to the platform application-data directory and can be overridden with `JARVIS_DATA_DIR`. `JARVIS_RUNTIME_DIR` remains a compatibility alias for existing installations.
 
@@ -253,7 +253,7 @@ chmod +x setup.sh
 
 ### Local Piper Voices
 
-The project bundles English and Spanish Piper `.onnx` voice models under `models/`. Additional voices can be downloaded with Piper's voice downloader.
+The project bundles English and Spanish Piper neural voice models (paired `.onnx` and `.onnx.json` files) under `models/`. Additional voices can be downloaded with Piper's voice downloader.
 
 Example:
 
@@ -269,7 +269,7 @@ Example:
 | --- | --- | --- |
 | `GEMINI_API_KEY` | Gemini inference + Gemini Live API key | `""` |
 | `GROQ_API_KEY` | Alternate/fallback inference and optional Groq STT | `""` |
-| `SPOTIFY_PLAYBACK_MODE` | `auto`, `desktop`, or `api` | `auto` |
+| `SPOTIFY_PLAYBACK_MODE` | `auto`, `desktop`, or `api`. `SPOTIFY_PLAYBACK_MODE=desktop` controls Spotify Desktop without developer keys (does not bypass Spotify Free restrictions) | `auto` |
 | `JARVIS_CORE_MODE` | Keep heavy optional services disabled | `true` |
 | `JARVIS_VOICE_ID_ENABLED` | Enable experimental SpeechBrain speaker ID | disabled |
 | `JARVIS_RAG_ENABLED` | Enable RAG/embeddings path | disabled |
@@ -283,6 +283,10 @@ Example:
 | `JARVIS_UNIFIED_LOG_ENABLED` | Unified diagnostic log | `true` |
 
 See [`.env.example`](.env.example) for the full configuration surface.
+
+### Browser & Audio Recognition Support
+
+The web HUD uses native `SpeechRecognition` in Chrome/Edge for fast client-side hints, and provides adaptive audio fallback in Firefox and Safari. For non-loopback network access over LAN, HTTPS is required for microphone permissions.
 
 ---
 

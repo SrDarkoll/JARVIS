@@ -80,8 +80,10 @@ def score_candidate(request: SpotifyRequest, candidate: SpotifyCandidate) -> flo
             )
             if normalize_text(component)
         }
-        if expected_artist == observed_artist or expected_artist in artist_components:
+        if expected_artist == observed_artist:
             artist_sequence = 1.0
+        elif expected_artist in artist_components:
+            artist_sequence = 0.90
         else:
             artist_sequence = SequenceMatcher(
                 None,
@@ -128,8 +130,23 @@ def choose_candidate(
         and normalize_text(best.title) == normalize_text(runner_up.title)
         and normalize_text(best.artist) != normalize_text(runner_up.artist)
     )
+    same_primary_artist = bool(
+        runner_up
+        and (
+            normalize_text(best.artist) == normalize_text(runner_up.artist)
+            or (request.artist and normalize_text(request.artist) in normalize_text(best.artist) and normalize_text(request.artist) in normalize_text(runner_up.artist))
+            or (best_artist_in_query and normalize_text(best.artist) in normalize_text(runner_up.artist))
+            or (normalize_text(best.artist) in normalize_text(runner_up.artist))
+            or (normalize_text(runner_up.artist) in normalize_text(best.artist))
+        )
+    )
     margin = best.score - (runner_up.score if runner_up else 0.0)
-    if best.score < 0.74 or margin < 0.07 or same_title_different_artist:
+    should_be_ambiguous = (
+        best.score < 0.74
+        or same_title_different_artist
+        or (margin < 0.07 and not same_primary_artist and not request.artist and not best_artist_in_query)
+    )
+    if should_be_ambiguous:
         return MatchDecision(
             status=MatchStatus.AMBIGUOUS,
             alternatives=tuple(ranked[:3]),

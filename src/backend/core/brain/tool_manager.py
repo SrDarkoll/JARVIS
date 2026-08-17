@@ -422,11 +422,11 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         if not ok:
             security_manager._proactive_register_tool_error(
                 tool_name,
-                "tool_reported_failure",
+                result_txt or "tool_reported_failure",
             )
             outcome = "error"
-            result_preview = "tool_reported_failure"
-            raise _ToolReportedFailure("tool_reported_failure")
+            result_preview = result_txt or "tool_reported_failure"
+            raise _ToolReportedFailure(result_txt or "tool_reported_failure")
 
         elapsed = (_time.perf_counter() - started) * 1000.0
         obs_tool(tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt)
