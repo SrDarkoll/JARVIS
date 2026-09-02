@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+from quart.testing.connections import WebsocketResponseError
 from voice.live_session import LiveSession, LiveSessionManager, LiveSessionState
 
 
@@ -41,6 +43,77 @@ def test_live_session_lifecycle_and_state_emission():
         await session.emit_audio_chunk(test_pcm)
         assert len(emitted_bytes) == 1
         assert emitted_bytes[0] == test_pcm
+
+    asyncio.run(_run())
+
+
+def test_live_session_audio_queue_is_bounded_by_chunks_and_bytes():
+    async def _run():
+        session = LiveSession(
+            session_id="bounded-audio",
+            send_text=lambda _text: None,
+            send_bytes=lambda _data: None,
+            audio_queue_max_chunks=3,
+            max_audio_queue_bytes=8,
+            max_audio_chunk_bytes=6,
+        )
+
+        assert await session.handle_audio_chunk(b"1111") is True
+        assert await session.handle_audio_chunk(b"2222") is True
+        assert await session.handle_audio_chunk(b"3333") is True
+        assert session._input_audio_queue.qsize() == 2
+        assert session.input_audio_bytes == 8
+
+        first = await session.next_audio_chunk()
+        assert first == b"2222"
+        session.audio_task_done(first)
+        assert session.input_audio_bytes == 4
+
+        assert await session.handle_audio_chunk(b"1234567") is False
+        assert session.input_audio_bytes == 4
+
+        await session.interrupt()
+        assert session.input_audio_bytes == 0
+
+    asyncio.run(_run())
+
+
+def test_live_session_provider_reconnect_pauses_and_drops_stale_audio():
+    async def _run():
+        emitted: list[dict] = []
+
+        async def send_text(payload: str):
+            emitted.append(json.loads(payload))
+
+        session = LiveSession(
+            session_id="provider-state",
+            send_text=send_text,
+            send_bytes=lambda _data: None,
+        )
+
+        await session.set_provider_state(
+            "reconnecting",
+            active_mode="gemini_live",
+            failure_code="gemini_live_connection_rotating",
+        )
+        accepted = await session.handle_audio_chunk(b"stale-audio")
+
+        assert accepted is True
+        assert session.input_paused is True
+        assert session.input_audio_bytes == 0
+        assert session._input_audio_queue.empty()
+        assert emitted[-1] == {
+            "type": "provider_state",
+            "state": "reconnecting",
+            "active_mode": "gemini_live",
+            "code": "gemini_live_connection_rotating",
+            "input_paused": True,
+        }
+
+        await session.set_provider_state("ready", active_mode="gemini_live")
+        assert session.input_paused is False
+        assert await session.handle_audio_chunk(b"fresh-audio") is True
+        await session.close()
 
     asyncio.run(_run())
 
@@ -95,7 +168,7 @@ def test_live_session_interrupt_barge_in_cancels_active_task():
     asyncio.run(_run())
 
 
-def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_and_playback():
+def test_live_session_interrupt_preserves_transport_and_tool_tracking_tasks():
     async def _run():
         session = LiveSession(
             session_id="test-session-task-isolation",
@@ -104,6 +177,7 @@ def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_a
         )
 
         transport_cancelled = False
+        tool_cancelled = False
         turn_cancelled = False
         playback_cancelled = False
 
@@ -123,6 +197,14 @@ def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_a
                 turn_cancelled = True
                 raise
 
+        async def _mock_tool_loop():
+            nonlocal tool_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                tool_cancelled = True
+                raise
+
         async def _mock_playback_loop():
             nonlocal playback_cancelled
             try:
@@ -132,10 +214,12 @@ def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_a
                 raise
 
         transport_task = asyncio.create_task(_mock_transport_loop())
+        tool_task = asyncio.create_task(_mock_tool_loop())
         turn_task = asyncio.create_task(_mock_turn_loop())
         playback_task = asyncio.create_task(_mock_playback_loop())
 
         session.attach_transport_task(transport_task)
+        session.attach_tool_task(tool_task)
         session.attach_turn_task(turn_task)
         session.attach_playback_task(playback_task)
         await asyncio.sleep(0.01)
@@ -153,9 +237,16 @@ def test_live_session_interrupt_preserves_transport_tasks_while_canceling_turn_a
         assert transport_cancelled is False
         assert not transport_task.done()
 
-        # Session close terminates transport tasks cleanly
+        # Tool tracking MUST remain alive so a non-preemptible worker can report
+        # its truthful late completion state.
+        assert tool_cancelled is False
+        assert not tool_task.done()
+        assert tool_task in session._tool_tasks
+
+        # Session close terminates transport and tool tracking tasks cleanly.
         await session.close()
         assert transport_task.done()
+        assert tool_task.done()
 
     asyncio.run(_run())
 
@@ -221,11 +312,43 @@ def test_live_voice_websocket_connect():
 
             # Send ping
             await ws.send(json.dumps({"type": "ping"}))
-            resp = await ws.receive()
-            pong_data = json.loads(resp)
-            assert pong_data.get("type") in {"pong", "state_change", "session_ready"}
+            received_types = set()
+            for _ in range(4):
+                response = json.loads(await ws.receive())
+                received_types.add(response.get("type"))
+                if response.get("type") == "pong":
+                    break
+            assert "pong" in received_types
 
             # Close gracefully
+            await ws.send(json.dumps({"type": "stop"}))
+
+    asyncio.run(_run())
+
+
+def test_live_voice_websocket_rejects_oversized_audio_frame(monkeypatch):
+    async def _run():
+        import jarvis_backend
+
+        monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+        client = jarvis_backend.app.test_client()
+        async with client.websocket(
+            "/api/voice/stream",
+            query_string={"lang": "es", "mode": "hybrid"},
+            headers={"Origin": "http://127.0.0.1:5002"},
+        ) as ws:
+            await ws.receive()
+            await ws.send(b"x" * (64 * 1024 + 1))
+
+            error = None
+            for _ in range(4):
+                message = json.loads(await asyncio.wait_for(ws.receive(), timeout=0.2))
+                if message.get("type") == "error":
+                    error = message
+                    break
+
+            assert error is not None
+            assert error["code"] == "audio_frame_too_large"
             await ws.send(json.dumps({"type": "stop"}))
 
     asyncio.run(_run())
@@ -237,29 +360,48 @@ def test_live_voice_websocket_security_origin_and_token(monkeypatch):
         client = jarvis_backend.app.test_client()
 
         # 1. Untrusted origin should be rejected with 403
-        try:
+        monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+        with pytest.raises(WebsocketResponseError) as untrusted_error:
             async with client.websocket(
                 "/api/voice/stream",
                 query_string={"lang": "es", "mode": "hybrid"},
                 headers={"Origin": "http://malicious-site.example.com"},
-            ) as ws:
-                assert False, "Untrusted origin should not establish websocket"
-        except Exception:
-            pass  # Expected rejection
+            ):
+                pass
+        # quart-cors may reject the handshake with 400 before JARVIS's own
+        # before_websocket guard returns its controlled 403.
+        assert untrusted_error.value.response.status_code in {400, 403}
+
+        with pytest.raises(WebsocketResponseError) as remote_no_origin_error:
+            async with client.websocket(
+                "/api/voice/stream",
+                query_string={"lang": "es", "mode": "hybrid"},
+                scope_base={"client": ("192.0.2.10", 50000)},
+            ):
+                pass
+        assert remote_no_origin_error.value.response.status_code in {400, 401}
 
         # 2. Token protection when configured
         monkeypatch.setenv("JARVIS_API_TOKEN", "super-secret-token")
 
         # Connection without token should fail
-        try:
+        with pytest.raises(WebsocketResponseError) as missing_token_error:
             async with client.websocket(
                 "/api/voice/stream",
                 query_string={"lang": "es", "mode": "hybrid"},
                 headers={"Origin": "http://127.0.0.1:5002"},
-            ) as ws:
-                assert False, "Websocket without required token should fail"
-        except Exception:
-            pass  # Expected rejection
+            ):
+                pass
+        assert missing_token_error.value.response.status_code == 401
+
+        with pytest.raises(WebsocketResponseError) as invalid_token_error:
+            async with client.websocket(
+                "/api/voice/stream",
+                query_string={"lang": "es", "mode": "hybrid", "token": "wrong-token"},
+                headers={"Origin": "http://127.0.0.1:5002"},
+            ):
+                pass
+        assert invalid_token_error.value.response.status_code == 401
 
         # Connection with valid token in query param should succeed
         async with client.websocket(
@@ -270,6 +412,37 @@ def test_live_voice_websocket_security_origin_and_token(monkeypatch):
             msg = await ws.receive()
             data = json.loads(msg)
             assert data["type"] in {"state_change", "session_ready"}
+            await ws.send(json.dumps({"type": "stop"}))
+
+    asyncio.run(_run())
+
+
+def test_live_voice_websocket_accepts_local_http_only_bootstrap_cookie(monkeypatch):
+    async def _run():
+        import jarvis_backend
+
+        monkeypatch.setenv("JARVIS_API_TOKEN", "local-bootstrap-secret")
+        client = jarvis_backend.app.test_client()
+        response = await client.get(
+            "/",
+            headers={"Host": "localhost:5002"},
+            scope_base={"client": ("127.0.0.1", 50000)},
+        )
+
+        cookies = response.headers.getlist("Set-Cookie")
+        assert any("jarvis_local_auth=" in cookie for cookie in cookies)
+        assert any("HttpOnly" in cookie for cookie in cookies)
+        assert all("local-bootstrap-secret" not in cookie for cookie in cookies)
+        assert "local-bootstrap-secret" not in (await response.get_data(as_text=True))
+
+        async with client.websocket(
+            "/api/voice/stream",
+            query_string={"lang": "es", "mode": "hybrid"},
+            headers={"Origin": "http://localhost:5002"},
+            scope_base={"client": ("127.0.0.1", 50000)},
+        ) as ws:
+            message = json.loads(await ws.receive())
+            assert message["type"] in {"state_change", "session_ready"}
             await ws.send(json.dumps({"type": "stop"}))
 
     asyncio.run(_run())

@@ -38,6 +38,10 @@ class HybridLiveStreamer:
         """Start the hybrid streamer loop."""
         self._running = True
         await self.session.set_state(LiveSessionState.LISTENING)
+        await self.session.set_provider_state(
+            "ready",
+            active_mode="hybrid_stream",
+        )
         await self.session.emit_json({
             "type": "session_ready",
             "mode": "hybrid_stream",
@@ -56,6 +60,7 @@ class HybridLiveStreamer:
             pass
 
     async def _execute_streaming_turn(self, user_text: str) -> None:
+        self.session.diagnostics.record_turn_start()
         await self.session.set_state(LiveSessionState.PROCESSING)
         await self.session.emit_json({
             "type": "transcript",
@@ -94,6 +99,7 @@ class HybridLiveStreamer:
         if not response_text:
             response_text = "Entendido, a su disposición."
 
+        self.session.diagnostics.record_first_token()
         await self.session.set_state(LiveSessionState.SPEAKING)
         await self.session.emit_json({
             "type": "transcript",
@@ -105,8 +111,19 @@ class HybridLiveStreamer:
         # Incrementally synthesize and stream audio
         await self._stream_synthesized_clauses(response_text)
 
+        last_turn = self.session.diagnostics.record_turn_complete()
+        diagnostics = self.session.diagnostics.get_summary()
         await self.session.set_state(LiveSessionState.LISTENING)
-        await self.session.emit_json({"type": "turn_complete"})
+        await self.session.emit_json(
+            {
+                "type": "turn_complete",
+                "diagnostics": diagnostics,
+                "metrics": {
+                    **last_turn,
+                    "provider": "Hybrid Live",
+                },
+            }
+        )
 
     async def _stream_synthesized_clauses(self, full_text: str) -> None:
         """Splits text into short clauses and yields PCM chunks rapidly."""
