@@ -114,9 +114,13 @@ skills-lock.json
 .DS_Store
 Thumbs.db
 
-# J.A.R.V.I.S. Datos Personales & Memoria
+# J.A.R.V.I.S. Datos Personales, Memoria & Bóveda de Conocimiento
 memoria_jarvis*.json
 memoria_jarvis*.db
+memoria_jarvis*.db-shm
+memoria_jarvis*.db-wal
+vault/
+*.vault/
 tts_pronunciacion*.json
 voice_profiles/
 *.tmp
@@ -127,4 +131,3 @@ voice_profiles/
 .cache-*
 .spotify_cache
 .spotify_cache/
-

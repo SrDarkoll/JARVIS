@@ -125,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-656 passed, 1 skipped
+783 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -139,6 +139,7 @@ Frontend JavaScript syntax checks:
 ```powershell
 node --check src\frontend\static\js\main.js
 node --check src\frontend\static\js\modules\api.js
+node --check src\frontend\static\js\modules\hud.js
 node --check src\frontend\static\js\modules\live-voice.js
 node --check src\frontend\static\js\modules\recognition-policy.js
 node --check src\frontend\static\js\modules\voice-capabilities.js
@@ -159,6 +160,30 @@ python -m pip check
 python -m pip_audit -r requirements.txt
 python -m ruff check src/backend
 pytest tests\test_memory_rag_resilience.py -q
+```
+
+Computer Use, OS visual navigation and failsafe regressions:
+
+```powershell
+pytest tests\test_computer_use.py -q
+```
+
+Proactive Desktop Observer, Workflow Predictor and terminal anomaly regressions:
+
+```powershell
+pytest tests\test_proactive_observer.py tests\test_workflow_predictor.py -q
+```
+
+Unified Cognitive Memory, Vault Sync, Sleep Consolidation, Hybrid Vector Search and JIT Voice Cache regressions:
+
+```powershell
+pytest tests\test_procedural_memory.py tests\test_unified_cognitive_memory.py tests\test_vault_and_consolidation.py tests\test_hybrid_vector_search.py tests\test_jit_voice_cache.py -q
+```
+
+Live Gemini audio/screen streaming regressions:
+
+```powershell
+pytest tests\test_live_screen_stream.py -q
 ```
 
 LLM OpenAI-compatible fallback regression:

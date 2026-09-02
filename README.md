@@ -74,14 +74,18 @@ J.A.R.V.I.S. can instead use **Gemini Live native bidirectional audio**, keeping
 
 ### Core capabilities
 
-- 🗣️ **Real-time voice** — Native Gemini Live audio or the standard STT → LLM → Piper path.
-- 🎵 **Spotify control** — Search/play music, build a mix, pause/resume, skip, queue tracks, like/unlike songs, and inspect the currently playing track. Playback can use Spotify Desktop automation or a cached Web API session.
+- 🗣️ **Experimental real-time voice** — Native Gemini Live bidirectional audio or a standard STT → LLM → Piper fallback, with measured per-turn TTFT/first-audio/total metrics rather than a fixed latency guarantee.
+- 👁️ **Experimental Live Screen Streaming & Vision** — Bounded JPEG screen frames sent to a Gemini Live multimodal session; latency and model interpretation depend on the network/provider.
+- 🖱️ **Experimental Computer Use & OS Navigation** — Guarded Win32 clicks, UTF-16 `SendInput` typing, hotkeys, scrolling and drag-and-drop across the virtual desktop, with explicit coordinate spaces, four-corner/Escape failsafes, and explicit confirmation for sensitive input.
+- 🚨 **Heuristic Desktop Observer & Workflow Suggestions** — Best-effort foreground-window/error-title heuristics plus manually registered routines. Suggested fixes are validated by the guarded tool layer and may require explicit confirmation; the HUD reports the actual result.
+- 🌐 **Experimental Cognitive Memory & Obsidian Vault** — Profile-isolated SQLite graph/vault data, deterministic lexical feature hashing (not learned semantic embeddings), text/graph retrieval, an exact-hash plus bounded lexical RAM cache, procedures, episodes, and optional scheduled consolidation.
+- 🎵 **Spotify control** — Search/play music, build a mix, pause/resume, skip, queue tracks, like/unlike songs, and inspect the currently playing track.
 - ▶️ **YouTube playback** — Search for a requested video and open/play the closest result.
 - 💻 **Desktop & window control** — Open applications, adjust volume, manage windows, inspect heavy processes, and use guarded PC actions.
-- 🌐 **Web & browser tools** — Web search, Wikipedia lookup, browser navigation, page reading, clicking, and typing when the relevant browser mode/dependencies are available.
+- 🌐 **Web & browser tools** — Web search, Wikipedia lookup, browser navigation, page reading, clicking, and typing.
 - 🌦️ **Utility tools** — Weather, ESPN sports data, reminders, basic math, news summaries, and routines.
-- 🧠 **Memory** — Store useful facts and persistent conversation context in local runtime data.
 - 🧩 **Action plans** — Build, inspect, and execute multi-step tool plans through the guarded tool layer.
+- ⏱️ **Latency Observability** — Live HUD breakdown of AI planning, tool execution, and network response times.
 - 🇬🇧 🇲🇽 **English & Spanish voice support** — Includes bundled local Piper voice models for English and Spanish fallback speech.
 
 ### Optional / full-mode capabilities
@@ -90,14 +94,13 @@ Installed with the optional dependency set and enabled explicitly when needed:
 
 - 👤 SpeechBrain speaker biometrics
 - 🧠 RAG / embeddings with FAISS + sentence-transformers
-- 👁️ Screen/vision analysis
 - 🤖 Telegram integration and proactive scheduling
 - 🌐 Playwright browser automation
 - 📡 Monitoring and briefing services
 - 🧩 Runtime plugins
 - 🎙️ Optional RVC voice conversion
 
-J.A.R.V.I.S. defaults to **Core Mode**, keeping the common desktop, voice, memory, Spotify, and web UI paths lightweight while heavier integrations stay opt-in.
+J.A.R.V.I.S. defaults to **Core Mode**, keeping the desktop, voice, memory, computer use, and web UI paths lightweight while heavier integrations stay opt-in.
 
 ---
 
@@ -181,7 +184,7 @@ J.A.R.V.I.S. can touch real desktop applications, so tools are not treated as eq
 - **Explicit confirmation for critical actions** — Sensitive tools such as PC control, process termination, memory deletion, action-plan execution, file writes, and terminal commands can require explicit confirmation.
 - **Privileged tools are opt-in** — Arbitrary terminal execution and text-file creation are excluded from the normal tool catalog unless `JARVIS_SYSTEM_TOOLS_ENABLED=true`.
 - **File writes are constrained** — Allowed write roots can be limited with `JARVIS_FILE_WRITE_ROOTS`.
-- **Optional API token** — Local/LAN API access can be protected with `JARVIS_API_TOKEN`; CORS origins are configurable.
+- **Optional API token** — When configured, `JARVIS_API_TOKEN` is required by protected HTTP/WebSocket routes. The loopback UI receives a derived HttpOnly cookie; explicit remote clients send the token and use configured CORS origins.
 - **Voice biometrics are off by default** — Speaker identification must be explicitly enabled.
 - **Public-IP geolocation is off by default** — It must be explicitly enabled if desired.
 - **Secrets stay in `.env`** — API keys, tokens, caches, voice profiles, memory databases, and logs should never be committed.
@@ -278,7 +281,7 @@ Example:
 | `JARVIS_MONITORING_ENABLED` | Enable monitoring service | disabled |
 | `JARVIS_PLUGINS_ENABLED` | Enable runtime plugins | disabled |
 | `JARVIS_SYSTEM_TOOLS_ENABLED` | Opt in to terminal/text-write tools | `false` |
-| `JARVIS_API_TOKEN` | Protect critical API routes when configured | `""` |
+| `JARVIS_API_TOKEN` | Protect protected HTTP/WebSocket routes when configured; the loopback UI receives a derived HttpOnly session cookie | `""` |
 | `JARVIS_DATA_DIR` | Override mutable application-data location | platform default |
 | `JARVIS_UNIFIED_LOG_ENABLED` | Unified diagnostic log | `true` |
 
