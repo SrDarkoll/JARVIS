@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.0.1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.2.1">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -42,24 +42,29 @@
                 <span id="clock" class="hud-font">00:00:00</span>
                 <span id="date" class="hud-font-alt">--/--/----</span>
             </div>
-            <div class="stark-logo">
-                <video autoplay loop muted playsinline class="main-logo-video">
-                    <!-- Agrega tu propio video logo aqui: <source src="/media/tu_logo.mp4" type="video/mp4"> -->
-                    Logo Principal Animado
-                </video>
+            <div class="brand-status" aria-hidden="true">
+                <span class="brand-name">J.A.R.V.I.S.</span>
+                <span class="privacy-badge" data-i18n="privacy_local">LOCAL</span>
             </div>
             <div class="system-status">
-                <select id="lang-selector" class="tech-select">
+                <label class="sr-only" for="lang-selector" data-i18n="language_label">Idioma</label>
+                <select id="lang-selector" class="tech-select" aria-label="Idioma de la interfaz"
+                    data-i18n-aria-label="language_label">
                     <option value="es" selected>ES</option>
                     <option value="en">EN</option>
                 </select>
                 <span class="status-indicator online"></span>
                 <span class="hud-font" data-i18n="system_online">SISTEMA EN LÍNEA</span>
+                <button id="diagnostics-toggle" class="header-action" type="button" aria-expanded="false"
+                    aria-controls="diagnostics-left diagnostics-right" data-i18n-aria-label="diagnostics_open"
+                    aria-label="Abrir diagnóstico">
+                    <span data-i18n="diagnostics_label">DIAGNÓSTICO</span>
+                </button>
             </div>
         </header>
 
         <section class="main-interface">
-            <div class="side-panel left">
+            <div id="diagnostics-left" class="side-panel left" inert>
                 <div class="module-box tech-panel">
                     <div class="panel-corners"></div>
                     <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="metrics_title">MÉTRICAS DEL SISTEMA</span> <span class="icon-bracket">]</span></h3>
@@ -99,6 +104,7 @@
                         <div class="bar-tech">
                             <div id="latency-bar" class="fill-tech alt-fill" style="width: 0%;"></div>
                         </div>
+                        <div id="latency-breakdown" class="metric-breakdown">IA: -- | Herramientas: --</div>
                     </div>
                 </div>
 
@@ -138,19 +144,115 @@
                     <div class="decor-line"></div>
                 </div>
 
+                <section id="onboarding-rail" class="onboarding-rail hidden" aria-label="Configuración inicial"
+                    data-i18n-aria-label="onboarding_label">
+                    <header class="onboarding-header">
+                        <div>
+                            <span class="onboarding-kicker" data-i18n="onboarding_kicker">INICIO SEGURO</span>
+                            <span id="onboarding-progress" class="onboarding-progress" aria-live="polite"
+                                data-i18n="onboarding_progress_welcome">Paso 1 de 3</span>
+                        </div>
+                        <button id="onboarding-skip" class="onboarding-link-action" type="button"
+                            data-i18n="onboarding_skip">Omitir por ahora</button>
+                    </header>
+
+                    <section class="onboarding-stage" data-onboarding-stage="welcome">
+                        <h2 id="onboarding-title-welcome" class="onboarding-title" tabindex="-1"
+                            data-i18n="onboarding_welcome_title">JARVIS, local por defecto</h2>
+                        <p class="onboarding-lead" data-i18n="onboarding_welcome_copy">Empieza con texto y configura solo lo necesario para una primera respuesta real.</p>
+                        <p class="onboarding-privacy" data-i18n="onboarding_privacy_copy">La configuración se guarda en este equipo. Tus solicitudes de IA se envían al proveedor que elijas; el micrófono y la pantalla siguen desactivados hasta que tú los actives.</p>
+                        <div class="onboarding-language-row">
+                            <label for="onboarding-language" data-i18n="onboarding_language_label">Idioma de JARVIS</label>
+                            <select id="onboarding-language" class="onboarding-select">
+                                <option value="es">Español</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                        <div class="onboarding-actions onboarding-actions-end">
+                            <button id="onboarding-continue" class="onboarding-button primary" type="button"
+                                data-i18n="onboarding_continue">Continuar</button>
+                        </div>
+                    </section>
+
+                    <section class="onboarding-stage hidden" data-onboarding-stage="provider">
+                        <h2 id="onboarding-title-provider" class="onboarding-title" tabindex="-1"
+                            data-i18n="onboarding_provider_title">Elige un proveedor de IA</h2>
+                        <p class="onboarding-lead" data-i18n="onboarding_provider_copy">La clave habilita el razonamiento de JARVIS. Puedes cambiar de proveedor más adelante.</p>
+                        <fieldset class="provider-options">
+                            <legend class="sr-only" data-i18n="onboarding_provider_legend">Proveedor de IA</legend>
+                            <label class="provider-option">
+                                <input type="radio" name="onboarding-provider" value="gemini" checked>
+                                <span><strong>Gemini</strong><small data-i18n="onboarding_gemini_fact">Integración principal de Google para respuestas generales.</small></span>
+                            </label>
+                            <label class="provider-option">
+                                <input type="radio" name="onboarding-provider" value="groq">
+                                <span><strong>Groq</strong><small data-i18n="onboarding_groq_fact">Inferencia rápida con modelos compatibles.</small></span>
+                            </label>
+                        </fieldset>
+                        <div class="provider-key-links">
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
+                                data-i18n="onboarding_gemini_key_link">Crear clave de Gemini</a>
+                            <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer"
+                                data-i18n="onboarding_groq_key_link">Crear clave de Groq</a>
+                        </div>
+                        <div class="onboarding-field">
+                            <label for="onboarding-api-key" data-i18n="onboarding_key_label">Clave de API</label>
+                            <input id="onboarding-api-key" type="password" autocomplete="off" spellcheck="false"
+                                minlength="16" maxlength="512" aria-describedby="onboarding-key-help">
+                            <p id="onboarding-key-help" data-i18n="onboarding_key_help">Se enviará una vez al backend local para validarla y nunca se mostrará de nuevo.</p>
+                        </div>
+                        <label class="onboarding-consent">
+                            <input id="onboarding-save-local" type="checkbox">
+                            <span data-i18n="onboarding_save_local">Guardar esta clave en este equipo</span>
+                        </label>
+                        <div id="onboarding-error" class="onboarding-message hidden" role="alert"></div>
+                        <div id="onboarding-provider-status" class="onboarding-message" aria-live="polite"></div>
+                        <div class="onboarding-actions">
+                            <button id="onboarding-back" class="onboarding-button secondary" type="button"
+                                data-i18n="onboarding_back">Atrás</button>
+                            <button id="onboarding-configure" class="onboarding-button primary" type="button"
+                                data-i18n="onboarding_configure">Validar y guardar</button>
+                        </div>
+                    </section>
+
+                    <section class="onboarding-stage hidden" data-onboarding-stage="command">
+                        <h2 id="onboarding-title-command" class="onboarding-title" tabindex="-1"
+                            data-i18n="onboarding_command_title">Prueba tu primer comando real</h2>
+                        <p class="onboarding-lead" data-i18n="onboarding_command_copy">Usaremos el compositor normal. Edita la sugerencia si quieres y envíala cuando estés listo.</p>
+                        <button id="onboarding-use-suggestion" class="onboarding-suggestion" type="button"
+                            data-i18n="onboarding_command_suggestion">Explica qué puedes hacer sin acceder a cuentas externas.</button>
+                        <div id="onboarding-command-status" class="onboarding-message" aria-live="polite"
+                            data-i18n="onboarding_command_waiting">El onboarding terminará solo después de una respuesta correcta.</div>
+                        <div class="onboarding-actions">
+                            <button id="onboarding-command-back" class="onboarding-button secondary" type="button"
+                                data-i18n="onboarding_back">Atrás</button>
+                        </div>
+                    </section>
+
+                    <section class="onboarding-stage hidden" data-onboarding-stage="success">
+                        <h2 id="onboarding-title-success" class="onboarding-title" tabindex="-1"
+                            data-i18n="onboarding_success_title">JARVIS está listo</h2>
+                        <p class="onboarding-lead" data-i18n="onboarding_success_copy">Ya completaste un comando real. La voz, Spotify y otras integraciones siguen siendo opcionales.</p>
+                        <div class="onboarding-actions onboarding-actions-end">
+                            <button id="onboarding-finish" class="onboarding-button primary" type="button"
+                                data-i18n="onboarding_finish">Continuar a JARVIS</button>
+                        </div>
+                    </section>
+                </section>
+
                 <section id="conversation-panel" class="conversation-panel tech-glass" aria-live="polite">
                     <div class="conversation-header">
-                        <span class="conversation-title" data-i18n="conversation_panel_title">CONVERSATION</span>
+                        <span class="conversation-title" data-i18n="conversation_panel_title">CONVERSACIÓN</span>
                     </div>
                     <div id="conversation-segments" class="conversation-segments custom-scrollbar">
-                        <div class="conversation-empty" data-i18n="conversation_empty">Conversation segments will appear here.</div>
+                        <div class="conversation-empty" data-i18n="conversation_empty">Aquí aparecerán tus conversaciones. Puedes comenzar escribiendo o activar la voz.</div>
                     </div>
                 </section>
 
                 <div id="widget-container" class="widget-overlay"></div>
             </div>
 
-            <div class="side-panel right">
+            <div id="diagnostics-right" class="side-panel right" inert>
                 <div class="module-box tech-panel terminal-panel">
                     <div class="panel-corners"></div>
                     <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="log_title">REGISTRO SISTEMA</span> <span class="icon-bracket">]</span></h3>
@@ -179,13 +281,17 @@
                         </div>
                     </div>
                     <div class="control-actions">
-                        <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RCGR PLUGINS</button>
-                        <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">TGL ESTRICTO</button>
-                        <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">TGL PROACTIVO</button>
-                        <button class="quick-action tech-btn" data-action="voice_enroll_admin" data-i18n="btn_enroll_admin">REG VOZ ADMIN</button>
-                        <button class="quick-action tech-btn" data-action="rutina_trabajo" data-i18n="btn_work_routine">RTN TRABAJO</button>
-                        <button class="quick-action tech-btn" data-action="rutina_gaming" data-i18n="btn_gaming_routine">RTN GAMING</button>
-                        <button class="quick-action tech-btn" data-action="rutina_buenos_dias" data-i18n="btn_morning_routine">RTN MAÑANA</button>
+                        <button id="complete-setup-action" class="tech-btn full-width hidden" type="button"
+                            data-i18n="onboarding_complete_setup">Completar configuración</button>
+                        <button id="replay-onboarding-action" class="tech-btn full-width" type="button"
+                            data-i18n="onboarding_replay">Repetir configuración inicial</button>
+                        <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RECARGAR PLUGINS</button>
+                        <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">CAMBIAR MODO ESTRICTO</button>
+                        <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">CAMBIAR MODO PROACTIVO</button>
+                        <button class="quick-action tech-btn" data-action="voice_enroll_admin" data-i18n="btn_enroll_admin">REGISTRAR VOZ DE ADMINISTRADOR</button>
+                        <button class="quick-action tech-btn" data-action="rutina_trabajo" data-i18n="btn_work_routine">RUTINA DE TRABAJO</button>
+                        <button class="quick-action tech-btn" data-action="rutina_gaming" data-i18n="btn_gaming_routine">RUTINA DE JUEGO</button>
+                        <button class="quick-action tech-btn" data-action="rutina_buenos_dias" data-i18n="btn_morning_routine">RUTINA DE MAÑANA</button>
                         <button class="quick-action tech-btn full-width" data-action="analizar_pantalla" data-i18n="btn_analyze_hud">ANALIZAR HUD ÓPTICO</button>
                     </div>
                     <div id="proactive-alerts" class="control-alerts custom-scrollbar">
@@ -204,30 +310,69 @@
         </section>
 
         <footer class="bottom-controls">
-            <button id="activate-btn" class="voice-btn-tech">
-                <div class="btn-scanline"></div>
-                <svg viewBox="0 0 24 24" width="22" height="22" class="mic-icon">
-                    <path fill="currentColor"
-                        d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66-1.34 3 3 3z" />
-                    <path fill="currentColor"
-                        d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                </svg>
-                <span class="btn-text" id="btn-voice-text" data-i18n="btn_init_voice">INICIAR ENLACE DE VOZ</span>
-                <div class="btn-corners"></div>
-            </button>
-            <button id="live-voice-btn" class="voice-btn-tech live-btn">
-                <div class="btn-scanline"></div>
-                <svg viewBox="0 0 24 24" width="22" height="22" class="mic-icon">
-                    <path fill="currentColor"
-                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
-                </svg>
-                <span class="btn-text" id="btn-live-voice-text" data-i18n="btn_live_voice">VOZ FULL-DUPLEX</span>
-                <div class="btn-corners"></div>
-            </button>
+            <div class="command-center-wrap">
+                <form id="command-form" class="command-composer">
+                    <label class="sr-only" for="command-input" data-i18n="command_label">Comando para JARVIS</label>
+                    <input id="command-input" type="text" maxlength="4000"
+                        data-i18n-placeholder="command_placeholder"
+                        placeholder="Escribe un comando para JARVIS..." autocomplete="off">
+                    <button id="command-submit" class="composer-action send-action" type="submit"
+                        data-i18n-aria-label="command_send" aria-label="Enviar comando">
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 20V4l19 8-19 8Zm2-3 11.85-5L5 7v3.5l6 1.5-6 1.5V17Z" /></svg>
+                        <span class="composer-label" data-i18n="command_send">ENVIAR</span>
+                    </button>
+                    <button id="mode-actions-toggle" class="composer-action" type="button" aria-expanded="false"
+                        aria-controls="mode-actions" data-i18n-aria-label="command_more_modes"
+                        aria-label="Más modos de entrada">
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" /></svg>
+                        <span class="composer-label" data-i18n="command_more_modes">MÁS MODOS</span>
+                    </button>
+                </form>
+                <div id="command-status" class="command-status" data-state="idle" aria-live="polite"
+                    data-i18n="command_state_idle">Listo para recibir un comando</div>
+                <div id="command-recovery" class="command-recovery hidden" role="alert">
+                    <span id="command-recovery-text"></span>
+                    <button id="command-retry-voice" type="button" data-i18n="voice_retry">REINTENTAR VOZ</button>
+                </div>
+            </div>
+
+            <div class="voice-actions-group">
+                <button id="activate-btn" class="voice-btn-tech" type="button">
+                    <div class="btn-scanline"></div>
+                    <svg viewBox="0 0 24 24" width="20" height="20" class="mic-icon">
+                        <path fill="currentColor"
+                            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66-1.34 3 3 3z" />
+                        <path fill="currentColor"
+                            d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+                    </svg>
+                    <span class="btn-text" id="btn-voice-text" data-i18n="btn_init_voice">INICIAR ENLACE DE VOZ</span>
+                    <div class="btn-corners"></div>
+                </button>
+                <div id="mode-actions" class="mode-actions hidden">
+                <button id="live-voice-btn" class="voice-btn-tech live-btn" type="button">
+                    <div class="btn-scanline"></div>
+                    <svg viewBox="0 0 24 24" width="20" height="20" class="mic-icon">
+                        <path fill="currentColor"
+                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+                    </svg>
+                    <span class="btn-text" id="btn-live-voice-text" data-i18n="btn_live_voice">VOZ FULL-DUPLEX</span>
+                    <div class="btn-corners"></div>
+                </button>
+                <button id="live-screen-btn" class="voice-btn-tech screen-btn" type="button">
+                    <div class="btn-scanline"></div>
+                    <svg viewBox="0 0 24 24" width="20" height="20" class="mic-icon">
+                        <path fill="currentColor"
+                            d="M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H3V4h18v10z" />
+                    </svg>
+                    <span class="btn-text" id="btn-live-screen-text" data-i18n="btn_live_screen">VISIÓN EN VIVO</span>
+                    <div class="btn-corners"></div>
+                </button>
+                </div>
+            </div>
         </footer>
     </main>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.2.4"></script>
 </body>
 
 </html>

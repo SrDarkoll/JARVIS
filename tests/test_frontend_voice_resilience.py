@@ -115,6 +115,17 @@ def test_main_uses_microphone_block_state_to_stop_automatic_retries():
     assert "shouldRestartPassiveRecognition" in source
 
 
+def test_boot_does_not_start_voice_or_request_microphone():
+    source = (ROOT / "src/frontend/static/js/main.js").read_text(encoding="utf-8")
+    boot = source.split("// --- SISTEMA DE ARRANQUE ---", 1)[1].split(
+        "// --- HUD Y RELOJ ---", 1
+    )[0]
+
+    assert "startPassiveListening()" not in boot
+    assert "getUserMedia" not in boot
+    assert "loadNewsBackground()" in boot
+
+
 def test_main_submits_audio_when_browser_transcript_is_empty():
     source = (ROOT / "src/frontend/static/js/main.js").read_text(encoding="utf-8")
 
@@ -147,6 +158,21 @@ def test_voice_diagnostics_have_english_and_spanish_translations():
         "voice_transcription_unavailable",
         "voice_reasoning_unavailable",
         "voice_reasoning_unconfigured",
+        "mode_live_connecting",
+        "mode_live_configuring",
+        "mode_live_reconnecting",
+        "mode_live_fallback",
+        "live_confirmation_required",
+        "live_error_gemini_live_unconfigured",
+        "live_error_gemini_live_dependency_missing",
+        "live_error_gemini_live_connect_failed",
+        "live_error_gemini_live_setup_timeout",
+        "live_error_gemini_live_setup_rejected",
+        "live_error_gemini_live_reconnect_exhausted",
+        "live_error_gemini_live_protocol_error",
+        "live_error_live_audio_capture_unsupported",
+        "live_error_live_audio_transport_degraded",
+        "live_error_live_voice_unavailable",
     }
 
     for key in keys:
@@ -179,3 +205,13 @@ def test_main_does_not_add_a_new_push_to_talk_mode():
     assert "push-to-talk" not in template
     assert 'id="ptt"' not in template
     assert 'data-mode="push-to-talk"' not in template
+
+
+def test_live_voice_partial_start_cleanup_does_not_require_active_flag():
+    main_source = (ROOT / "src/frontend/static/js/main.js").read_text(encoding="utf-8")
+    start = main_source.index("async function stopLiveVoiceStream(")
+    end = main_source.index("async function startLiveVoiceStream()", start)
+    cleanup_source = main_source[start:end]
+
+    assert "if (!isLiveVoiceActive && !liveVoiceClient) return;" in cleanup_source
+    assert "if (!isLiveVoiceActive) return;" not in cleanup_source

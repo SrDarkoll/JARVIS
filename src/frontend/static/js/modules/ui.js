@@ -151,12 +151,12 @@ export class UIManager {
             this.waveInterval = setInterval(() => {
                 for (let i = 0; i < this.elements.voiceWaves.length; i++) {
                     const h = 5 + Math.random() * 25;
-                    this.elements.voiceWaves[i].style.height = h + 'px';
+                    this.elements.voiceWaves[i].style.transform = `scaleY(${h / 4})`;
                 }
             }, 100);
         } else {
             for (let i = 0; i < this.elements.voiceWaves.length; i++) {
-                this.elements.voiceWaves[i].style.height = '4px';
+                this.elements.voiceWaves[i].style.transform = 'scaleY(1)';
             }
         }
     }

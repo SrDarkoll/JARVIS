@@ -3,6 +3,50 @@
  * Maneja telemetría, reloj, clima y alertas proactivas.
  */
 
+export function classifyProactiveActionResult(httpResponse, payload = {}) {
+    const httpOk = Boolean(httpResponse?.ok);
+    const receipts = Array.isArray(payload?.receipts) ? payload.receipts : [];
+    const text = String(
+        payload?.response ?? payload?.message ?? payload?.text ?? ''
+    ).trim();
+    const normalized = text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+
+    if (!httpOk || payload?.error) {
+        return { state: 'error', detail: text || String(payload?.error || '') };
+    }
+
+    const blockedReceipt = receipts.find((receipt) => receipt?.status === 'blocked');
+    const confirmationRequired = (
+        blockedReceipt?.diagnostic_code === 'tool_confirmation_required'
+        || /confirmacion|confirmation/.test(normalized)
+    );
+    if (confirmationRequired) {
+        return { state: 'confirmation', detail: text };
+    }
+
+    if (blockedReceipt || receipts.some((receipt) => (
+        ['failed', 'unavailable'].includes(String(receipt?.status || '').toLowerCase())
+    ))) {
+        return { state: 'error', detail: text };
+    }
+
+    const failureText = /access_denied|\berror\b|\bfailed\b|\bfallo\b|no se encontro|no se pudo|no pude|no disponible/.test(normalized);
+    if (failureText) {
+        return { state: 'error', detail: text };
+    }
+
+    const receiptSuccess = receipts.some((receipt) => (
+        ['succeeded', 'duplicate'].includes(String(receipt?.status || '').toLowerCase())
+    ));
+    if (text || receiptSuccess || payload?.ok === true) {
+        return { state: 'success', detail: text };
+    }
+    return { state: 'error', detail: '' };
+}
+
 export class HUDManager {
     constructor(elements) {
         this.elements = elements;
@@ -67,9 +111,80 @@ export class HUDManager {
             const item = document.createElement('div');
             const sev = (alert.severity || 'info').toLowerCase();
             item.className = `control-alert ${sev}`;
-            item.textContent = `[${alert.ts || '--:--'}] ${alert.message || t('unknown')}`;
+
+            const textSpan = document.createElement('span');
+            textSpan.textContent = `[${alert.ts || '--:--'}] ${alert.message || t('unknown')}`;
+            item.appendChild(textSpan);
+
+            if (alert.action && alert.action.id) {
+                const actBtn = document.createElement('button');
+                actBtn.className = 'proactive-action-btn';
+                actBtn.textContent = `⚡ ${alert.action.title || 'Aplicar'}`;
+                actBtn.title = alert.action.description || 'Ejecutar solución sugerida';
+                actBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    actBtn.disabled = true;
+                    actBtn.textContent = '⏳ ...';
+                    try {
+                        const response = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ message: `ejecutar_accion_proactiva(action_id='${alert.action.id}')` })
+                        });
+                        let payload = {};
+                        try {
+                            payload = await response.json();
+                        } catch (parseError) {
+                            payload = {};
+                        }
+                        const result = classifyProactiveActionResult(response, payload);
+                        actBtn.dataset.state = result.state;
+                        actBtn.title = result.detail || actBtn.title;
+                        if (result.state === 'success') {
+                            actBtn.textContent = this.locale.startsWith('en') ? '✅ Done' : '✅ Listo';
+                        } else if (result.state === 'confirmation') {
+                            actBtn.textContent = this.locale.startsWith('en') ? '⚠ Confirm' : '⚠ Confirmar';
+                        } else {
+                            actBtn.textContent = this.locale.startsWith('en') ? '❌ Failed' : '❌ Error';
+                            actBtn.disabled = false;
+                        }
+                    } catch (err) {
+                        actBtn.textContent = '❌ Error';
+                        actBtn.dataset.state = 'error';
+                        actBtn.disabled = false;
+                    }
+                };
+                item.appendChild(actBtn);
+            }
+
             this.elements.proactiveAlerts.appendChild(item);
         });
+    }
+
+    updateLatency(latencyMs, breakdownText = '') {
+        if (latencyMs !== undefined && Number.isFinite(latencyMs)) {
+            const lw = Math.min(100, Math.max(2, (latencyMs / 1200) * 100));
+            if (this.elements.latencyBar) {
+                this.elements.latencyBar.style.width = `${lw}%`;
+                if (latencyMs > 3000) {
+                    this.elements.latencyBar.style.background = '#ff3366';
+                    this.elements.latencyBar.style.boxShadow = '0 0 10px #ff3366';
+                } else if (latencyMs > 1200) {
+                    this.elements.latencyBar.style.background = '#ffaa00';
+                    this.elements.latencyBar.style.boxShadow = '0 0 10px #ffaa00';
+                } else {
+                    this.elements.latencyBar.style.background = 'var(--primary)';
+                    this.elements.latencyBar.style.boxShadow = '0 0 10px var(--primary)';
+                }
+            }
+            if (this.elements.latencyValue) {
+                this.elements.latencyValue.textContent = `${Math.round(latencyMs)} ms`;
+            }
+            const breakdownEl = document.getElementById('latency-breakdown');
+            if (breakdownEl && breakdownText) {
+                breakdownEl.textContent = breakdownText;
+            }
+        }
     }
 
     updateHudFromPayload(data, opts = {}) {
@@ -100,9 +215,7 @@ export class HUDManager {
         }
 
         if (latencyMs !== undefined && Number.isFinite(latencyMs)) {
-            const lw = Math.min(100, Math.max(2, (latencyMs / 450) * 100));
-            if (this.elements.latencyBar) this.elements.latencyBar.style.width = `${lw}%`;
-            if (this.elements.latencyValue) this.elements.latencyValue.textContent = `${Math.round(latencyMs)} ms`;
+            this.updateLatency(latencyMs);
         }
 
         if (data.weather) {

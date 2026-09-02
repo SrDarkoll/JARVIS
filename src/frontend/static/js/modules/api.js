@@ -3,6 +3,19 @@
  */
 
 export const API = {
+    async postChat(message, profileId = 'web_default') {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, profile_id: profileId })
+        });
+        const type = String(res.headers.get('content-type') || '').toLowerCase();
+        if (!type.includes('application/json')) throw new Error('api_chat_invalid_response');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'api_chat_fail');
+        return data;
+    },
+
     async fetchStatus() {
         const res = await fetch('/api/status', { cache: 'no-store' });
         if (!res.ok) throw new Error('api_status_fail');
@@ -36,6 +49,24 @@ export const API = {
         const res = await fetch('/api/setup/status', { cache: 'no-store' });
         if (!res.ok) throw new Error('api_setup_status_fail');
         return await res.json();
+    },
+
+    async configureProvider(provider, apiKey, saveLocal = true) {
+        const res = await fetch('/api/setup/provider', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                provider,
+                api_key: apiKey,
+                save_local: saveLocal,
+            }),
+        });
+        const type = String(res.headers.get('content-type') || '').toLowerCase();
+        if (!type.includes('application/json')) throw new Error('setup_failed');
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || 'setup_failed');
+        return data;
     },
 
     async fetchProfiles() {

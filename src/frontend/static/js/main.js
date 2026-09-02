@@ -14,7 +14,27 @@ import {
     detectVoiceCapabilities,
 } from './modules/voice-capabilities.js';
 import { classifyVoiceApiFailure } from './modules/voice-api.js';
-import { LiveVoiceClient } from './modules/live-voice.js';
+import {
+    LiveVoiceClient,
+    liveVoiceErrorView,
+} from './modules/live-voice.js';
+import {
+    normalizeCommandText,
+    commandStateView,
+    microphoneRecoveryView,
+    isSuccessfulCommandOutcome,
+} from './modules/command-center.js';
+import {
+    STORAGE_KEY as ONBOARDING_STORAGE_KEY,
+    ONBOARDING_STAGES,
+    ONBOARDING_STATUSES,
+    buildProviderPayload,
+    firstCommandCompletes,
+    parseOnboardingState,
+    persistableOnboardingState,
+    resolveInitialStage,
+    transitionOnboarding,
+} from './modules/onboarding.js';
 import { t, setLanguage, currentLang, updateUI } from './i18n.js';
 
 // --- CONSTANTES GLOBALES ---
@@ -37,9 +57,41 @@ document.addEventListener('DOMContentLoaded', () => {
         app: document.getElementById('app'),
         progressBar: document.querySelector('.progress-fill'),
         transcriptText: document.getElementById('transcript'),
+        commandForm: document.getElementById('command-form'),
+        commandInput: document.getElementById('command-input'),
+        commandSubmit: document.getElementById('command-submit'),
+        commandStatus: document.getElementById('command-status'),
+        commandRecovery: document.getElementById('command-recovery'),
+        commandRecoveryText: document.getElementById('command-recovery-text'),
+        commandRetryVoice: document.getElementById('command-retry-voice'),
+        modeActionsToggle: document.getElementById('mode-actions-toggle'),
+        modeActions: document.getElementById('mode-actions'),
+        onboardingRail: document.getElementById('onboarding-rail'),
+        onboardingProgress: document.getElementById('onboarding-progress'),
+        onboardingStages: document.querySelectorAll('[data-onboarding-stage]'),
+        onboardingSkip: document.getElementById('onboarding-skip'),
+        onboardingContinue: document.getElementById('onboarding-continue'),
+        onboardingLanguage: document.getElementById('onboarding-language'),
+        onboardingApiKey: document.getElementById('onboarding-api-key'),
+        onboardingSaveLocal: document.getElementById('onboarding-save-local'),
+        onboardingConfigure: document.getElementById('onboarding-configure'),
+        onboardingBack: document.getElementById('onboarding-back'),
+        onboardingCommandBack: document.getElementById('onboarding-command-back'),
+        onboardingUseSuggestion: document.getElementById('onboarding-use-suggestion'),
+        onboardingError: document.getElementById('onboarding-error'),
+        onboardingProviderStatus: document.getElementById('onboarding-provider-status'),
+        onboardingCommandStatus: document.getElementById('onboarding-command-status'),
+        onboardingFinish: document.getElementById('onboarding-finish'),
+        completeSetupAction: document.getElementById('complete-setup-action'),
+        replayOnboardingAction: document.getElementById('replay-onboarding-action'),
+        onboardingProviders: document.querySelectorAll('input[name="onboarding-provider"]'),
+        diagnosticsToggle: document.getElementById('diagnostics-toggle'),
+        diagnosticsPanels: document.querySelectorAll('.side-panel'),
         activateBtn: document.getElementById('activate-btn'),
         liveVoiceBtn: document.getElementById('live-voice-btn'),
         btnLiveVoiceText: document.getElementById('btn-live-voice-text'),
+        liveScreenBtn: document.getElementById('live-screen-btn'),
+        btnLiveScreenText: document.getElementById('btn-live-screen-text'),
         logContent: document.getElementById('log-content'),
         clock: document.getElementById('clock'),
         date: document.getElementById('date'),
@@ -98,14 +150,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function syncLanguageFromBackend() {
+        let storedLanguage = '';
+        try {
+            storedLanguage = localStorage.getItem('jarvis_lang') || '';
+        } catch {
+            storedLanguage = '';
+        }
+        if (storedLanguage === 'en' || storedLanguage === 'es') {
+            await applyLanguageSetting(storedLanguage);
+            return;
+        }
         try {
             const res = await fetch('/api/language');
             if (!res.ok) return;
             const data = await res.json();
             const backendLang = data.current || data.language;
             if (!backendLang) return;
-            setLanguage(backendLang);
+            setLanguage(backendLang, { persist: false });
             if (dom.langSelector) dom.langSelector.value = backendLang;
+            if (dom.onboardingLanguage) dom.onboardingLanguage.value = backendLang;
             applyRecognitionLanguage(backendLang);
             if (hud && hud.setLocale && data.locale) hud.setLocale(data.locale);
         } catch (err) {
@@ -155,6 +218,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- ESTADO ---
+    let passiveRecognition = null;
+    let activeRecognition = null;
     let isSpeaking = false;
     let currentMode = 'idle';
     let adminEnrollmentActive = false;
@@ -256,7 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function getRandomWakeResponse() {
         const name = lastIdentifiedName || t('label_admin');
         const esOwner = (lastIdentifiedProfileId === null || lastIdentifiedProfileId === 'admin');
-        
+
         if (esOwner) {
             const responses = t('wake_admin');
             return responses[Math.floor(Math.random() * responses.length)];
@@ -313,12 +378,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     dom.loader.classList.add('hidden');
                     dom.app.classList.remove('hidden');
                     const greetings = t('boot_greetings');
-                    speak(greetings[Math.floor(Math.random() * greetings.length)], () => {
-                        startPassiveListening();
-                        loadNewsBackground();
-                    });
+                    speak(
+                        greetings[Math.floor(Math.random() * greetings.length)],
+                        () => {
+                            loadNewsBackground();
+                            setCommandState('idle');
+                        }
+                    );
                     ui.addLogEntry(t('boot_protocols'));
-                    window.addEventListener('resize', () => reactor.resize());
+                    window.addEventListener('resize', () => reactor.resize(), { passive: true });
+                    reactor.resize();
                 }, 500);
             }
             if (dom.progressBar) dom.progressBar.style.width = progress + '%';
@@ -470,10 +539,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
                 const capData = await API.postVoiceSample(sample, lastIdentifiedProfileId || profileHeader);
-                if (capData.done) { 
-                    saveProfile('admin', t('label_admin')); 
-                    ui.addLogEntry(t('bio_completed')); 
-                    return; 
+                if (capData.done) {
+                    saveProfile('admin', t('label_admin'));
+                    ui.addLogEntry(t('bio_completed'));
+                    return;
                 }
             }
             ui.addLogEntry(t('bio_incomplete'));
@@ -517,50 +586,496 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let onboardingStage = ONBOARDING_STAGES.HIDDEN;
+    let setupStatusSnapshot = {};
+    let providerSubmissionInFlight = false;
+    let textCommandInFlight = false;
+
+    function readOnboardingState() {
+        try {
+            return parseOnboardingState(localStorage.getItem(ONBOARDING_STORAGE_KEY));
+        } catch {
+            return null;
+        }
+    }
+
+    async function applyLanguageSetting(newLang) {
+        newLang = String(newLang || '').toLowerCase() === 'en' ? 'en' : 'es';
+        document.documentElement.lang = newLang;
+        setLanguage(newLang);
+        applyRecognitionLanguage(newLang);
+        if (dom.langSelector) dom.langSelector.value = newLang;
+        if (dom.onboardingLanguage) dom.onboardingLanguage.value = newLang;
+
+        const txt = dom.activateBtn?.querySelector('.btn-text');
+        if (txt) {
+            if (currentMode === 'idle') txt.textContent = t('btn_init_voice');
+            else if (currentMode === 'active') txt.textContent = t('btn_stop_voice');
+            else if (currentMode === 'processing') txt.textContent = t('mode_processing');
+        }
+
+        try {
+            const res = await fetch('/api/language', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ language: newLang })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) return false;
+            if (hud && hud.setLocale && data.locale) hud.setLocale(data.locale);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    function saveOnboardingState(status, stage) {
+        try {
+            localStorage.setItem(
+                ONBOARDING_STORAGE_KEY,
+                JSON.stringify(persistableOnboardingState(status, stage))
+            );
+        } catch {
+            // Storage is optional; onboarding remains functional for this session.
+        }
+    }
+
+    function clearOnboardingState() {
+        try {
+            localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+        } catch {
+            // Private browsing may disable storage; replay still works in-session.
+        }
+    }
+
+    function runtimeLlmIsAvailable() {
+        return String(setupStatusSnapshot?.capabilities?.llm?.state || '').toLowerCase() === 'available';
+    }
+
+    function languageIsConfigured() {
+        return setupStatusSnapshot?.items?.language?.configured === true;
+    }
+
+    function hasStoredLanguageChoice() {
+        try {
+            const language = localStorage.getItem('jarvis_lang');
+            return language === 'en' || language === 'es';
+        } catch {
+            return false;
+        }
+    }
+
+    function onboardingProgressKey(stage) {
+        if (stage === ONBOARDING_STAGES.PROVIDER) return 'onboarding_progress_provider';
+        if (stage === ONBOARDING_STAGES.COMMAND) return 'onboarding_progress_command';
+        if (stage === ONBOARDING_STAGES.SUCCESS) return 'onboarding_progress_success';
+        return 'onboarding_progress_welcome';
+    }
+
+    function syncSetupAffordance() {
+        if (!dom.completeSetupAction) return;
+        const onboardingVisible = ![
+            ONBOARDING_STAGES.HIDDEN,
+            ONBOARDING_STAGES.DISMISSED,
+        ].includes(onboardingStage);
+        dom.completeSetupAction.classList.toggle(
+            'hidden',
+            runtimeLlmIsAvailable() || onboardingVisible
+        );
+    }
+
+    function prefillFirstCommand({ focus = false } = {}) {
+        if (!dom.commandInput) return;
+        if (!normalizeCommandText(dom.commandInput.value)) {
+            dom.commandInput.value = t('onboarding_command_suggestion');
+        }
+        if (focus) dom.commandInput.focus();
+    }
+
+    function renderOnboarding(stage, { focusHeading = false } = {}) {
+        onboardingStage = Object.values(ONBOARDING_STAGES).includes(stage)
+            ? stage
+            : ONBOARDING_STAGES.WELCOME;
+        const visible = ![
+            ONBOARDING_STAGES.HIDDEN,
+            ONBOARDING_STAGES.DISMISSED,
+        ].includes(onboardingStage);
+
+        dom.onboardingRail?.classList.toggle('hidden', !visible);
+        dom.app?.classList.toggle('onboarding-active', visible);
+        dom.onboardingSkip?.classList.toggle(
+            'hidden',
+            onboardingStage === ONBOARDING_STAGES.SUCCESS
+        );
+        dom.onboardingStages.forEach(panel => {
+            panel.classList.toggle(
+                'hidden',
+                panel.dataset.onboardingStage !== onboardingStage
+            );
+        });
+
+        if (dom.onboardingProgress) {
+            const progressKey = onboardingProgressKey(onboardingStage);
+            dom.onboardingProgress.dataset.i18n = progressKey;
+            dom.onboardingProgress.textContent = t(progressKey);
+        }
+
+        if (visible) {
+            const title = document.getElementById(`onboarding-title-${onboardingStage}`);
+            if (title) {
+                dom.onboardingRail?.setAttribute('aria-labelledby', title.id);
+                if (focusHeading) title.focus();
+            }
+        } else {
+            dom.onboardingRail?.removeAttribute('aria-labelledby');
+        }
+
+        if (onboardingStage === ONBOARDING_STAGES.COMMAND) {
+            prefillFirstCommand({ focus: false });
+        }
+        syncSetupAffordance();
+    }
+
+    function showOnboardingError(code) {
+        if (!dom.onboardingError) return;
+        const normalized = /^[a-z0-9_]+$/.test(String(code || ''))
+            ? String(code)
+            : 'setup_failed';
+        const key = `onboarding_error_${normalized}`;
+        const message = t(key) === key ? t('onboarding_error_setup_failed') : t(key);
+        dom.onboardingError.textContent = message;
+        dom.onboardingError.classList.remove('hidden');
+    }
+
+    function clearOnboardingMessages() {
+        if (dom.onboardingError) {
+            dom.onboardingError.textContent = '';
+            dom.onboardingError.classList.add('hidden');
+        }
+        if (dom.onboardingProviderStatus) dom.onboardingProviderStatus.textContent = '';
+    }
+
+    async function configureOnboardingProvider() {
+        if (providerSubmissionInFlight) return;
+        const provider = Array.from(dom.onboardingProviders)
+            .find(input => input.checked)?.value;
+        let payload;
+        clearOnboardingMessages();
+        try {
+            payload = buildProviderPayload(
+                provider,
+                dom.onboardingApiKey?.value,
+                dom.onboardingSaveLocal?.checked === true
+            );
+        } catch (error) {
+            showOnboardingError(error?.message || 'setup_failed');
+            if (dom.onboardingApiKey) dom.onboardingApiKey.value = '';
+            return;
+        }
+
+        providerSubmissionInFlight = true;
+        if (dom.onboardingConfigure) dom.onboardingConfigure.disabled = true;
+        if (dom.onboardingProviderStatus) {
+            dom.onboardingProviderStatus.textContent = t('onboarding_configuring');
+        }
+        try {
+            const result = await API.configureProvider(
+                payload.provider,
+                payload.api_key,
+                payload.save_local
+            );
+            if (result?.runtime_ready !== true) throw new Error('runtime_reconfigure_failed');
+            setupStatusSnapshot = {
+                ...setupStatusSnapshot,
+                items: {
+                    ...(setupStatusSnapshot.items || {}),
+                    llm: {
+                        ...(setupStatusSnapshot.items?.llm || {}),
+                        configured: true,
+                    },
+                },
+                capabilities: {
+                    ...(setupStatusSnapshot.capabilities || {}),
+                    llm: {
+                        ...(setupStatusSnapshot.capabilities?.llm || {}),
+                        state: 'available',
+                    },
+                },
+            };
+            if (dom.onboardingCommandStatus) {
+                dom.onboardingCommandStatus.textContent = t('onboarding_provider_ready');
+            }
+            const nextStage = transitionOnboarding(onboardingStage, 'configured');
+            saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, nextStage);
+            renderOnboarding(nextStage, { focusHeading: true });
+        } catch (error) {
+            showOnboardingError(error?.message || 'setup_failed');
+        } finally {
+            payload = null;
+            if (dom.onboardingApiKey) dom.onboardingApiKey.value = '';
+            providerSubmissionInFlight = false;
+            if (dom.onboardingConfigure) dom.onboardingConfigure.disabled = false;
+            if (dom.onboardingProviderStatus) dom.onboardingProviderStatus.textContent = '';
+        }
+    }
+
+    async function initializeOnboarding() {
+        const languageWasChosenBeforeSync = hasStoredLanguageChoice();
+        await syncLanguageFromBackend();
+        const languageWasChosen = languageWasChosenBeforeSync || hasStoredLanguageChoice();
+        if (dom.onboardingLanguage) dom.onboardingLanguage.value = currentLang;
+        try {
+            setupStatusSnapshot = await API.fetchSetupStatus();
+        } catch {
+            setupStatusSnapshot = {};
+        }
+        setupStatusSnapshot = {
+            ...setupStatusSnapshot,
+            items: {
+                ...(setupStatusSnapshot.items || {}),
+                language: {
+                    ...(setupStatusSnapshot.items?.language || {}),
+                    configured: languageWasChosen,
+                },
+            },
+        };
+        const initialStage = resolveInitialStage(setupStatusSnapshot, readOnboardingState());
+        renderOnboarding(initialStage);
+    }
+
+    function setCommandState(state) {
+        const view = commandStateView(state, t);
+        if (dom.commandStatus) {
+            dom.commandStatus.textContent = view.label;
+            dom.commandStatus.dataset.state = view.state;
+        }
+        if (dom.commandSubmit) {
+            dom.commandSubmit.disabled = view.busy;
+        }
+        if (dom.commandInput) {
+            dom.commandInput.setAttribute('aria-busy', String(view.busy));
+        }
+        reactor.setState(view.state);
+    }
+
+    async function submitTextCommand(rawText) {
+        const text = normalizeCommandText(rawText);
+        if (!text || textCommandInFlight) return false;
+        let outcomeReported = false;
+        textCommandInFlight = true;
+        ui.addConversationSegment('user', text);
+        ui.updateAssistantSegment(t('command_state_processing'));
+        setCommandState('processing');
+        try {
+            const data = await getLlamaResponses(text);
+            const successful = data?.ok === false
+                ? false
+                : isSuccessfulCommandOutcome(data?.outcome);
+            window.dispatchEvent(new CustomEvent('jarvis:command-outcome', {
+                detail: { outcome: data?.outcome || '', ok: successful }
+            }));
+            outcomeReported = true;
+            if (!successful) {
+                throw new Error(data.error || 'command_unavailable');
+            }
+            const reply = sanitizeJarvisReply(widgets.processResponse(data?.response || ''));
+            setTranscript(reply);
+            ui.updateAssistantSegment(reply);
+            setCommandState('success');
+            if (dom.commandInput) dom.commandInput.value = '';
+            return true;
+        } catch {
+            if (!outcomeReported) {
+                window.dispatchEvent(new CustomEvent('jarvis:command-outcome', {
+                    detail: { outcome: '', ok: false }
+                }));
+            }
+            ui.updateAssistantSegment(t('command_state_error'));
+            setCommandState('error');
+            return false;
+        } finally {
+            textCommandInFlight = false;
+            if (dom.commandSubmit) dom.commandSubmit.disabled = false;
+            if (dom.commandInput) dom.commandInput.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    function showMicrophoneRecovery(errorType) {
+        const view = microphoneRecoveryView(classifyVoiceError(errorType), t);
+        if (dom.commandRecovery) {
+            dom.commandRecovery.classList.toggle('hidden', view.hidden);
+        }
+        if (dom.commandRecoveryText) {
+            dom.commandRecoveryText.textContent = view.message;
+        }
+        setCommandState(view.hidden ? 'idle' : 'error');
+    }
+
+    function setExpanded(control, panelOrPanels, expanded) {
+        if (!control || !panelOrPanels) return;
+        control.setAttribute('aria-expanded', String(expanded));
+        const panels = panelOrPanels.classList
+            ? [panelOrPanels]
+            : Array.from(panelOrPanels);
+        panels.forEach(panel => {
+            panel.classList.toggle('hidden', !expanded);
+            panel.classList.toggle('is-open', expanded);
+            panel.inert = !expanded;
+        });
+    }
+
+    function setDiagnosticsExpanded(expanded) {
+        if (!dom.diagnosticsToggle || !dom.diagnosticsPanels.length) return;
+        setExpanded(dom.diagnosticsToggle, dom.diagnosticsPanels, expanded);
+        dom.app?.classList.toggle('diagnostics-open', expanded);
+        const labelKey = expanded ? 'diagnostics_close' : 'diagnostics_open';
+        dom.diagnosticsToggle.setAttribute('data-i18n-aria-label', labelKey);
+        dom.diagnosticsToggle.setAttribute('aria-label', t(labelKey));
+    }
+
     dom.quickActionButtons.forEach(btn => btn.addEventListener('click', () => runQuickAction(btn.dataset.action)));
-    
+
+    if (dom.commandForm) {
+        dom.commandForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (dom.commandInput) {
+                submitTextCommand(dom.commandInput.value);
+            }
+        });
+    }
+
+    if (dom.commandInput) {
+        dom.commandInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitTextCommand(dom.commandInput.value);
+            }
+        });
+    }
+
+    if (dom.modeActionsToggle && dom.modeActions) {
+        dom.modeActionsToggle.addEventListener('click', () => {
+            const isHidden = dom.modeActions.classList.contains('hidden');
+            setExpanded(dom.modeActionsToggle, dom.modeActions, isHidden);
+        });
+    }
+
+    if (dom.diagnosticsToggle && dom.diagnosticsPanels.length) {
+        setDiagnosticsExpanded(false);
+        dom.diagnosticsToggle.addEventListener('click', () => {
+            const expanded = dom.diagnosticsToggle.getAttribute('aria-expanded') !== 'true';
+            setDiagnosticsExpanded(expanded);
+        });
+    }
+
+    if (dom.commandRetryVoice) {
+        dom.commandRetryVoice.addEventListener('click', () => {
+            resetMicrophonePermissionBlock();
+            if (dom.commandRecovery) dom.commandRecovery.classList.add('hidden');
+            setCommandState('idle');
+            dom.activateBtn?.focus();
+        });
+    }
+
+    dom.onboardingSkip?.addEventListener('click', () => {
+        const nextStage = transitionOnboarding(onboardingStage, 'skip');
+        saveOnboardingState(ONBOARDING_STATUSES.DISMISSED, nextStage);
+        clearOnboardingMessages();
+        renderOnboarding(nextStage);
+        dom.commandInput?.focus();
+    });
+
+    dom.onboardingContinue?.addEventListener('click', async () => {
+        const selectedLanguage = dom.onboardingLanguage?.value || currentLang;
+        await applyLanguageSetting(selectedLanguage);
+        setupStatusSnapshot = {
+            ...setupStatusSnapshot,
+            items: {
+                ...(setupStatusSnapshot.items || {}),
+                language: {
+                    ...(setupStatusSnapshot.items?.language || {}),
+                    configured: true,
+                },
+            },
+        };
+        const nextStage = runtimeLlmIsAvailable()
+            ? ONBOARDING_STAGES.COMMAND
+            : transitionOnboarding(onboardingStage, 'continue');
+        saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, nextStage);
+        renderOnboarding(nextStage, { focusHeading: true });
+    });
+
+    dom.onboardingLanguage?.addEventListener('change', async (event) => {
+        await applyLanguageSetting(event.target.value);
+        renderOnboarding(onboardingStage);
+    });
+
+    dom.onboardingBack?.addEventListener('click', () => {
+        const nextStage = transitionOnboarding(onboardingStage, 'back');
+        clearOnboardingMessages();
+        saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, nextStage);
+        renderOnboarding(nextStage, { focusHeading: true });
+    });
+
+    dom.onboardingCommandBack?.addEventListener('click', () => {
+        const nextStage = transitionOnboarding(onboardingStage, 'back');
+        saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, nextStage);
+        renderOnboarding(nextStage, { focusHeading: true });
+    });
+
+    dom.onboardingConfigure?.addEventListener('click', configureOnboardingProvider);
+
+    dom.onboardingUseSuggestion?.addEventListener('click', () => {
+        if (dom.commandInput) {
+            dom.commandInput.value = t('onboarding_command_suggestion');
+            dom.commandInput.focus();
+        }
+    });
+
+    dom.onboardingFinish?.addEventListener('click', () => {
+        renderOnboarding(ONBOARDING_STAGES.HIDDEN);
+        dom.commandInput?.focus();
+    });
+
+    dom.completeSetupAction?.addEventListener('click', () => {
+        setDiagnosticsExpanded(false);
+        clearOnboardingState();
+        const nextStage = languageIsConfigured()
+            ? ONBOARDING_STAGES.PROVIDER
+            : ONBOARDING_STAGES.WELCOME;
+        saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, nextStage);
+        renderOnboarding(nextStage, { focusHeading: true });
+    });
+
+    dom.replayOnboardingAction?.addEventListener('click', () => {
+        setDiagnosticsExpanded(false);
+        clearOnboardingState();
+        saveOnboardingState(ONBOARDING_STATUSES.ACTIVE, ONBOARDING_STAGES.WELCOME);
+        renderOnboarding(ONBOARDING_STAGES.WELCOME, { focusHeading: true });
+    });
+
+    window.addEventListener('jarvis:command-outcome', event => {
+        if (onboardingStage !== ONBOARDING_STAGES.COMMAND) return;
+        if (event.detail?.ok === true && firstCommandCompletes(event.detail?.outcome)) {
+            const nextStage = transitionOnboarding(onboardingStage, 'command_succeeded');
+            saveOnboardingState(ONBOARDING_STATUSES.COMPLETED, nextStage);
+            renderOnboarding(nextStage, { focusHeading: true });
+            return;
+        }
+        if (dom.onboardingCommandStatus) {
+            dom.onboardingCommandStatus.textContent = t('onboarding_command_failed');
+        }
+    });
+
     if (dom.langSelector) {
         dom.langSelector.value = currentLang;
-        dom.langSelector.addEventListener('change', async (e) => {
-            const newLang = e.target.value;
-            
-            // 1. Update frontend UI text
-            setLanguage(newLang);
-            applyRecognitionLanguage(newLang);
-            
-            // 2. Update dynamic button text
-            const txt = dom.activateBtn.querySelector('.btn-text');
-            if (currentMode === 'idle') {
-                txt.textContent = t('btn_init_voice');
-            } else if (currentMode === 'active') {
-                txt.textContent = t('btn_stop_voice');
-            } else if (currentMode === 'processing') {
-                txt.textContent = t('mode_processing');
-            }
-            // 3. Hot-swap backend (TTS voice model, Whisper lang, prompts)
-            try {
-                const res = await fetch('/api/language', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ language: newLang })
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    console.log(`[LANG] Backend switched to ${data.name} (TTS: ${data.tts_swapped ? 'OK' : 'SKIPPED'})`);
-                    // Update HUD locale for clock/date
-                    if (hud && hud.setLocale) {
-                        hud.setLocale(data.locale);
-                    }
-                } else {
-                    console.warn('[LANG] Backend switch failed:', data.error);
-                }
-            } catch (err) {
-                console.warn('[LANG] Could not reach backend:', err);
-            }
+        dom.langSelector.addEventListener('change', async (event) => {
+            await applyLanguageSetting(event.target.value);
+            renderOnboarding(onboardingStage);
         });
         updateUI(); // Initial translation
     }
-    syncLanguageFromBackend();
+    initializeOnboarding();
     dom.activateBtn?.addEventListener('click', () => {
         dom.activateBtn.blur();
         resetMicrophonePermissionBlock();
@@ -617,23 +1132,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- LIVE FULL-DUPLEX VOZ ---
     let liveVoiceClient = null;
     let isLiveVoiceActive = false;
+    let liveVoiceStartInFlight = false;
 
-    async function stopLiveVoiceStream() {
-        if (!isLiveVoiceActive) return;
+    async function stopLiveVoiceStream({
+        resumePassive = true,
+        focusText = false,
+    } = {}) {
+        if (!isLiveVoiceActive && !liveVoiceClient) return;
         isLiveVoiceActive = false;
         if (liveVoiceClient) {
-            liveVoiceClient.disconnect();
+            await liveVoiceClient.disconnect();
             liveVoiceClient = null;
         }
         if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_live_voice');
         if (dom.liveVoiceBtn) dom.liveVoiceBtn.classList.remove('live-active');
+        if (dom.btnLiveScreenText) dom.btnLiveScreenText.textContent = t('btn_live_screen');
+        if (dom.liveScreenBtn) dom.liveScreenBtn.classList.remove('screen-active');
         setCurrentMode('idle', 'stop_live_voice');
         updateButtonUI('idle');
-        startPassiveListening();
+        if (focusText) {
+            setCommandState('idle');
+            dom.commandInput?.focus();
+        } else if (resumePassive) {
+            startPassiveListening();
+        }
     }
 
     async function startLiveVoiceStream() {
-        if (isLiveVoiceActive) return;
+        if (isLiveVoiceActive || liveVoiceStartInFlight) return;
+        liveVoiceStartInFlight = true;
+        if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = true;
         safeStopRecognition('passive');
         safeStopRecognition('active');
         if (isSpeaking) {
@@ -656,9 +1184,18 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (state === 'listening') {
                 setCurrentMode('active', 'live_listening');
                 if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connected');
+            } else if (state === 'connecting') {
+                setCurrentMode('transition', 'live_connecting');
+                if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connecting');
+            } else if (state === 'configuring') {
+                setCurrentMode('processing', 'live_configuring');
+                if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_configuring');
+            } else if (state === 'reconnecting') {
+                setCurrentMode('transition', 'live_reconnecting');
+                if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_reconnecting');
             } else if (state === 'closed') {
                 if (isLiveVoiceActive) {
-                    stopLiveVoiceStream();
+                    void stopLiveVoiceStream({ resumePassive: false, focusText: true });
                 }
             }
         };
@@ -667,7 +1204,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const role = data.role === 'assistant' ? 'jarvis' : 'user';
             const text = data.text || '';
             if (text) {
-ui.addConversationSegment(role, text);
+                ui.addConversationSegment(role, text);
                 if (dom.transcriptText) dom.transcriptText.textContent = text;
             }
         };
@@ -685,12 +1222,45 @@ ui.addConversationSegment(role, text);
         };
 
         liveVoiceClient.onError = (err) => {
-            console.warn('[LIVE_VOICE] Error:', err);
-            ui.addLogEntry(`> LIVE ERROR: ${err.message || 'Error de conexión'}`);
+            const view = liveVoiceErrorView(err, t);
+            ui.addLogEntry(`> LIVE: ${view.code}`);
+            if (dom.transcriptText) dom.transcriptText.textContent = view.message;
+            if (view.terminal && isLiveVoiceActive) {
+                void stopLiveVoiceStream({ resumePassive: false, focusText: true });
+            }
         };
 
         liveVoiceClient.onSessionReady = (data) => {
-            ui.addLogEntry(`> LIVE FULL-DUPLEX: Enlace establecido (Modo: ${data.mode || 'live'}).`);
+            const fallback = data.type === 'live_fallback_active'
+                || data.mode === 'hybrid_stream';
+            ui.addLogEntry(fallback ? '> LIVE: hybrid_fallback' : '> LIVE: ready');
+            if (fallback && dom.transcriptText) {
+                dom.transcriptText.textContent = t('mode_live_fallback');
+            }
+        };
+
+        liveVoiceClient.onReconnecting = () => {
+            if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_reconnecting');
+        };
+
+        liveVoiceClient.onDiagnostics = data => {
+            if (data?.code === 'live_audio_transport_degraded') {
+                const view = liveVoiceErrorView(data, t);
+                if (dom.commandStatus) dom.commandStatus.textContent = view.message;
+            }
+        };
+
+        liveVoiceClient.onActionPlanUpdated = plan => {
+            const confirmation = (plan?.actions || []).find(
+                action => action.state === 'confirmation_required'
+            );
+            if (confirmation) {
+                setCommandState('confirmation');
+                if (dom.transcriptText) {
+                    dom.transcriptText.textContent = t('live_confirmation_required');
+                }
+                dom.commandInput?.focus();
+            }
         };
 
         try {
@@ -701,9 +1271,13 @@ ui.addConversationSegment(role, text);
             setCurrentMode('active', 'live_stream_started');
             if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connected');
         } catch (err) {
-            console.error('[LIVE_VOICE] Failed to start:', err);
-            ui.addLogEntry(`> LIVE ERROR: No se pudo iniciar el streaming de audio.`);
-            stopLiveVoiceStream();
+            const view = liveVoiceErrorView(err, t);
+            ui.addLogEntry(`> LIVE: ${view.code}`);
+            if (dom.transcriptText) dom.transcriptText.textContent = view.message;
+            await stopLiveVoiceStream({ resumePassive: false, focusText: true });
+        } finally {
+            liveVoiceStartInFlight = false;
+            if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = false;
         }
     }
 
@@ -726,8 +1300,6 @@ ui.addConversationSegment(role, text);
     // --- RECONOCIMIENTO DE VOZ Y CEREBRO ---
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let voiceCapabilities = detectVoiceCapabilities(window);
-    let passiveRecognition = null;
-    let activeRecognition = null;
     let passiveRecognitionRunning = false;
     let activeRecognitionRunning = false;
     let passiveRestartTimer = null;
@@ -902,6 +1474,7 @@ ui.addConversationSegment(role, text);
         }
         setCurrentMode('idle', 'microphone_permission_blocked');
         updateButtonUI('idle');
+        showMicrophoneRecovery(errorType);
         if (!microphoneBlockLogged) {
             microphoneBlockLogged = true;
             ui.addLogEntry(t(voiceErrorTranslationKey(errorType)));
@@ -1050,14 +1623,14 @@ ui.addConversationSegment(role, text);
             clearActiveStartTimer();
             passiveErrorRestartPending = false;
             safeStopRecognition('passive');
-            
+
             // Poner modo 'active' para que finishActiveListening lo intercepte
             setCurrentMode('active', 'wakeword_inline_fast');
             fullTranscript = command;
             latestInterimTranscript = '';
             activeCommandProcessRequested = false;
             updateButtonUI('active');
-            
+
             // Terminar inmediatamente y mandar al backend sin grabar audio extra (cero latencia)
             finishActiveListening();
         }
@@ -1348,12 +1921,17 @@ ui.addConversationSegment(role, text);
     }
 
     async function getLlamaResponseClassic(text) {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, profile_id: lastIdentifiedProfileId })
-        });
-        return await res.json();
+        const started = performance.now();
+        const data = await API.postChat(text, lastIdentifiedProfileId || 'web_default');
+        const totalNetworkMs = performance.now() - started;
+        if (data?.metrics) {
+            const metrics = data.metrics;
+            const detail = `IA: ${Math.round(metrics.planning_ms)}ms (${metrics.provider}) | Tools: ${Math.round(metrics.execution_ms)}ms`;
+            hud.updateLatency(metrics.total_ms, detail);
+        } else {
+            hud.updateLatency(totalNetworkMs, `Red: ${Math.round(totalNetworkMs)}ms`);
+        }
+        return data;
     }
 
     async function getLlamaResponses(userInput) {
@@ -1362,7 +1940,12 @@ ui.addConversationSegment(role, text);
             try { return await getLlamaResponseClassic(userInput); }
             catch (e) {
                 addLogEntry(t('cog_error').replace('{detail}', e?.message || '---'));
-                return { response: t('cog_fail_msg'), should_listen: false };
+                return {
+                    ok: false,
+                    error: 'classic_unavailable',
+                    response: t('cog_fail_msg'),
+                    should_listen: false,
+                };
             }
         }
         addLogEntry(t('cog_connecting'));
@@ -1388,7 +1971,7 @@ ui.addConversationSegment(role, text);
             if (!response.ok || !response.body) { clearTimers(); throw new Error('stream_unavailable'); }
             reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let carry = '', acc = '', finalReply = '', shouldListen = false, gotDone = false;
+            let carry = '', acc = '', finalReply = '', finalOutcome = '', shouldListen = false, gotDone = false;
             function consumeSseBlock(block) {
                 for (const line of block.split('\n')) {
                     const trimmed = line.trim();
@@ -1410,6 +1993,7 @@ ui.addConversationSegment(role, text);
                         }
                     } else if (ev.type === 'done') {
                         finalReply = ev.response || acc || '';
+                        finalOutcome = ev.outcome || '';
                         shouldListen = !!ev.should_listen;
                         gotDone = true;
                     } else if (ev.type === 'error') { throw new Error(ev.message || 'stream_error'); }
@@ -1432,7 +2016,12 @@ ui.addConversationSegment(role, text);
             let rawReply = gotDone ? finalReply : acc;
             const cleanReply = widgets.processResponse(rawReply);
             applySecurityGlow(cleanReply);
-            return { response: cleanReply, should_listen: shouldListen };
+            return {
+                ok: isSuccessfulCommandOutcome(finalOutcome),
+                outcome: finalOutcome,
+                response: cleanReply,
+                should_listen: shouldListen,
+            };
         } catch (error) {
             clearTimers();
             if (reader) { try { await reader.cancel(); } catch (_) { } reader = null; }
@@ -1441,7 +2030,12 @@ ui.addConversationSegment(role, text);
             try { return await getLlamaResponseClassic(userInput); }
             catch (e2) {
                 addLogEntry('> ERROR: Agente desconectado.');
-                return { response: t('cog_fail_msg'), should_listen: false };
+                return {
+                    ok: false,
+                    error: 'reasoning_unavailable',
+                    response: t('cog_fail_msg'),
+                    should_listen: false,
+                };
             }
         }
     }
