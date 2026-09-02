@@ -199,6 +199,20 @@ def guardar_dato_memoria(dato: str) -> str:
     merged = _fusionar_facts_memoria(current_facts, [clean_fact])
     memory_manager.set_facts(pid, merged)
     guardar_memoria_perfiles()
+
+    # Sync to unified cognitive memory graph
+    try:
+        from modules.memory.service import unified_memory
+
+        title_match = clean_fact.split(":")[0].strip() if ":" in clean_fact else clean_fact[:30]
+        unified_memory.save_cognitive_memory(
+            title=title_match,
+            content=clean_fact,
+            profile_id=pid,
+        )
+    except Exception:
+        pass
+
     return f"Dato guardado en la memoria permanente: '{clean_fact}'."
 
 
