@@ -20,6 +20,7 @@ from core.command_pipeline.execution import (
 from core.command_pipeline.models import (
     ActionStep,
     CommandRequest,
+    ExecutionReceipt,
     ReceiptStatus,
 )
 from core.jarvis_config import AUTOCURACION_ACTIVA, BASE_DIR, PLUGINS_DIR, ROOT_DIR, SRC_DIR
@@ -407,8 +408,15 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             outcome = "unavailable"
             result_preview = "tool_unavailable"
             raise LookupError("tool_unavailable")
+        execution_args = dict(args)
+        for internal_key in (
+            "_confirmed",
+            "confirmed",
+            "el_usuario_ya_confirmo",
+        ):
+            execution_args.pop(internal_key, None)
         with jarvis_state.active_profile(profile_id):
-            result = tool.invoke(args)
+            result = tool.invoke(execution_args)
         result_txt = str(result)
 
         ok = not _resultado_parece_error(result_txt)
@@ -473,7 +481,21 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         )
 
 
-_tool_execution_service = ToolExecutionService(_invoke_tool_once)
+def _register_confirmation_required(request: CommandRequest, step: ActionStep) -> None:
+    from core.brain import history_manager
+
+    history_manager._registrar_accion_pendiente_auth(
+        request.profile_id,
+        step.tool_name,
+        dict(step.arguments),
+        request.text,
+    )
+
+
+_tool_execution_service = ToolExecutionService(
+    _invoke_tool_once,
+    on_confirmation_required=_register_confirmation_required,
+)
 services.tool_execution = _tool_execution_service
 
 
@@ -485,7 +507,7 @@ def _receipt_value(receipt) -> Any:
     return receipt.user_message
 
 
-def _invocar_tool_entry(
+def execute_tool_receipt(
     tc_name: str,
     args: dict,
     user_input: str,
@@ -493,7 +515,7 @@ def _invocar_tool_entry(
     profile_id: str | None = None,
     request_id: str | None = None,
     step_id: str | None = None,
-) -> Any:
+) -> ExecutionReceipt:
     request = CommandRequest.create(
         text=user_input or tc_name,
         profile_id=profile_id or jarvis_state.get_active_profile_id(),
@@ -506,7 +528,28 @@ def _invocar_tool_entry(
         tool_name=tc_name,
         arguments=args,
     )
-    return _receipt_value(_tool_execution_service.execute(request, step))
+    return _tool_execution_service.execute(request, step)
+
+
+def _invocar_tool_entry(
+    tc_name: str,
+    args: dict,
+    user_input: str,
+    source: str = "unknown",
+    profile_id: str | None = None,
+    request_id: str | None = None,
+    step_id: str | None = None,
+) -> Any:
+    receipt = execute_tool_receipt(
+        tc_name,
+        args,
+        user_input,
+        source,
+        profile_id,
+        request_id,
+        step_id,
+    )
+    return _receipt_value(receipt)
 
 
 def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:

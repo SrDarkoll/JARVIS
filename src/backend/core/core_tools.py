@@ -34,6 +34,14 @@ from tools.browser import (  # noqa: F401
     abrir_youtube,
     cerrar_navegador_playwright,
 )
+from tools.computer_use import (  # noqa: F401
+    computer_click,
+    computer_drag_and_drop,
+    computer_hotkey,
+    computer_inspect_screen,
+    computer_scroll,
+    computer_type,
+)
 from tools.desktop_control import controlar_ventana, enfocar_ventana, listar_ventanas  # noqa: F401
 from tools.memory import (  # noqa: F401
     _obtener_contexto_memoria_entrelazada,
@@ -47,6 +55,28 @@ from tools.memory import (  # noqa: F401
     guardar_memoria_async,
     guardar_memoria_perfiles,
     init_sqlite_db,
+)
+from tools.proactive import (  # noqa: F401
+    aprender_patron_rutina,
+    consultar_estado_proactivo,
+    consultar_rutinas_predictivas,
+    ejecutar_accion_proactiva,
+    predecir_siguiente_accion,
+)
+from tools.procedural_memory import (  # noqa: F401
+    aprender_procedimiento,
+    buscar_en_boveda,
+    busqueda_semantica_hibrida,
+    consultar_memoria_jit,
+    consultar_memoria_unificada,
+    consultar_procedimientos,
+    crear_nota_boveda,
+    ejecutar_consolidacion_memoria,
+    ejecutar_procedimiento,
+    enlazar_conceptos,
+    guardar_memoria_entrelazada,
+    recordar_episodio,
+    sincronizar_boveda_conocimiento,
 )
 from tools.search import _buscar_multi_fuente, buscar_en_internet  # noqa: F401
 from tools.system import (  # noqa: F401

@@ -44,6 +44,29 @@ class SpeechToTextConfig:
     timeout_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class LiveVoiceConfig:
+    model: str
+    voice_name: str
+    setup_timeout_seconds: float
+    max_reconnect_attempts: int
+    reconnect_base_seconds: float
+    reconnect_max_seconds: float
+    stable_connection_seconds: float
+    context_compression_enabled: bool
+    session_resumption_enabled: bool
+    recent_turns: int
+    context_char_limit: int
+    input_chunk_ms: int
+    max_playback_queue_ms: int
+    max_consecutive_audio_drops: int
+    auto_fallback_enabled: bool
+
+
+_LIVE_MODELS = {"gemini-3.1-flash-live-preview"}
+_LIVE_VOICES = {"Aoede", "Charon", "Fenrir", "Kore", "Puck"}
+
+
 def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     raw = env.get(name)
     if raw is None or not str(raw).strip():
@@ -115,6 +138,107 @@ def resolve_speech_to_text_config(
         local_device=str(source.get("JARVIS_WHISPER_DEVICE", "cpu") or "cpu").strip(),
         local_compute_type=str(source.get("JARVIS_WHISPER_COMPUTE_TYPE", "int8") or "int8").strip(),
         timeout_seconds=_read_float(source, "JARVIS_STT_TIMEOUT_SECONDS", 20.0, 5.0, 60.0),
+    )
+
+
+def resolve_live_voice_config(
+    env: Mapping[str, str] | None = None,
+) -> LiveVoiceConfig:
+    source = os.environ if env is None else env
+    raw_model = str(
+        source.get("JARVIS_GEMINI_LIVE_MODEL")
+        or "gemini-3.1-flash-live-preview"
+    ).strip()
+    model = raw_model.removeprefix("models/")
+    if model not in _LIVE_MODELS:
+        model = "gemini-3.1-flash-live-preview"
+
+    voice_name = str(
+        source.get("JARVIS_GEMINI_LIVE_VOICE") or "Charon"
+    ).strip()
+    if voice_name not in _LIVE_VOICES:
+        voice_name = "Charon"
+
+    return LiveVoiceConfig(
+        model=model,
+        voice_name=voice_name,
+        setup_timeout_seconds=_read_float(
+            source,
+            "JARVIS_LIVE_SETUP_TIMEOUT_SECONDS",
+            10.0,
+            2.0,
+            30.0,
+        ),
+        max_reconnect_attempts=_read_int(
+            source,
+            "JARVIS_LIVE_RECONNECT_ATTEMPTS",
+            3,
+            0,
+            8,
+        ),
+        reconnect_base_seconds=_read_float(
+            source,
+            "JARVIS_LIVE_RECONNECT_BASE_SECONDS",
+            0.5,
+            0.1,
+            5.0,
+        ),
+        reconnect_max_seconds=_read_float(
+            source,
+            "JARVIS_LIVE_RECONNECT_MAX_SECONDS",
+            4.0,
+            0.5,
+            15.0,
+        ),
+        stable_connection_seconds=_read_float(
+            source,
+            "JARVIS_LIVE_STABLE_CONNECTION_SECONDS",
+            5.0,
+            1.0,
+            30.0,
+        ),
+        context_compression_enabled=True,
+        session_resumption_enabled=False,
+        recent_turns=_read_int(
+            source,
+            "JARVIS_LIVE_RECENT_TURNS",
+            6,
+            0,
+            12,
+        ),
+        context_char_limit=_read_int(
+            source,
+            "JARVIS_LIVE_CONTEXT_CHARS",
+            6000,
+            1000,
+            12000,
+        ),
+        input_chunk_ms=_read_int(
+            source,
+            "JARVIS_LIVE_INPUT_CHUNK_MS",
+            20,
+            20,
+            40,
+        ),
+        max_playback_queue_ms=_read_int(
+            source,
+            "JARVIS_LIVE_PLAYBACK_QUEUE_MS",
+            2000,
+            250,
+            5000,
+        ),
+        max_consecutive_audio_drops=_read_int(
+            source,
+            "JARVIS_LIVE_MAX_AUDIO_DROPS",
+            25,
+            3,
+            250,
+        ),
+        auto_fallback_enabled=_read_bool(
+            source,
+            "JARVIS_LIVE_AUTO_FALLBACK_ENABLED",
+            True,
+        ),
     )
 
 

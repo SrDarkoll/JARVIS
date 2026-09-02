@@ -1,26 +1,44 @@
+import asyncio
 import os
 import sys
+from pathlib import Path
 
 import psutil
 from core import jarvis_brain, jarvis_state
 from core.action_plans import list_action_plans
 from core.api_contracts import validate_status_full_response
 from core.app_config import get_default_location
+from core.brain import llm_engine
 from core.capabilities import (
     CapabilityRegistry,
     CapabilityReport,
     CapabilityState,
 )
-from core.jarvis_config import RUNTIME_FEATURES
+from core.jarvis_config import ROOT_DIR, RUNTIME_FEATURES
 from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
 from core.llm_providers import resolve_llm_provider_config
 from core.operator_status import build_operator_status
 from core.runtime_logger import log_warning
+from core.setup_configuration import (
+    SetupAttemptLimiter,
+    SetupConfigurationError,
+    apply_provider_configuration,
+)
 from core.setup_wizard import build_setup_status
 from quart import Blueprint, jsonify, request
 from services import security_manager
 
 status_bp = Blueprint("status", __name__)
+_SETUP_PROVIDER_LIMITER = SetupAttemptLimiter(limit=5, window_seconds=600)
+_SETUP_PROVIDER_ERROR_STATUS = {
+    "invalid_provider": 400,
+    "invalid_request": 400,
+    "invalid_key_format": 400,
+    "provider_validation_failed": 422,
+    "configuration_save_failed": 500,
+    "configuration_rollback_failed": 500,
+    "runtime_reconfigure_failed": 503,
+}
 
 # Injected dependencies
 _services = None
@@ -177,6 +195,31 @@ def _runtime_capabilities(
             "llm_key_missing",
             "Configure GEMINI_API_KEY or GROQ_API_KEY",
         )
+
+    from api.voice_routes import build_live_voice_status
+
+    live_voice = build_live_voice_status()
+    live_state = {
+        "available": CapabilityState.AVAILABLE,
+        "degraded": CapabilityState.DEGRADED,
+        "unconfigured": CapabilityState.UNCONFIGURED,
+        "disabled": CapabilityState.DISABLED,
+        "unavailable": CapabilityState.FAILED,
+    }.get(str(live_voice.get("state") or ""), CapabilityState.FAILED)
+    publish(
+        "live_voice",
+        live_state,
+        str(live_voice.get("code") or "live_voice_unavailable"),
+        (
+            "Configure Gemini or use the hybrid voice fallback"
+            if live_state is not CapabilityState.AVAILABLE
+            else ""
+        ),
+        detail=(
+            f"preferred={live_voice.get('preferred_mode')}; "
+            "provider_api=preview; session_resumption=disabled"
+        ),
+    )
 
     voice_profiles = _admin_voice_profile_count() if admin_voice_profiles is None else int(admin_voice_profiles)
     if not RUNTIME_FEATURES.voice_id_enabled:
@@ -451,7 +494,57 @@ def setup_status():
         speech_to_text=_speech_to_text_status(),
         admin_voice_profiles=admin_voice_profiles,
     )
-    return jsonify(setup)
+    response = jsonify(setup)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _apply_setup_provider_payload(data: dict) -> dict[str, object]:
+    return apply_provider_configuration(
+        provider=data.get("provider"),
+        api_key=data.get("api_key"),
+        save_local=data.get("save_local"),
+        env_path=Path(ROOT_DIR) / ".env",
+        environ=os.environ,
+        prepare_runtime=llm_engine.prepare_llm_runtime,
+        activate_runtime=llm_engine.activate_llm_runtime,
+    )
+
+
+def _setup_provider_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store"
+    return response, status
+
+
+@status_bp.route("/api/setup/provider", methods=["POST"])
+async def setup_provider():
+    retry_after = _SETUP_PROVIDER_LIMITER.check(request.remote_addr)
+    if retry_after > 0:
+        return _setup_provider_response(
+            {
+                "error": "setup_rate_limited",
+                "retry_after": round(retry_after, 3),
+            },
+            429,
+        )
+
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        result = await asyncio.to_thread(_apply_setup_provider_payload, data)
+        return _setup_provider_response(result)
+    except (SetupConfigurationError, llm_engine.LLMReconfigurationError) as exc:
+        error_code = str(exc) or "setup_failed"
+        log_warning("setup_provider_failed", error=error_code)
+        return _setup_provider_response(
+            {"error": error_code},
+            _SETUP_PROVIDER_ERROR_STATUS.get(error_code, 500),
+        )
+    except Exception as exc:
+        log_warning("setup_provider_failed", error=type(exc).__name__)
+        return _setup_provider_response({"error": "setup_failed"}, 500)
 
 
 @status_bp.route("/api/reminders", methods=["GET"])

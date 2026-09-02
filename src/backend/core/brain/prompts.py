@@ -46,6 +46,16 @@ def get_system_msg(user_input: str, profile_id: str | None = None) -> SystemMess
     if shared_facts:
         memoria_texto += "\n\n--- Shared memory between profiles ---\n" + shared_facts
 
+    # Enriquecimiento con Memoria Cognitiva Entrelazada
+    try:
+        from modules.memory.service import unified_memory
+
+        cog_ctx = unified_memory.get_holistic_context_for_prompt(profile_id=pid)
+        if cog_ctx:
+            memoria_texto += f"\n{cog_ctx}"
+    except Exception:
+        pass
+
     # Enriquecimiento RAG
     if RAG_ENABLED:
         try:

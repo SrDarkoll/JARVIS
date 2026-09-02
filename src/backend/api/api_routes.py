@@ -8,6 +8,11 @@ from datetime import datetime
 
 import psutil
 from core.runtime_logger import log_info
+from core.security.api_auth import (
+    LOCAL_UI_AUTH_COOKIE,
+    configured_api_token,
+    local_ui_cookie_value,
+)
 from quart import Blueprint, jsonify, make_response, render_template, request, send_from_directory
 
 api_bp = Blueprint("api", __name__)
@@ -15,6 +20,19 @@ api_bp = Blueprint("api", __name__)
 _services = None
 _root_dir = None
 _browser_mode = None
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LOOPBACK_PEERS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+def _is_loopback_ui_request() -> bool:
+    raw_host = str(request.host or "").strip().lower()
+    if raw_host.startswith("["):
+        host = raw_host[1:].split("]", 1)[0]
+    else:
+        host = raw_host.split(":", 1)[0]
+    peer = str(request.remote_addr or "").strip().lower()
+    return host in _LOOPBACK_HOSTS and peer in _LOOPBACK_PEERS
 
 
 def init_api_routes(services, browser_mode, root_dir):
@@ -27,7 +45,19 @@ def init_api_routes(services, browser_mode, root_dir):
 @api_bp.route("/", methods=["GET"])
 async def index():
     try:
-        return await render_template("index.html")
+        rendered = await render_template("index.html")
+        response = await make_response(rendered)
+        token = configured_api_token()
+        if token and _is_loopback_ui_request():
+            response.set_cookie(
+                LOCAL_UI_AUTH_COOKIE,
+                local_ui_cookie_value(token),
+                httponly=True,
+                secure=request.scheme == "https",
+                samesite="Strict",
+                path="/",
+            )
+        return response
     except Exception as e:
         from core.runtime_logger import log_warning
 

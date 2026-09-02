@@ -25,6 +25,12 @@ ALLOWED_PLAN_TOOLS = {
     "modo_no_molestar",
     "navegar_en_navegador",
     "ver_procesos_pesados",
+    "computer_click",
+    "computer_type",
+    "computer_hotkey",
+    "computer_scroll",
+    "computer_inspect_screen",
+    "computer_drag_and_drop",
 }
 
 _ACTION_PLANS: dict[str, dict[str, Any]] = {}

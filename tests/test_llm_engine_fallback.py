@@ -4,6 +4,7 @@ import builtins
 import sys
 from types import SimpleNamespace
 
+import pytest
 from core.brain import llm_engine
 from core.command_pipeline.tool_registry import ToolRegistryService
 from langchain_core.messages import AIMessage, HumanMessage
@@ -341,7 +342,7 @@ def test_rebuild_tooling_replaces_registry_under_plugin_lock(monkeypatch):
     )
     snapshot = brain_state.tool_registry.snapshot()
     assert snapshot.version == 1
-    assert snapshot.tools == tuple([*base, *plugins])
+    assert snapshot.tools == (*base, *plugins)
     assert dict(snapshot.by_name) == brain_state.tool_map
 
 
@@ -354,3 +355,86 @@ def test_rebuild_tooling_clears_stale_bound_model_without_llm(monkeypatch):
     llm_engine._rebuild_tooling([], [])
 
     assert brain_state.llm_with_tools is None
+
+
+def test_reconfigure_llm_runtime_swaps_only_after_validation(monkeypatch):
+    from core.brain import brain_state
+    from core.service_container import services
+
+    previous = object()
+    candidate = object()
+    monkeypatch.setattr(brain_state, "llm", previous)
+    monkeypatch.setattr(services, "llm", previous)
+    monkeypatch.setattr(brain_state, "tools_list", [])
+    monkeypatch.setattr(
+        llm_engine,
+        "_build_llm_clients",
+        lambda _env: (candidate, None, None, "groq", ""),
+    )
+    monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda model: model is candidate)
+    monkeypatch.setattr(llm_engine, "_rebind_current_tools", lambda: None)
+
+    result = llm_engine.reconfigure_llm_runtime(
+        {"GROQ_API_KEY": "q" * 24, "JARVIS_LLM_PROVIDER": "groq"}
+    )
+
+    assert result == {"provider": "groq", "runtime_ready": True}
+    assert brain_state.llm is candidate
+    assert services.llm is candidate
+
+
+def test_reconfigure_llm_runtime_preserves_previous_clients_on_failure(monkeypatch):
+    from core.brain import brain_state
+    from core.service_container import services
+
+    previous = object()
+    candidate = object()
+    monkeypatch.setattr(brain_state, "llm", previous)
+    monkeypatch.setattr(services, "llm", previous)
+    monkeypatch.setattr(
+        llm_engine,
+        "_build_llm_clients",
+        lambda _env: (candidate, None, None, "gemini", ""),
+    )
+    monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda _model: False)
+
+    with pytest.raises(
+        llm_engine.LLMReconfigurationError,
+        match="provider_validation_failed",
+    ):
+        llm_engine.reconfigure_llm_runtime({"GEMINI_API_KEY": "g" * 24})
+
+    assert brain_state.llm is previous
+    assert services.llm is previous
+
+
+def test_reconfigure_llm_runtime_rolls_back_when_tool_rebind_fails(monkeypatch):
+    from core.brain import brain_state
+    from core.service_container import services
+
+    previous = object()
+    candidate = object()
+    monkeypatch.setattr(brain_state, "llm", previous)
+    monkeypatch.setattr(services, "llm", previous)
+    monkeypatch.setattr(brain_state, "llm_primary_provider", "previous")
+    monkeypatch.setattr(
+        llm_engine,
+        "_build_llm_clients",
+        lambda _env: (candidate, None, None, "groq", ""),
+    )
+    monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda _model: True)
+    monkeypatch.setattr(
+        llm_engine,
+        "_rebind_current_tools",
+        lambda: (_ for _ in ()).throw(RuntimeError("bind failed")),
+    )
+
+    with pytest.raises(
+        llm_engine.LLMReconfigurationError,
+        match="runtime_reconfigure_failed",
+    ):
+        llm_engine.reconfigure_llm_runtime({"GROQ_API_KEY": "q" * 24})
+
+    assert brain_state.llm is previous
+    assert services.llm is previous
+    assert brain_state.llm_primary_provider == "previous"

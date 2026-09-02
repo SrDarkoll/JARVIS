@@ -46,6 +46,7 @@ class ServiceContainer:
         # --- LLM Engines ---
         self.llm: Any = None
         self.llm_vision: Any = None
+        self.llm_fallback: Any = None
         self.llm_with_tools: Any = None
 
         # --- States and Context ---

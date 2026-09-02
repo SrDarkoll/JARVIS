@@ -2,6 +2,8 @@ import json
 import os
 import sys
 import threading
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 from core import core_tools
@@ -304,6 +306,157 @@ def _load_chat_openai():
         return _OpenAICompatibleChatOpenAI
 
 
+_RECONFIGURE_LOCK = threading.RLock()
+
+
+class LLMReconfigurationError(RuntimeError):
+    """Controlled runtime reconfiguration failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class LLMRuntimeCandidate:
+    """Validated clients ready for an atomic runtime activation."""
+
+    primary: object = field(repr=False)
+    fallback: object | None = field(default=None, repr=False)
+    vision: object | None = field(default=None, repr=False)
+    primary_provider: str = ""
+    fallback_provider: str = ""
+
+
+def _build_llm_clients(provider_env: Mapping[str, str]):
+    provider_config = resolve_llm_provider_config(provider_env)
+    if not provider_config.configured:
+        return None, None, None, "", ""
+
+    chat_open_ai = _load_chat_openai()
+
+    def create_client(model: str, api_key: str, provider: str):
+        return chat_open_ai(
+            model=model,
+            temperature=0,
+            api_key=api_key,
+            base_url=provider_base_url(provider),
+            timeout=10,
+            max_retries=0,
+        )
+
+    primary = create_client(
+        provider_config.primary_model,
+        provider_config.primary_api_key,
+        provider_config.primary_provider,
+    )
+    vision = None
+    if VISION_ENABLED:
+        vision_model = (
+            str(provider_env.get("JARVIS_GEMINI_VISION_MODEL") or "gemini-2.5-flash")
+            if provider_config.primary_provider == "gemini"
+            else str(provider_env.get("JARVIS_GROQ_VISION_MODEL") or GROQ_VISION_MODEL)
+        )
+        vision = create_client(
+            vision_model,
+            provider_config.primary_api_key,
+            provider_config.primary_provider,
+        )
+
+    fallback = None
+    if provider_config.fallback_provider:
+        fallback = create_client(
+            provider_config.fallback_model,
+            provider_config.fallback_api_key,
+            provider_config.fallback_provider,
+        )
+
+    return (
+        primary,
+        fallback,
+        vision,
+        provider_config.primary_provider,
+        provider_config.fallback_provider,
+    )
+
+
+def _validate_llm_candidate(model) -> bool:
+    try:
+        response = model.invoke("Reply with READY only.")
+        content, _tool_calls = _extract_chat_response_content(response)
+        return content.strip().upper().rstrip(".") == "READY"
+    except Exception:
+        return False
+
+
+def _rebind_current_tools() -> None:
+    with brain_state.PLUGIN_LOCK:
+        brain_state.llm_with_tools = (
+            brain_state.llm.bind_tools(
+                list(brain_state.tools_list),
+                tool_choice="auto",
+            )
+            if brain_state.llm is not None
+            else None
+        )
+
+
+def prepare_llm_runtime(env: Mapping[str, str]) -> LLMRuntimeCandidate:
+    """Build and validate provider clients without mutating active state."""
+
+    primary, fallback, vision, primary_name, fallback_name = _build_llm_clients(env)
+    if primary is None:
+        raise LLMReconfigurationError("invalid_provider")
+    if not _validate_llm_candidate(primary):
+        raise LLMReconfigurationError("provider_validation_failed")
+    return LLMRuntimeCandidate(
+        primary=primary,
+        fallback=fallback,
+        vision=vision,
+        primary_provider=primary_name,
+        fallback_provider=fallback_name,
+    )
+
+
+def activate_llm_runtime(candidate: LLMRuntimeCandidate) -> dict[str, object]:
+    """Atomically activate a previously validated provider candidate."""
+
+    with _RECONFIGURE_LOCK:
+        previous = {
+            "brain_llm": brain_state.llm,
+            "brain_fallback": brain_state.llm_fallback,
+            "brain_vision": brain_state.llm_vision,
+            "primary_provider": brain_state.llm_primary_provider,
+            "fallback_provider": brain_state.llm_fallback_provider,
+            "bound": brain_state.llm_with_tools,
+            "service_llm": services.llm,
+            "service_fallback": getattr(services, "llm_fallback", None),
+            "service_vision": getattr(services, "llm_vision", None),
+        }
+        try:
+            brain_state.llm = services.llm = candidate.primary
+            brain_state.llm_fallback = services.llm_fallback = candidate.fallback
+            brain_state.llm_vision = services.llm_vision = candidate.vision
+            brain_state.llm_primary_provider = candidate.primary_provider
+            brain_state.llm_fallback_provider = candidate.fallback_provider
+            _rebind_current_tools()
+        except Exception as exc:
+            brain_state.llm = previous["brain_llm"]
+            brain_state.llm_fallback = previous["brain_fallback"]
+            brain_state.llm_vision = previous["brain_vision"]
+            brain_state.llm_primary_provider = previous["primary_provider"]
+            brain_state.llm_fallback_provider = previous["fallback_provider"]
+            brain_state.llm_with_tools = previous["bound"]
+            services.llm = previous["service_llm"]
+            services.llm_fallback = previous["service_fallback"]
+            services.llm_vision = previous["service_vision"]
+            raise LLMReconfigurationError("runtime_reconfigure_failed") from exc
+
+        return {"provider": candidate.primary_provider, "runtime_ready": True}
+
+
+def reconfigure_llm_runtime(env: Mapping[str, str]) -> dict[str, object]:
+    """Validate and activate an LLM provider without rebuilding the brain."""
+
+    return activate_llm_runtime(prepare_llm_runtime(env))
+
+
 def init_brain(app_ref):
     """Initializes LLM, plugins, and tool maps."""
     brain_state._app_ref = app_ref
@@ -338,47 +491,21 @@ def init_brain(app_ref):
     provider_env = dict(os.environ)
     provider_env["GROQ_API_KEY"] = g_key
     provider_env["GOOGLE_API_KEY"] = google_key
+    provider_env["GEMINI_API_KEY"] = google_key
     provider_env["JARVIS_GROQ_MODEL"] = GROQ_MODEL
     provider_config = resolve_llm_provider_config(provider_env)
     bt = get_bt()
     print(bt["log_brain_init"].format(model=provider_config.primary_model or "unconfigured"))
 
-    ChatOpenAI = _load_chat_openai()
-    brain_state.llm = None
-    brain_state.llm_vision = None
-    brain_state.llm_fallback = None
-    brain_state.llm_primary_provider = ""
-    brain_state.llm_fallback_provider = ""
+    (
+        brain_state.llm,
+        brain_state.llm_fallback,
+        brain_state.llm_vision,
+        brain_state.llm_primary_provider,
+        brain_state.llm_fallback_provider,
+    ) = _build_llm_clients(provider_env)
 
-    if provider_config.configured:
-        brain_state.llm = ChatOpenAI(
-            model=provider_config.primary_model,
-            temperature=0,
-            api_key=provider_config.primary_api_key,
-            base_url=provider_base_url(provider_config.primary_provider),
-        )
-        brain_state.llm_primary_provider = provider_config.primary_provider
-        if VISION_ENABLED:
-            vision_model = (
-                os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash")
-                if provider_config.primary_provider == "gemini"
-                else GROQ_VISION_MODEL
-            )
-            brain_state.llm_vision = ChatOpenAI(
-                model=vision_model,
-                temperature=0,
-                api_key=provider_config.primary_api_key,
-                base_url=provider_base_url(provider_config.primary_provider),
-            )
-        if provider_config.fallback_provider:
-            brain_state.llm_fallback = ChatOpenAI(
-                model=provider_config.fallback_model,
-                temperature=0,
-                api_key=provider_config.fallback_api_key,
-                base_url=provider_base_url(provider_config.fallback_provider),
-            )
-            brain_state.llm_fallback_provider = provider_config.fallback_provider
-    else:
+    if not provider_config.configured:
         log_warning(
             "llm_api_key_missing",
             error="API keys missing for both Google Gemini and Groq",

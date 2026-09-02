@@ -149,6 +149,15 @@ def test_synthesis_failure_returns_deterministic_fallback() -> None:
     assert response.text == "Resultado tecnico extenso."
 
 
+def test_missing_execution_result_is_reported_as_failed() -> None:
+    composer = ResponseComposer()
+
+    response = composer.compose(_request(), _plan(), ())
+
+    assert response.text == "No pude completar la accion solicitada."
+    assert response.outcome == "failed"
+
+
 def test_empty_or_oversized_model_output_returns_fallback() -> None:
     for content in ("", "x" * 701):
         composer = ResponseComposer(

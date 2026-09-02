@@ -185,13 +185,27 @@ def start_app():
         print("[SYSTEM] Opening user interface...")
         gui_engine = 'edgechromium' if sys.platform == 'win32' else None
 
-        webview.start(
-            gui=gui_engine,
-            debug=False,
-            private_mode=False,
-            storage_path=webview_storage_dir,
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/DesktopJarvis/1.0"
-        )
+        try:
+            webview.start(
+                gui=gui_engine,
+                debug=False,
+                private_mode=False,
+                storage_path=webview_storage_dir,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/DesktopJarvis/1.0"
+            )
+        except Exception as exc:
+            if "0x800700AA" in str(exc) or "recurso solicitado" in str(exc) or "EBWebView" in str(exc):
+                print("[SYSTEM] Default webview storage locked; using fresh isolated storage...")
+                fallback_storage = tempfile.mkdtemp(prefix="jarvis-webview-isolated-")
+                webview.start(
+                    gui=gui_engine,
+                    debug=False,
+                    private_mode=False,
+                    storage_path=fallback_storage,
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/DesktopJarvis/1.0"
+                )
+            else:
+                raise
     finally:
         cleanup_temporary_storage()
 

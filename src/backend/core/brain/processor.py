@@ -406,7 +406,7 @@ def _preflight(
         return str(router_reply), security_engine._es_bloqueo_autorizacion(str(router_reply))
 
     # 6. Music fast-path
-    ultima = get_last_requested_track()
+    ultima = get_last_requested_track(pid)
     if music_engine._es_comando_repetir_musica(user_input_norm):
         if ultima:
             res = tool_manager._invocar_tool_entry(

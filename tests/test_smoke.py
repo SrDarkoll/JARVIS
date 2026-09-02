@@ -271,6 +271,64 @@ def test_interactive_route_allows_trusted_local_origin_without_token(monkeypatch
     assert response.status_code == 400
 
 
+def test_interactive_route_rejects_remote_client_without_origin_or_token(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.post(
+        "/api/chat",
+        json={},
+        environ_base={"REMOTE_ADDR": "192.0.2.10"},
+    )
+
+    assert response.status_code == 401
+    assert (response.get_json() or {}).get("error") == "Token required for protected routes."
+
+
+def test_interactive_route_requires_configured_token_from_trusted_origin(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "configured-token")
+    c = _test_client(jarvis_backend.app)
+
+    response = c.post(
+        "/api/chat",
+        json={},
+        headers={"Origin": "http://localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code == 401
+    assert (response.get_json() or {}).get("error") == "Invalid or missing token."
+
+
+def test_local_index_bootstrap_cookie_authenticates_protected_http_route(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "local-cookie-secret")
+    c = _test_client(jarvis_backend.app)
+
+    index_response = c.get(
+        "/",
+        headers={"Host": "localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    cookies = index_response.headers.getlist("Set-Cookie")
+    assert any("jarvis_local_auth=" in cookie for cookie in cookies)
+    assert all("local-cookie-secret" not in cookie for cookie in cookies)
+
+    protected_response = c.post(
+        "/api/chat",
+        json={},
+        headers={"Origin": "http://localhost:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert protected_response.status_code == 400
+
+
 def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
 

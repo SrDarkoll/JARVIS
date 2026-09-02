@@ -32,7 +32,7 @@ if os.getenv("JARVIS_TEST_MODE") != "1":
     install_console_capture()
 
 import asyncio
-import hmac
+import ipaddress
 import tempfile
 import threading
 import time as _time
@@ -45,7 +45,12 @@ from api.language_routes import init_language_routes, language_bp
 from api.security_routes import SecurityRoutesConfig, init_security_routes, security_bp
 from api.status_routes import StatusRoutesConfig, init_status_routes, status_bp
 from api.tts_routes import TTSRoutesConfig, init_tts_routes, tts_bp
-from api.voice_routes import VoiceRoutesConfig, init_voice_routes, voice_bp
+from api.voice_routes import (
+    MAX_LIVE_WS_MESSAGE_BYTES,
+    VoiceRoutesConfig,
+    init_voice_routes,
+    voice_bp,
+)
 from core import core_tools, jarvis_brain, jarvis_config
 from core.app_config import get_app_config, init_app_config
 from core.jarvis_config import (
@@ -61,11 +66,16 @@ from core.jarvis_config import (
 from core.jarvis_observability import obs_event, obs_inc, obs_snapshot
 from core.jarvis_state import recordatorios_lock as reminders_lock
 from core.runtime_logger import log_error, log_warning
+from core.security.api_auth import (
+    LOCAL_UI_AUTH_COOKIE,
+    configured_api_token,
+    is_valid_local_ui_cookie,
+    is_valid_raw_api_token,
+)
 from core.service_container import services
 from engines.tts_engine import TTSEngine
 from quart import (
     Quart,
-    abort,
     jsonify,
     request,
     websocket,
@@ -477,7 +487,7 @@ app.register_blueprint(voice_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(language_bp)
 
-_LOOPBACK_ADDRS = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost", ""}
+_LOOPBACK_NAMES = {"localhost"}
 _CRITICAL_API_PATHS = {
     "/api/auth_status",
     "/api/control/quick",
@@ -493,6 +503,7 @@ _CRITICAL_API_PATHS = {
     "/api/proactive/clear",
     "/api/security",
     "/api/security/policy",
+    "/api/setup/provider",
     "/api/setup/status",
     "/api/tts/pronunciation",
     "/api/tts/pronunciation/reset",
@@ -514,7 +525,21 @@ _ORIGIN_PROTECTED_API_PATHS = {
 
 
 def _is_loopback(addr: str | None) -> bool:
-    return str(addr or "").strip().lower() in _LOOPBACK_ADDRS
+    raw = str(addr or "").strip().lower()
+    if raw in _LOOPBACK_NAMES:
+        return True
+    if os.getenv("JARVIS_TEST_MODE") == "1" and (
+        raw == "<local>" or raw.startswith("__test_")
+    ):
+        return True
+    try:
+        parsed = ipaddress.ip_address(raw)
+    except ValueError:
+        return False
+    if parsed.is_loopback:
+        return True
+    ipv4_mapped = getattr(parsed, "ipv4_mapped", None)
+    return bool(ipv4_mapped and ipv4_mapped.is_loopback)
 
 
 def _normalize_origin(value: str | None) -> str:
@@ -560,24 +585,26 @@ def _is_origin_protected_api_path(path: str) -> bool:
 
 
 def _has_valid_api_token() -> bool:
-    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
-    if not configured_token:
-        return False
-    supplied = (request.headers.get("X-JARVIS-API-TOKEN") or "").strip()
-    return hmac.compare_digest(supplied, configured_token)
+    supplied = request.headers.get("X-JARVIS-API-TOKEN")
+    local_cookie = request.cookies.get(LOCAL_UI_AUTH_COOKIE)
+    return is_valid_raw_api_token(supplied) or is_valid_local_ui_cookie(local_cookie)
 
 
 def _has_valid_websocket_token() -> bool:
-    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
-    if not configured_token:
-        return False
     supplied = (
         websocket.headers.get("X-JARVIS-API-TOKEN")
         or websocket.args.get("token")
         or websocket.args.get("api_token")
         or ""
-    ).strip()
-    return hmac.compare_digest(supplied, configured_token)
+    )
+    local_cookie = websocket.cookies.get(LOCAL_UI_AUTH_COOKIE)
+    return is_valid_raw_api_token(supplied) or is_valid_local_ui_cookie(local_cookie)
+
+
+def _websocket_auth_error(message: str, status_code: int):
+    response = jsonify({"error": message})
+    response.status_code = status_code
+    return response
 
 
 @app.before_request
@@ -585,29 +612,30 @@ async def _require_token_for_critical_routes():
     if request.method == "OPTIONS":
         return None
     is_critical = _is_critical_api_path(request.path)
-    if _is_origin_protected_api_path(request.path) and not _is_trusted_browser_origin() and not _has_valid_api_token():
-        obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
-        message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for API route."
-        return jsonify({"error": message}), 403
-    if not is_critical:
+    is_origin_protected = _is_origin_protected_api_path(request.path)
+    is_protected = is_origin_protected or is_critical
+    if not is_protected:
         return None
 
-    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
-    if configured_token:
-        if _has_valid_api_token():
+    token_configured = bool(configured_api_token())
+    token_valid = _has_valid_api_token()
+    if token_configured:
+        if token_valid:
             return None
         obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
         return jsonify({"error": "Invalid or missing token."}), 401
 
     if not _is_trusted_browser_origin():
         obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
-        return jsonify({"error": "Untrusted origin for critical route."}), 403
+        message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for API route."
+        return jsonify({"error": message}), 403
 
     if _is_loopback(request.remote_addr):
         return None
 
     obs_event("api_token_required", path=request.path, ip=request.remote_addr)
-    return jsonify({"error": "Token required for critical routes."}), 401
+    message = "Token required for critical routes." if is_critical else "Token required for protected routes."
+    return jsonify({"error": message}), 401
 
 
 @app.before_websocket
@@ -615,36 +643,34 @@ async def _require_token_for_websocket_routes():
     path = websocket.path
     is_critical = _is_critical_api_path(path)
     is_origin_protected = _is_origin_protected_api_path(path)
+    is_protected = is_origin_protected or is_critical
+    if not is_protected:
+        return None
 
     origin_trusted = _is_trusted_origin_header(
         websocket.headers.get("Origin"),
         websocket.headers.get("Referer"),
     )
     token_valid = _has_valid_websocket_token()
+    token_configured = bool(configured_api_token())
 
-    if (is_origin_protected or is_critical) and not origin_trusted and not token_valid:
-        obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
-        abort(403)
-
-    if not is_critical:
-        return None
-
-    configured_token = (os.getenv("JARVIS_API_TOKEN") or "").strip()
-    if configured_token:
+    if token_configured:
         if token_valid:
             return None
         obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
-        abort(401)
+        return _websocket_auth_error("Invalid or missing token.", 401)
 
     if not origin_trusted:
         obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
-        abort(403)
+        message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for WebSocket route."
+        return _websocket_auth_error(message, 403)
 
     if _is_loopback(websocket.remote_addr):
         return None
 
     obs_event("ws_token_required", path=path, ip=websocket.remote_addr)
-    abort(401)
+    message = "Token required for critical routes." if is_critical else "Token required for protected routes."
+    return _websocket_auth_error(message, 401)
 
 
 @app.after_request
@@ -669,6 +695,8 @@ async def _set_security_headers(response):
         "base-uri 'self'; "
         "form-action 'self'",
     )
+    if request.path.rstrip("/") in {"/api/setup/status", "/api/setup/provider"}:
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -910,6 +938,7 @@ if __name__ == "__main__":
     config = Config()
     config.bind = ["localhost:5002"]
     config.use_reloader = False
+    config.websocket_max_message_size = MAX_LIVE_WS_MESSAGE_BYTES
 
     try:
         asyncio.run(serve(app, config))

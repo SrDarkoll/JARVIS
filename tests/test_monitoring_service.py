@@ -91,7 +91,7 @@ def test_start_registers_jobs_once_and_is_idempotent(monkeypatch):
     assert service.start_heartbeat() is True
     assert service.start_heartbeat() is True
 
-    assert len(service._scheduler.jobs) == 5
+    assert len(service._scheduler.jobs) == 6
     assert service._scheduler.start_calls == 1
     assert service.snapshot()["running"] is True
 

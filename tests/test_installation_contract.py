@@ -76,6 +76,14 @@ def test_core_requirements_declare_direct_audio_dependencies():
     assert {"numpy", "soundfile", "piper-tts", "faster-whisper"} <= core
 
 
+def test_core_requirements_declare_live_websocket_dependency():
+    core = _requirement_names(ROOT / "requirements.txt")
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "websockets" in core
+    assert re.search(r"(?m)^websockets>=15,<17$", requirements)
+
+
 def test_setup_scripts_require_explicit_full_mode_for_optional_dependencies():
     powershell = (ROOT / "setup.ps1").read_text(encoding="utf-8")
     shell = (ROOT / "setup.sh").read_text(encoding="utf-8")

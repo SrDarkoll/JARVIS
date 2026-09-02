@@ -1087,6 +1087,18 @@ def plan_hybrid(
             {"query": text},
         )
 
+    if any(key in text_ascii for key in ["frase motivacional", "dame una frase", "frase inspiradora", "motivate me", "motívame", "motivame", "give me a quote", "motivational quote"]):
+        return _tool_plan(request, "frase_motivacional", {})
+
+    memory_match = re.match(
+        r"^(?:recuerda que|guarda en memoria que|acuerdate que|remember that)\s+(.+)$",
+        text_ascii,
+    )
+    if memory_match:
+        fact = memory_match.group(1).strip()
+        if fact:
+            return _tool_plan(request, "guardar_dato_memoria", {"dato": fact})
+
     if text in {
         "recarga plugins",
         "recargar plugins",
