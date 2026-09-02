@@ -6,9 +6,9 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Generator
 
 from core import jarvis_config
 
