@@ -92,7 +92,7 @@ class UIGroundingResolver:
         self._uia_available = False
         if IS_WINDOWS:
             try:
-                import pywinauto  # noqa: F401
+                import pywinauto  # noqa: F401  # pyright: ignore[reportMissingImports]
                 self._uia_available = True
             except ImportError:
                 self._uia_available = False
@@ -102,7 +102,7 @@ class UIGroundingResolver:
             return []
 
         try:
-            from pywinauto import Desktop
+            from pywinauto import Desktop  # pyright: ignore[reportMissingImports]
 
             desktop = Desktop(backend="uia")
             active_window = desktop.active()
@@ -121,7 +121,7 @@ class UIGroundingResolver:
             return None
 
         try:
-            from pywinauto import Desktop
+            from pywinauto import Desktop  # pyright: ignore[reportMissingImports]
 
             desktop = Desktop(backend="uia")
             active_window = desktop.active()

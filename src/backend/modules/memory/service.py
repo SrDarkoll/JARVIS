@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from core import jarvis_state
@@ -208,7 +208,7 @@ class UnifiedCognitiveMemoryService:
         self,
         name: str,
         trigger_phrases: list[str] | str,
-        steps: list[dict[str, Any] | str],
+        steps: Sequence[dict[str, Any] | str],
         description: str = "",
         profile_id: str | None = None,
     ) -> ProceduralSkill:

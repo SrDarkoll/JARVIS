@@ -12,24 +12,25 @@ if TYPE_CHECKING:
 
 
 class ServiceContainer:
-    _instance = None
+    _instance: ServiceContainer | None = None
     _lock = threading.Lock()
+    _initialized: bool = False
 
-    def __new__(cls):
+    def __new__(cls) -> ServiceContainer:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         if self._initialized:
             return
         self._initialized = True
 
         # --- Observability ---
         self.obs_inc: Callable[[str, int], None] | None = None
-        self.obs_event: Callable[[str, Any], None] | None = None
+        self.obs_event: Callable[..., None] | None = None
 
         # --- Security ---
         self.security_audit: Callable[..., None] | None = None

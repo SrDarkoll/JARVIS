@@ -137,7 +137,7 @@ class CommandOrchestrator:
             return candidate
 
         self._validate_plan(request, planned)
-        if self._keep_action_candidate(candidate, planned):
+        if candidate is not None and self._keep_action_candidate(candidate, planned):
             return candidate
         return planned
 
