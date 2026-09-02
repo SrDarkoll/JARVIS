@@ -93,9 +93,11 @@ class ToolExecutionService:
         invoke_once: Callable[[CommandRequest, ActionStep], Any],
         *,
         max_records: int = 1024,
+        on_confirmation_required: Callable[[CommandRequest, ActionStep], None] | None = None,
     ) -> None:
         self._invoke_once = invoke_once
         self._max_records = max(32, int(max_records))
+        self._on_confirmation_required = on_confirmation_required
         self._lock = threading.RLock()
         self._records: OrderedDict[str, Future[ExecutionReceipt]] = OrderedDict()
 
@@ -146,6 +148,44 @@ class ToolExecutionService:
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
             )
+        except ToolConfirmationRequiredError as exc:
+            registration_failed = False
+            if self._on_confirmation_required is not None:
+                try:
+                    self._on_confirmation_required(request, step)
+                except Exception:
+                    registration_failed = True
+
+            if registration_failed:
+                receipt = ExecutionReceipt(
+                    request_id=request.request_id,
+                    step_id=step.step_id,
+                    tool_name=step.tool_name,
+                    status=ReceiptStatus.FAILED,
+                    result=None,
+                    user_message=(
+                        "No pude preparar la confirmacion de forma segura."
+                        if request.language.startswith("es")
+                        else "The confirmation could not be prepared safely."
+                    ),
+                    verified=False,
+                    diagnostic_code="confirmation_registration_failed",
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                )
+            else:
+                receipt = ExecutionReceipt(
+                    request_id=request.request_id,
+                    step_id=step.step_id,
+                    tool_name=step.tool_name,
+                    status=ReceiptStatus.BLOCKED,
+                    result=None,
+                    user_message=exc.user_message(request.language),
+                    verified=False,
+                    diagnostic_code=exc.diagnostic_code,
+                    started_at=started_at,
+                    finished_at=datetime.now(UTC),
+                )
         except ControlledToolBlockedError as exc:
             receipt = ExecutionReceipt(
                 request_id=request.request_id,

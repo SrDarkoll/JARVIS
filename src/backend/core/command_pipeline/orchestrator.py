@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -145,6 +146,7 @@ class CommandOrchestrator:
         request: CommandRequest,
         emit: EventCallback | None = None,
     ) -> CommandResponse:
+        t_start = time.perf_counter()
         send = emit or (lambda _event: None)
         print(f"\n[COMANDO] >> RECIBIDO: '{request.text}' | canal={request.channel} | perfil={request.profile_id}", flush=True)
         send(
@@ -155,9 +157,12 @@ class CommandOrchestrator:
             }
         )
 
+        t_plan_start = time.perf_counter()
         history = self._history.get_history(request.profile_id)
         candidate = self._deterministic.plan(request)
         plan = self._select_plan(request, history, candidate, send)
+        t_plan_end = time.perf_counter()
+        plan_ms = round((t_plan_end - t_plan_start) * 1000.0, 1)
         self._validate_plan(request, plan)
 
         if plan.steps:
@@ -166,6 +171,7 @@ class CommandOrchestrator:
             print(f"[PLANIFICADOR] Plan de respuesta directa (fuente={plan.source.value})", flush=True)
 
         receipts: tuple[ExecutionReceipt, ...] = ()
+        t_exec_start = time.perf_counter()
         if plan.steps:
             send(
                 {
@@ -183,8 +189,32 @@ class CommandOrchestrator:
                 ):
                     raise ValueError("receipt_operation_mismatch")
 
-        response = self._responses.compose(request, plan, receipts)
-        print(f"[RESPUESTA JARVIS] << '{response.text}'\n", flush=True)
+        t_exec_end = time.perf_counter()
+        exec_ms = round((t_exec_end - t_exec_start) * 1000.0, 1)
+        total_ms = round((time.perf_counter() - t_start) * 1000.0, 1)
+
+        provider_label = getattr(self._groq, "model_name", "LLM") if plan.source == PlanSource.GROQ else plan.source.value
+        metrics = {
+            "total_ms": total_ms,
+            "planning_ms": plan_ms,
+            "execution_ms": exec_ms,
+            "source": plan.source.value,
+            "provider": provider_label,
+        }
+
+        try:
+            print(
+                f"[METRICAS RENDIMIENTO] Total: {total_ms:.0f}ms | IA/Plan: {plan_ms:.0f}ms ({provider_label}) | Tools: {exec_ms:.0f}ms\n",
+                flush=True,
+            )
+        except Exception:
+            pass
+
+        response = self._responses.compose(request, plan, receipts, metrics=metrics)
+        try:
+            print(f"[RESPUESTA JARVIS] << '{response.text}'\n", flush=True)
+        except Exception:
+            pass
         self._history.append_interaction(request, response)
         send({"type": "done", **response.to_dict()})
         return response

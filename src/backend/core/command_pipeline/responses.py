@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any
+
 from core.command_pipeline.models import (
     ActionPlan,
     CommandRequest,
@@ -17,6 +21,10 @@ _FAILED_STATUSES = {
 }
 
 
+def _frozen_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    return MappingProxyType(dict(value or {}))
+
+
 class ResponseComposer:
     """Build a channel-neutral response without invoking a tool-capable model."""
 
@@ -28,7 +36,9 @@ class ResponseComposer:
         request: CommandRequest,
         plan: ActionPlan,
         receipts: tuple[ExecutionReceipt, ...],
+        metrics: Mapping[str, Any] | None = None,
     ) -> CommandResponse:
+        frozen_metrics = _frozen_mapping(metrics)
         if plan.direct_response and not receipts:
             text = plan.direct_response.strip()
             return CommandResponse(
@@ -36,6 +46,7 @@ class ResponseComposer:
                 text=text,
                 should_listen=(plan.requires_follow_up or text.rstrip().endswith("?")),
                 outcome="succeeded",
+                metrics=frozen_metrics,
             )
 
         messages: list[str] = []
@@ -50,6 +61,7 @@ class ResponseComposer:
         failed = any(receipt.status in _FAILED_STATUSES for receipt in receipts)
         blocked = any(receipt.status is ReceiptStatus.BLOCKED for receipt in receipts)
         all_duplicates = bool(receipts) and all(receipt.status is ReceiptStatus.DUPLICATE for receipt in receipts)
+        missing_result = not messages and not all_duplicates
 
         if not messages:
             if all_duplicates:
@@ -65,7 +77,7 @@ class ResponseComposer:
                     else "I could not complete the requested action."
                 )
 
-        if failed:
+        if failed or missing_result:
             outcome = "partial" if len(receipts) > 1 else "failed"
         elif all_duplicates:
             outcome = "duplicate"
@@ -98,4 +110,5 @@ class ResponseComposer:
             should_listen=plan.requires_follow_up or blocked,
             outcome=outcome,
             receipts=receipts,
+            metrics=frozen_metrics,
         )

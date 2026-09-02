@@ -365,13 +365,8 @@ def _security_guard(
         authorized = bool(verificar_autorizacion(profile_id))
     else:
         authorized = False
-    confirmed = bool(
-        (args or {}).get("_confirmed")
-        or (args or {}).get("confirmed")
-        or (args or {}).get("confirmar")
-        or (args or {}).get("el_usuario_ya_confirmo")
-        or str(source or "").lower() in {"control_panel", "auth_resume"}
-    )
+    # Confirmation is transport state, never a model-controlled tool argument.
+    confirmed = str(source or "").lower() in {"control_panel", "auth_resume"}
     decision = evaluate_tool_policy(
         tool_name,
         profile_id=profile_id,

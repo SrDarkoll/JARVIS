@@ -121,6 +121,14 @@ class MonitoringService:
                         send_telegram=False,
                         cooldown=3600,
                     )
+
+            # Escaneo proactivo del contexto de escritorio
+            try:
+                from modules.proactive import proactive_service
+
+                proactive_service.scan_cycle()
+            except Exception:
+                pass
         except Exception as e:
             obs_event("healthcheck_scheduler_error", error=str(e)[:200])
 
@@ -177,6 +185,15 @@ class MonitoringService:
         except Exception as e:
             print(f"[SCHEDULER] Failed to update weather: {e}")
 
+    def _consolidate_memory_task(self):
+        """Nightly / periodic cognitive memory consolidation task."""
+        try:
+            from modules.memory.service import unified_memory
+
+            unified_memory.consolidator.run_consolidation_cycle()
+        except Exception as e:
+            obs_event("memory_consolidation_error", error=str(e)[:200])
+
     def start_heartbeat(self, ip_cleanup_func=None):
         """Starts all scheduled tasks with APScheduler."""
         with self._state_lock:
@@ -208,6 +225,12 @@ class MonitoringService:
                     self._daily_briefing_task,
                     CronTrigger(hour=BRIEFING_HORA, minute=0),
                     id="daily_briefing",
+                    replace_existing=True,
+                )
+                self._scheduler.add_job(
+                    self._consolidate_memory_task,
+                    CronTrigger(hour=3, minute=0),
+                    id="memory_consolidation_nightly",
                     replace_existing=True,
                 )
                 if ip_cleanup_func:

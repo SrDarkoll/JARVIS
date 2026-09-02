@@ -94,11 +94,21 @@ class TestSecurityGuard:
                 assert allowed is False
                 assert "confirmacion" in reason.lower()
 
-                allowed_confirmed, reason_confirmed = mock_security_deps._security_guard(
+                model_claimed_confirmation, model_claimed_reason = mock_security_deps._security_guard(
                     "controlar_pc",
                     {"el_usuario_ya_confirmo": True},
                     "shutdown",
                     "llm_loop",
+                    profile_id="admin",
+                )
+                assert model_claimed_confirmation is False
+                assert "confirmacion" in model_claimed_reason.lower()
+
+                allowed_confirmed, reason_confirmed = mock_security_deps._security_guard(
+                    "controlar_pc",
+                    {"el_usuario_ya_confirmo": True},
+                    "shutdown",
+                    "auth_resume",
                     profile_id="admin",
                 )
                 assert allowed_confirmed is True

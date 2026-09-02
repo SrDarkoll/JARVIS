@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.brain import history_manager, processor, tool_manager
+from core.brain import security_engine
 from core.security.tool_policy import get_tool_policy
 
 
@@ -56,3 +57,77 @@ def test_pending_auth_confirmation_cancels_on_negative_response():
     assert "cancelada" in reply.lower() or "cancelled" in reply.lower()
     assert should_listen is False
     assert history_manager._extraer_accion_pendiente_auth("admin") is None
+
+
+def test_unconfirmed_critical_tool_registers_pending_action(monkeypatch):
+    history_manager._extraer_accion_pendiente_auth("admin", pop=True)
+    monkeypatch.setattr(tool_manager, "_tool_permitida_por_contexto", lambda *_args: True)
+    monkeypatch.setattr(
+        tool_manager.security_manager,
+        "_security_guard",
+        lambda *_args, **_kwargs: (
+            False,
+            "La herramienta requiere confirmacion explicita.",
+        ),
+    )
+
+    try:
+        result = tool_manager._invocar_tool_entry(
+            "ejecutar_procedimiento",
+            {"nombre": "rutina segura"},
+            "ejecuta el procedimiento rutina segura",
+            "llm_loop",
+            "admin",
+        )
+        pending = history_manager._extraer_accion_pendiente_auth("admin")
+
+        assert str(result).startswith("ACCESS_DENIED:")
+        assert pending is not None
+        assert pending["tool"] == "ejecutar_procedimiento"
+        assert pending["args"] == {"nombre": "rutina segura"}
+        assert pending["user_input"] == "ejecuta el procedimiento rutina segura"
+    finally:
+        history_manager._extraer_accion_pendiente_auth("admin", pop=True)
+
+
+def test_confirmation_markers_are_not_forwarded_to_tool_schema(monkeypatch):
+    captured = {}
+
+    class FakeTool:
+        name = "declared_args_only"
+
+        @staticmethod
+        def invoke(args):
+            captured.update(args)
+            return "ok"
+
+    monkeypatch.setattr(tool_manager, "_tool_permitida_por_contexto", lambda *_args: True)
+    monkeypatch.setattr(
+        tool_manager.security_manager,
+        "_security_guard",
+        lambda *_args, **_kwargs: (True, ""),
+    )
+    monkeypatch.setattr(security_engine, "_tool_requiere_autorizacion", lambda _name: False)
+
+    result = tool_manager._invocar_tool(
+        {
+            "id": "confirmed-step",
+            "name": "declared_args_only",
+            "args": {
+                "value": 7,
+                "_confirmed": True,
+                "confirmed": True,
+                "el_usuario_ya_confirmo": True,
+            },
+        },
+        {"declared_args_only": FakeTool()},
+        {
+            "user_input": "confirmo",
+            "source": "auth_resume",
+            "profile_id": "admin",
+            "request_id": "confirmation-strip-test",
+        },
+    )
+
+    assert result == "ok"
+    assert captured == {"value": 7}

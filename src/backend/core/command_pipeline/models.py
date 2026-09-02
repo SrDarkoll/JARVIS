@@ -132,6 +132,7 @@ class CommandResponse:
     should_listen: bool
     outcome: str
     receipts: tuple[ExecutionReceipt, ...] = ()
+    metrics: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,4 +141,5 @@ class CommandResponse:
             "should_listen": self.should_listen,
             "outcome": self.outcome,
             "receipts": [receipt.to_dict() for receipt in self.receipts],
+            "metrics": dict(self.metrics),
         }

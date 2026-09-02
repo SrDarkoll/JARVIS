@@ -6,6 +6,7 @@ import time
 import pytest
 from core.command_pipeline.execution import (
     ToolAuthorizationRequiredError,
+    ToolConfirmationRequiredError,
     ToolExecutionService,
     ToolPolicyBlockedError,
     validate_plan_operations,
@@ -102,6 +103,28 @@ def test_executor_returns_controlled_blocked_receipt() -> None:
         "Necesito confirmacion explicita antes de realizar esa accion."
     )
     assert "raw authorization details" not in receipt.user_message
+
+
+def test_executor_registers_confirmation_required_operation() -> None:
+    registered: list[tuple[str, str]] = []
+
+    def invoke(_request: CommandRequest, _step: ActionStep) -> None:
+        raise ToolConfirmationRequiredError()
+
+    service = ToolExecutionService(
+        invoke,
+        on_confirmation_required=lambda request, step: registered.append(
+            (request.request_id, step.tool_name)
+        ),
+    )
+    receipt = service.execute(
+        _request(),
+        ActionStep(step_id="step-confirm", tool_name="controlar_pc"),
+    )
+
+    assert registered == [("request-1", "controlar_pc")]
+    assert receipt.status is ReceiptStatus.BLOCKED
+    assert receipt.diagnostic_code == "tool_confirmation_required"
 
 
 @pytest.mark.parametrize(
