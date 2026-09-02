@@ -1,1 +1,18 @@
+# Auto-detect text files and normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Windows shell scripts require CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Git LFS and Binary Assets
 models/*.onnx filter=lfs diff=lfs merge=lfs -text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.svg text
+*.wav binary
+*.ogg binary
+*.mp3 binary

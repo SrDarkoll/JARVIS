@@ -22,10 +22,20 @@ _msg_counter_by_profile = jarvis_state._msg_counter_by_profile
 db_lock = threading.Lock()
 
 
+def _connect_db(timeout: float = 10.0) -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=timeout)
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+    except Exception:
+        pass
+    return conn
+
+
 def init_db():
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _connect_db()
             c = conn.cursor()
             # Optimizations for performance and concurrency
             c.execute("PRAGMA journal_mode=WAL")
@@ -39,10 +49,15 @@ def init_db():
                 )
             """)
             conn.commit()
-            conn.close()
         except Exception as e:
             obs_event("db_init_error", error=str(e)[:300])
             print(f"[ERROR DB INIT] {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def _normalizar_profile_id(profile_id: str | None) -> str:
@@ -88,8 +103,9 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
 
     # Load from DB
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _connect_db()
             c = conn.cursor()
             c.execute("SELECT profile_id, history, facts FROM profiles")
             rows = c.fetchall()
@@ -105,10 +121,15 @@ def cargar_memoria_perfiles(normalizar_tratamiento_admin_func) -> dict:
                     "history": _deserializar_history(hist_list),
                     "facts": normalizar_tratamiento_admin_func(facts),
                 }
-            conn.close()
         except Exception as e:
             obs_event("db_load_error", error=str(e)[:300])
             print(f"[ERROR DB LOAD] {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # Fallback to JSON if DB is completely empty for the default user
     if DEFAULT_PROFILE_ID not in perfiles:
@@ -156,23 +177,33 @@ def guardar_memoria_perfiles(normalizar_tratamiento_admin_func):
 
         init_db()
         with db_lock:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            for pid, data in snapshot.items():
-                hist_str = json.dumps(data["history"], ensure_ascii=False)
-                facts = data["facts"]
-                c.execute(
-                    """
-                    INSERT INTO profiles(profile_id, history, facts) VALUES(?, ?, ?)
-                    ON CONFLICT(profile_id) DO UPDATE SET history=excluded.history, facts=excluded.facts
-                """,
-                    (pid, hist_str, facts),
-                )
-            conn.commit()
-            conn.close()
+            conn = None
+            try:
+                conn = _connect_db()
+                c = conn.cursor()
+                for pid, data in snapshot.items():
+                    hist_str = json.dumps(data["history"], ensure_ascii=False)
+                    facts = data["facts"]
+                    c.execute(
+                        """
+                        INSERT INTO profiles(profile_id, history, facts) VALUES(?, ?, ?)
+                        ON CONFLICT(profile_id) DO UPDATE SET history=excluded.history, facts=excluded.facts
+                    """,
+                        (pid, hist_str, facts),
+                    )
+                conn.commit()
+            except Exception as e:
+                obs_event("db_save_error", error=str(e)[:300])
+                print(f"[ERROR DB SAVE] {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
     except Exception as e:
-        obs_event("db_save_error", error=str(e)[:300])
-        print(f"[ERROR DB SAVE] {e}")
+        obs_event("guardar_memoria_error", error=str(e)[:300])
+        print(f"[ERROR GUARDAR MEMORIA] {e}")
 
 
 def guardar_memoria_async(args, normalizar_tratamiento_admin_func):
