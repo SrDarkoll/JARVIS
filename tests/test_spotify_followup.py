@@ -14,7 +14,7 @@ from modules.spotify.followup import (
     SpotifySelectionStatus,
     pending_spotify_selections,
 )
-from modules.spotify.state import set_last_requested_track
+from modules.spotify.state import get_last_requested_track, set_last_requested_track
 
 
 def _choices():
@@ -34,12 +34,12 @@ def _choices():
 
 @pytest.fixture(autouse=True)
 def _clear_shared_pending_store():
-    set_last_requested_track("")
     for profile_id in ("admin", "guest_unverified"):
+        set_last_requested_track("", profile_id)
         pending_spotify_selections.clear(profile_id)
     yield
-    set_last_requested_track("")
     for profile_id in ("admin", "guest_unverified"):
+        set_last_requested_track("", profile_id)
         pending_spotify_selections.clear(profile_id)
 
 
@@ -174,7 +174,7 @@ def test_new_explicit_play_command_clears_an_old_selection(monkeypatch):
 
 def test_repeat_command_uses_shared_spotify_state(monkeypatch):
     calls = []
-    set_last_requested_track("Killer Queen by Queen")
+    set_last_requested_track("Killer Queen by Queen", "guest_unverified")
 
     monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda pid: pid)
     monkeypatch.setattr(router, "_router_hibrido", lambda _text: None)
@@ -204,3 +204,34 @@ def test_repeat_command_uses_shared_spotify_state(monkeypatch):
             "guest_unverified",
         )
     ]
+
+
+def test_last_requested_track_is_profile_scoped():
+    set_last_requested_track("Killer Queen by Queen", "admin")
+    set_last_requested_track("Numb by Linkin Park", "guest_unverified")
+
+    assert get_last_requested_track("admin") == "Killer Queen by Queen"
+    assert get_last_requested_track("guest_unverified") == "Numb by Linkin Park"
+
+
+def test_guest_repeat_does_not_use_administrator_track(monkeypatch):
+    calls = []
+    set_last_requested_track("Killer Queen by Queen", "admin")
+
+    monkeypatch.setattr(processor, "_cargar_contexto_perfil", lambda pid: pid)
+    monkeypatch.setattr(router, "_router_hibrido", lambda _text: None)
+    monkeypatch.setattr(
+        tool_manager,
+        "_invocar_tool_entry",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or "unexpected",
+    )
+
+    reply, should_listen = processor._preflight(
+        "otra vez",
+        "guest_unverified",
+        allow_compound=False,
+    )
+
+    assert "previous song" in reply.lower() or "canción anterior" in reply.lower()
+    assert should_listen is False
+    assert calls == []

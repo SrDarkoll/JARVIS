@@ -6,6 +6,7 @@ from modules.spotify.desktop.models import (
     AutomationState,
     DesktopResultStatus,
     SpotifyCandidate,
+    SpotifyDesktopResult,
     SpotifyRequest,
 )
 from modules.spotify.desktop.visual import (
@@ -14,6 +15,12 @@ from modules.spotify.desktop.visual import (
     _visual_target_from_response,
 )
 from modules.spotify.desktop.windows import SpotifyWindow
+
+
+def test_unverified_desktop_result_is_not_ok():
+    result = SpotifyDesktopResult(status=DesktopResultStatus.UNVERIFIED)
+
+    assert result.ok is False
 
 
 class FakeClock:
@@ -56,8 +63,12 @@ class FakeUIA:
         self.playing = now_playing
         self.activated = []
         self.searches = []
+        self.control_calls = []
         self.player_state = "playing"
         self.shuffle_enabled = False
+        self.repeat_enabled = False
+        self.saved = False
+        self.muted = False
 
     def search(self, handle, query):
         assert handle == 700
@@ -76,6 +87,7 @@ class FakeUIA:
         return self.playing
 
     def control(self, _handle, _action):
+        self.control_calls.append(_action)
         if _action == "pause":
             self.player_state = "paused"
         elif _action == "resume":
@@ -84,6 +96,18 @@ class FakeUIA:
             self.shuffle_enabled = True
         elif _action == "shuffle_off":
             self.shuffle_enabled = False
+        elif _action == "repeat_on":
+            self.repeat_enabled = True
+        elif _action == "repeat_off":
+            self.repeat_enabled = False
+        elif _action == "like":
+            self.saved = True
+        elif _action == "unlike":
+            self.saved = False
+        elif _action == "mute":
+            self.muted = True
+        elif _action == "unmute":
+            self.muted = False
         return True
 
     def playback_state(self, _handle):
@@ -91,6 +115,15 @@ class FakeUIA:
 
     def shuffle_state(self, _handle):
         return self.shuffle_enabled
+
+    def repeat_state(self, _handle):
+        return self.repeat_enabled
+
+    def saved_state(self, _handle):
+        return self.saved
+
+    def mute_state(self, _handle):
+        return self.muted
 
 
 def request():
@@ -644,6 +677,17 @@ def test_pause_control_is_verified_before_success():
     assert result.status is DesktopResultStatus.SUCCESS
 
 
+def test_pause_already_satisfied_does_not_toggle_playback():
+    uia = FakeUIA([])
+    uia.player_state = "paused"
+    controller = make_controller(FakeWindowAdapter(), uia)
+
+    result = controller.control("pause")
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert uia.control_calls == []
+
+
 def test_unobserved_control_change_is_not_reported_as_success():
     clock = FakeClock()
 
@@ -660,8 +704,8 @@ def test_unobserved_control_change_is_not_reported_as_success():
 
     result = controller.control("pause")
 
-    assert result.status is DesktopResultStatus.FAILED
-    assert result.message_key == "spotify_control_not_verified"
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.message_key == "spotify_control_sent_unverified"
 
 
 def test_queue_candidate_success():
@@ -677,24 +721,100 @@ def test_queue_candidate_success():
     uia = FakeUIA(candidates)
     uia.queued = []
 
-    def fake_queue(candidate):
+    def fake_queue(candidate, _action, handle=None):
+        assert handle == 700
         uia.queued.append(candidate.element_id)
         return True
 
-    uia.queue_candidate = fake_queue
+    uia.context_action_candidate = fake_queue
 
     controller = make_controller(FakeWindowAdapter(), uia)
     result = controller.queue(request())
 
-    assert result.status is DesktopResultStatus.SUCCESS
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.message_key == "spotify_queue_sent_unverified"
     assert result.title == "No te apartes de mi"
     assert result.artist == "Vicentico"
     assert "candidate-0" in uia.queued
 
 
-def test_like_and_extended_controls_verified():
+def test_observable_extended_controls_are_verified():
     controller = make_controller(FakeWindowAdapter(), FakeUIA([]))
 
-    for action in ["like", "unlike", "repeat_on", "repeat_off", "volume_up", "volume_down", "mute"]:
+    for action in ["like", "unlike", "repeat_on", "repeat_off", "mute", "unmute"]:
         res = controller.control(action)
         assert res.status is DesktopResultStatus.SUCCESS
+
+
+def test_volume_command_is_reported_unverified_without_observer():
+    controller = make_controller(FakeWindowAdapter(), FakeUIA([]))
+
+    result = controller.control("volume_up")
+
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.message_key == "spotify_control_sent_unverified"
+
+
+def test_unobserved_like_is_not_reported_as_success():
+    clock = FakeClock()
+
+    class UnchangedSavedStateUIA(FakeUIA):
+        def control(self, _handle, action):
+            self.control_calls.append(action)
+            return True
+
+    uia = UnchangedSavedStateUIA([])
+    controller = make_controller(
+        FakeWindowAdapter(),
+        uia,
+        action_timeout=0.2,
+        clock=clock,
+    )
+
+    result = controller.control("like")
+
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.message_key == "spotify_control_sent_unverified"
+
+
+def test_queue_failure_never_activates_candidate_as_playback():
+    candidate = expected_candidate("queue-target")
+    uia = FakeUIA([candidate])
+    uia.context_action_candidate = lambda *_args, **_kwargs: False
+
+    result = make_controller(FakeWindowAdapter(), uia).queue(request())
+
+    assert result.status is DesktopResultStatus.RESTRICTED
+    assert result.message_key == "spotify_queue_failed"
+    assert uia.activated == []
+
+
+def test_named_library_action_targets_candidate_without_playing_it():
+    candidate = expected_candidate("library-target")
+    uia = FakeUIA([candidate])
+    actions = []
+
+    def context_action(selected, action, handle=None):
+        actions.append((selected.element_id, action, handle))
+        return True
+
+    uia.context_action_candidate = context_action
+
+    result = make_controller(FakeWindowAdapter(), uia).library(request(), "like")
+
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.message_key == "spotify_library_sent_unverified"
+    assert actions == [("library-target", "like", 700)]
+    assert uia.activated == []
+
+
+def test_current_track_with_unknown_state_is_not_verified():
+    uia = FakeUIA([], now_playing=("On Melancholy Hill", "Gorillaz"))
+    uia.player_state = None
+
+    result = make_controller(FakeWindowAdapter(), uia).current()
+
+    assert result.status is DesktopResultStatus.UNVERIFIED
+    assert result.title == "On Melancholy Hill"
+    assert result.artist == "Gorillaz"
+    assert result.playback_state == ""

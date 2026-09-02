@@ -26,6 +26,7 @@ class MatchStatus(StrEnum):
 
 class DesktopResultStatus(StrEnum):
     SUCCESS = "success"
+    UNVERIFIED = "unverified"
     AMBIGUOUS = "ambiguous"
     NOT_FOUND = "not_found"
     RESTRICTED = "restricted"
@@ -66,6 +67,7 @@ class SpotifyDesktopResult:
     status: DesktopResultStatus
     title: str = ""
     artist: str = ""
+    playback_state: str = ""
     message_key: str = ""
     choices: tuple[SpotifyCandidate, ...] = ()
     states: tuple[AutomationState, ...] = field(default_factory=tuple)

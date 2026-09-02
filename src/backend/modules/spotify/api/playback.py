@@ -189,6 +189,7 @@ def _post_playback_ok(
     track: dict | None = None,
 ) -> str:
     """Hanldr post-playback: shuffle, cola de similares, AutoMix."""
+    set_last_requested_track(_spotify_track_plain_label(track_name, artist))
     device_id = _spotify_dispositivo_objetivo()
     _spotify_set_shuffle(False, device_id) or _spotify_set_shuffle(False, None)
 
@@ -288,7 +289,6 @@ def _spotify_play_api_message(cancion: str) -> str:
                 "No pude leer la información de esa canción desde Spotify.",
             )
 
-        set_last_requested_track(_spotify_track_plain_label(track_name, artist))
         print(f"  [SPOTIFY] Track: '{track_name}' de {artist} | URI: {track_uri}")
 
     except Exception as error:
@@ -310,7 +310,6 @@ def _spotify_play_api_message(cancion: str) -> str:
             client.sp.start_playback(device_id=activo["id"], uris=[track_uri])
             _time.sleep(0.5)
             print(f"  [SPOTIFY] Estrategia A: play en activo '{activo['name']}'")
-            set_last_requested_track(_spotify_track_plain_label(track_name, artist))
         except Exception as error:
             err_type = _spotify_classify_error(error)
             _spotify_log_error(f"active_device_playback_{err_type}", error)

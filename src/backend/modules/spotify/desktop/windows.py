@@ -46,26 +46,41 @@ def _visible_windows() -> list[SpotifyWindow]:
     result: list[SpotifyWindow] = []
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
+    hdesk = None
+    try:
+        hdesk = user32.OpenInputDesktop(0, False, 0x10000000)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+    except Exception:
+        hdesk = None
+
     def callback(handle, _parameter):
-        if not user32.IsWindowVisible(handle):
-            return True
-        length = user32.GetWindowTextLengthW(handle)
-        if length <= 0:
-            return True
-        title_buffer = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(handle, title_buffer, length + 1)
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-        result.append(
-            SpotifyWindow(
-                handle=int(handle),
-                pid=int(pid.value),
-                title=title_buffer.value,
+        try:
+            if not user32.IsWindowVisible(handle):
+                return True
+            length = user32.GetWindowTextLengthW(handle)
+            if length <= 0:
+                return True
+            title_buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(handle, title_buffer, length + 1)
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+            result.append(
+                SpotifyWindow(
+                    handle=int(handle),
+                    pid=int(pid.value),
+                    title=title_buffer.value,
+                )
             )
-        )
+        except Exception:
+            pass
         return True
 
-    user32.EnumWindows(callback_type(callback), 0)
+    cb = callback_type(callback)
+    if hdesk:
+        user32.EnumDesktopWindows(hdesk, cb, 0)
+    else:
+        user32.EnumWindows(cb, 0)
     return result
 
 
@@ -89,8 +104,21 @@ def _focus_window(handle: int) -> bool:
     if not IS_WINDOWS:
         return False
     user32 = ctypes.windll.user32
-    user32.ShowWindow(wintypes.HWND(handle), 9)
-    return bool(user32.SetForegroundWindow(wintypes.HWND(handle)))
+    hwnd = wintypes.HWND(handle)
+    user32.ShowWindow(hwnd, 9)
+
+    current_thread = user32.GetCurrentThreadId()
+    target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+
+    if current_thread != target_thread:
+        user32.AttachThreadInput(current_thread, target_thread, True)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetFocus(hwnd)
+        user32.AttachThreadInput(current_thread, target_thread, False)
+    else:
+        user32.SetForegroundWindow(hwnd)
+        user32.SetFocus(hwnd)
+    return True
 
 
 def _activate_process_window(pid: int) -> bool:
@@ -254,6 +282,8 @@ _CONTROL_NAMES = {
         "silenciar",
         "mute",
         "mutear",
+    },
+    "unmute": {
         "desilenciar",
         "unmute",
     },
@@ -350,6 +380,34 @@ _ACTION_ALIASES = {
     "silenciar": "mute",
     "mute": "mute",
     "mutear": "mute",
+    "desilenciar": "unmute",
+    "unmute": "unmute",
+}
+_MENU_ACTION_TERMS = {
+    "queue": {
+        "add to queue",
+        "anadir a la cola",
+        "agregar a la cola",
+        "anadir a la fila",
+        "agregar a la fila",
+    },
+    "like": {
+        "save to your liked songs",
+        "save to liked songs",
+        "add to your liked songs",
+        "add to liked songs",
+        "guardar en tus me gusta",
+        "anadir a tus canciones que te gustan",
+        "anadir a canciones que te gustan",
+    },
+    "unlike": {
+        "remove from your liked songs",
+        "remove from liked songs",
+        "quitar de tus me gusta",
+        "eliminar de tus me gusta",
+        "quitar de tus canciones que te gustan",
+        "eliminar de tus canciones que te gustan",
+    },
 }
 _PLAY_PATTERNS = (
     re.compile(r"^(?:Reproducir|Reanudar)\s+(?P<title>.+),\s+de\s+(?P<artist>.+)$", re.I),
@@ -704,26 +762,27 @@ class SpotifyUIAutomationAdapter:
         ready, _scrolled = _prepare_control_for_activation(control)
         return ready and _invoke_control(control)
 
-    def _find_queue_menu_item(self, handle: int) -> Any | None:
-        queue_terms = (
-            "anadir a la fila",
-            "añadir a la fila",
-            "agregar a la fila",
-            "anadir a la cola",
-            "añadir a la cola",
-            "agregar a la cola",
-            "add to queue",
-            "queue",
-        )
+    def _find_context_menu_item(self, handle: int, action: str) -> Any | None:
+        terms = _MENU_ACTION_TERMS.get(normalize_text(action), set())
+        if not terms:
+            return None
         for control in self._controls(handle):
             c_type = _control_type(control).lower()
             if c_type in ("menuitem", "button", "text", "custom"):
                 name = normalize_text(_control_name(control))
-                if any(term in name for term in queue_terms):
+                if any(term == name or term in name for term in terms):
                     return control
         return None
 
-    def queue_candidate(self, candidate: SpotifyCandidate, handle: int | None = None) -> bool:
+    def context_action_candidate(
+        self,
+        candidate: SpotifyCandidate,
+        action: str,
+        handle: int | None = None,
+    ) -> bool:
+        canonical = normalize_text(action)
+        if canonical not in _MENU_ACTION_TERMS:
+            return False
         control = self._elements.get(candidate.element_id)
         if control is None:
             return False
@@ -738,7 +797,6 @@ class SpotifyUIAutomationAdapter:
             except Exception:
                 win_bounds = None
 
-        # Step 1: Open context menu safely (never clicking if outside verified safe bounds)
         opened = False
         try:
             rect = getattr(control, "rectangle", None)
@@ -762,11 +820,11 @@ class SpotifyUIAutomationAdapter:
             return False
 
         import time
+
         time.sleep(0.18)
 
-        # Step 2: Try to locate and invoke queue menu item in UIA tree
         if handle:
-            menu_item = self._find_queue_menu_item(handle)
+            menu_item = self._find_context_menu_item(handle, canonical)
             if menu_item is not None:
                 if _invoke_control(menu_item):
                     return True
@@ -776,32 +834,14 @@ class SpotifyUIAutomationAdapter:
                 except Exception:
                     pass
 
-        # Step 3: Fast keyboard navigation (First option in Spotify track search menu is "Add to queue")
         try:
-            self._send_shortcut("{DOWN}{ENTER}")
-            return True
+            self._send_shortcut("{ESC}")
         except Exception:
             pass
-
-        if IS_WINDOWS:
-            try:
-                user32 = ctypes.windll.user32
-                VK_DOWN = 0x28
-                VK_RETURN = 0x0D
-
-                def _press_key(vk: int):
-                    user32.keybd_event(vk, 0, 0, 0)
-                    time.sleep(0.04)
-                    user32.keybd_event(vk, 0, 2, 0)
-                    time.sleep(0.04)
-
-                _press_key(VK_DOWN)
-                _press_key(VK_RETURN)
-                return True
-            except Exception:
-                pass
-
         return False
+
+    def queue_candidate(self, candidate: SpotifyCandidate, handle: int | None = None) -> bool:
+        return self.context_action_candidate(candidate, "queue", handle=handle)
 
     def control(self, handle: int, action: str) -> bool:
         normalized_action = normalize_text(action)
@@ -818,7 +858,8 @@ class SpotifyUIAutomationAdapter:
             if any(name in observed for name in names) and _invoke_control(control):
                 return True
 
-        # Fallback shortcuts for Spotify Desktop controls (100% immune to UI changes/zoom)
+        # Foreground-scoped Spotify shortcuts are fallbacks when semantic player
+        # controls are unavailable. The controller still verifies observable state.
         if canonical in {"pause", "resume"}:
             try:
                 self._send_shortcut(" ")
@@ -843,29 +884,6 @@ class SpotifyUIAutomationAdapter:
                 return True
             except Exception:
                 pass
-        elif canonical in {"like", "unlike"}:
-            try:
-                self._send_shortcut("+%b")
-                return True
-            except Exception:
-                pass
-            try:
-                self._send_shortcut("%+b")
-                return True
-            except Exception:
-                pass
-            if IS_WINDOWS:
-                try:
-                    user32 = ctypes.windll.user32
-                    user32.keybd_event(0x12, 0, 0, 0)      # ALT down
-                    user32.keybd_event(0x10, 0, 0, 0)      # SHIFT down
-                    user32.keybd_event(0x42, 0, 0, 0)      # 'B' down
-                    user32.keybd_event(0x42, 0, 2, 0)      # 'B' up
-                    user32.keybd_event(0x10, 0, 2, 0)      # SHIFT up
-                    user32.keybd_event(0x12, 0, 2, 0)      # ALT up
-                    return True
-                except Exception:
-                    pass
         elif canonical in {"repeat_on", "repeat_off"}:
             try:
                 self._send_shortcut("^r")
@@ -927,6 +945,57 @@ class SpotifyUIAutomationAdapter:
                     "enable shuffle",
                 )
             ):
+                return False
+        return None
+
+    def repeat_state(self, handle: int) -> bool | None:
+        for control in self._controls(handle):
+            if _control_type(control).lower() not in {"button", "checkbox"}:
+                continue
+            if not _is_player_control(control):
+                continue
+            observed = normalize_text(_control_name(control))
+            if any(
+                label in observed
+                for label in (
+                    "disable repeat",
+                    "desactivar repeticion",
+                    "no repetir",
+                )
+            ):
+                return True
+            if any(
+                label in observed
+                for label in (
+                    "enable repeat",
+                    "activar repeticion",
+                    "repetir",
+                )
+            ):
+                return False
+        return None
+
+    def saved_state(self, handle: int) -> bool | None:
+        for control in self._controls(handle):
+            if _control_type(control).lower() not in {"button", "checkbox"}:
+                continue
+            observed = normalize_text(_control_name(control))
+            if any(term == observed or term in observed for term in _MENU_ACTION_TERMS["unlike"]):
+                return True
+            if any(term == observed or term in observed for term in _MENU_ACTION_TERMS["like"]):
+                return False
+        return None
+
+    def mute_state(self, handle: int) -> bool | None:
+        for control in self._controls(handle):
+            if _control_type(control).lower() not in {"button", "checkbox"}:
+                continue
+            if not _is_player_control(control):
+                continue
+            observed = normalize_text(_control_name(control))
+            if observed in {"unmute", "desilenciar"} or "unmute" in observed:
+                return True
+            if observed in {"mute", "silenciar"} or observed.startswith("mute "):
                 return False
         return None
 

@@ -553,21 +553,50 @@ class SpotifyDesktopController:
             return normalize_text(f"{observed[0]} {observed[1]}")
         return normalize_text(fallback)
 
-    def _verify_control(self, window, action: str, before_track: str) -> bool:
+    def _read_control_state(self, window, action: str):
+        if action in {"pause", "resume"}:
+            return self._uia.playback_state(window.handle)
+        if action in {"shuffle_on", "shuffle_off"}:
+            return self._uia.shuffle_state(window.handle)
+        if action in {"repeat_on", "repeat_off"}:
+            reader = getattr(self._uia, "repeat_state", None)
+            return reader(window.handle) if callable(reader) else None
+        if action in {"like", "unlike"}:
+            reader = getattr(self._uia, "saved_state", None)
+            return reader(window.handle) if callable(reader) else None
+        if action in {"mute", "unmute"}:
+            reader = getattr(self._uia, "mute_state", None)
+            return reader(window.handle) if callable(reader) else None
+        return None
+
+    @staticmethod
+    def _expected_control_state(action: str):
+        return {
+            "pause": "paused",
+            "resume": "playing",
+            "shuffle_on": True,
+            "shuffle_off": False,
+            "repeat_on": True,
+            "repeat_off": False,
+            "like": True,
+            "unlike": False,
+            "mute": True,
+            "unmute": False,
+        }.get(action)
+
+    def _verify_control(self, window, action: str, before_track: str) -> bool | None:
+        expected = self._expected_control_state(action)
+        if expected is None and action not in {"next", "previous"}:
+            return None
+        if action in {"next", "previous"} and not before_track:
+            return None
+
         deadline = self._monotonic() + self._action_timeout
         while True:
-            if action in {"pause", "resume"}:
-                expected = "paused" if action == "pause" else "playing"
-                observed = self._uia.playback_state(window.handle)
+            if expected is not None:
+                observed = self._read_control_state(window, action)
                 if observed == expected:
                     return True
-            elif action in {"shuffle_on", "shuffle_off"}:
-                expected = action == "shuffle_on"
-                observed = self._uia.shuffle_state(window.handle)
-                if observed is expected:
-                    return True
-            elif action in {"like", "unlike", "repeat_on", "repeat_off", "volume_up", "volume_down", "mute"}:
-                return True
             elif action in {"next", "previous"}:
                 current_track = self._track_key(
                     self._uia.now_playing(window.handle),
@@ -575,9 +604,6 @@ class SpotifyDesktopController:
                 )
                 if before_track and current_track and current_track != before_track:
                     return True
-            else:
-                return False
-
             remaining = deadline - self._monotonic()
             if remaining <= 0:
                 return False
@@ -600,18 +626,31 @@ class SpotifyDesktopController:
                 self._uia.now_playing(window.handle),
                 self._windows.current_title(window),
             )
+            expected = self._expected_control_state(action)
+            if expected is not None and self._read_control_state(window, action) == expected:
+                observed = self._uia.now_playing(window.handle)
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.SUCCESS,
+                    title=observed[0] if observed else "",
+                    artist=observed[1] if observed else "",
+                    message_key="spotify_control_complete",
+                )
             if not self._uia.control(window.handle, action):
                 return SpotifyDesktopResult(
                     status=DesktopResultStatus.RESTRICTED,
                     message_key="spotify_action_restricted",
                 )
-            if not self._verify_control(window, action, before_track):
+            verification = self._verify_control(window, action, before_track)
+            if verification is not True:
                 return SpotifyDesktopResult(
-                    status=DesktopResultStatus.FAILED,
-                    message_key="spotify_control_not_verified",
+                    status=DesktopResultStatus.UNVERIFIED,
+                    message_key="spotify_control_sent_unverified",
                 )
+            observed = self._uia.now_playing(window.handle)
             return SpotifyDesktopResult(
                 status=DesktopResultStatus.SUCCESS,
+                title=observed[0] if observed else "",
+                artist=observed[1] if observed else "",
                 message_key="spotify_control_complete",
             )
         except (FileNotFoundError, ImportError, TimeoutError):
@@ -631,7 +670,59 @@ class SpotifyDesktopController:
         finally:
             self._lock.release()
 
-    def queue(self, request: SpotifyRequest) -> SpotifyDesktopResult:
+    def current(self) -> SpotifyDesktopResult:
+        try:
+            window = self._windows.ensure_window(self._start_timeout)
+            observed = self._uia.now_playing(window.handle)
+            playback_state = self._uia.playback_state(window.handle)
+            title = observed[0] if observed else ""
+            artist = observed[1] if observed else ""
+            if not title:
+                title = self._windows.current_title(window).strip()
+                if normalize_text(title) == "spotify":
+                    title = ""
+            if not title:
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.NOT_FOUND,
+                    message_key="spotify_no_current_track",
+                )
+            if playback_state in {"playing", "paused"}:
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.SUCCESS,
+                    title=title,
+                    artist=artist,
+                    playback_state=playback_state,
+                    message_key="spotify_current_track",
+                )
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.UNVERIFIED,
+                title=title,
+                artist=artist,
+                message_key="spotify_playback_state_unknown",
+            )
+        except (FileNotFoundError, ImportError, TimeoutError):
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.UNAVAILABLE,
+                message_key="spotify_desktop_unavailable",
+            )
+        except Exception as error:
+            self._logger.warning(
+                "spotify_desktop_current_failed error_type=%s",
+                type(error).__name__,
+            )
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.FAILED,
+                message_key="spotify_automation_failed",
+            )
+
+    def _context_action(
+        self,
+        request: SpotifyRequest,
+        action: str,
+        *,
+        sent_message_key: str,
+        failed_message_key: str,
+    ) -> SpotifyDesktopResult:
         if not self._lock.acquire(blocking=False):
             return SpotifyDesktopResult(
                 status=DesktopResultStatus.FAILED,
@@ -717,41 +808,37 @@ class SpotifyDesktopController:
                 )
 
             states.append(AutomationState.SELECTING)
-            queue_fn = getattr(self._uia, "queue_candidate", None)
-            queued = False
-            if callable(queue_fn):
+            context_action = getattr(self._uia, "context_action_candidate", None)
+            sent = False
+            if callable(context_action):
                 try:
-                    queued = bool(queue_fn(selected, handle=window.handle))
+                    sent = bool(context_action(selected, action, handle=window.handle))
                 except TypeError:
-                    queued = bool(queue_fn(selected))
+                    sent = bool(context_action(selected, action))
+            elif action == "queue":
+                queue_fn = getattr(self._uia, "queue_candidate", None)
+                if callable(queue_fn):
+                    try:
+                        sent = bool(queue_fn(selected, handle=window.handle))
+                    except TypeError:
+                        sent = bool(queue_fn(selected))
 
-            if queued:
+            if sent:
                 states.append(AutomationState.COMPLETE)
                 return SpotifyDesktopResult(
-                    status=DesktopResultStatus.SUCCESS,
+                    status=DesktopResultStatus.UNVERIFIED,
                     title=selected.title,
                     artist=selected.artist,
-                    message_key="spotify_queue_added",
-                    states=tuple(states),
-                )
-
-            # Fallback: play the track directly instead of queueing
-            if self._uia.activate(selected):
-                states.append(AutomationState.COMPLETE)
-                return SpotifyDesktopResult(
-                    status=DesktopResultStatus.SUCCESS,
-                    title=selected.title,
-                    artist=selected.artist,
-                    message_key="spotify_queue_played_fallback",
+                    message_key=sent_message_key,
                     states=tuple(states),
                 )
 
             states.append(AutomationState.FAILED)
             return SpotifyDesktopResult(
-                status=DesktopResultStatus.FAILED,
+                status=DesktopResultStatus.RESTRICTED,
                 title=selected.title,
                 artist=selected.artist,
-                message_key="spotify_queue_failed",
+                message_key=failed_message_key,
                 states=tuple(states),
             )
         except (FileNotFoundError, ImportError):
@@ -771,7 +858,8 @@ class SpotifyDesktopController:
         except Exception as error:
             states.append(AutomationState.FAILED)
             self._logger.warning(
-                "spotify_desktop_queue_failed error_type=%s",
+                "spotify_desktop_context_action_failed action=%s error_type=%s",
+                action,
                 type(error).__name__,
             )
             return SpotifyDesktopResult(
@@ -781,3 +869,24 @@ class SpotifyDesktopController:
             )
         finally:
             self._lock.release()
+
+    def queue(self, request: SpotifyRequest) -> SpotifyDesktopResult:
+        return self._context_action(
+            request,
+            "queue",
+            sent_message_key="spotify_queue_sent_unverified",
+            failed_message_key="spotify_queue_failed",
+        )
+
+    def library(self, request: SpotifyRequest, action: str) -> SpotifyDesktopResult:
+        if action not in {"like", "unlike"}:
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.RESTRICTED,
+                message_key="spotify_library_action_invalid",
+            )
+        return self._context_action(
+            request,
+            action,
+            sent_message_key="spotify_library_sent_unverified",
+            failed_message_key="spotify_library_action_failed",
+        )

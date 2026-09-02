@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from core import jarvis_config
@@ -17,6 +18,7 @@ from modules.spotify.desktop.models import (
     SpotifyDesktopResult,
 )
 from modules.spotify.followup import pending_spotify_selections
+from modules.spotify.state import get_last_requested_track, set_last_requested_track
 
 
 @pytest.fixture(autouse=True)
@@ -24,8 +26,10 @@ def _disable_real_spotify_client(monkeypatch):
     """Keep unit tests independent from local credentials and OAuth state."""
     monkeypatch.setattr(spotify_client, "sp", None)
     monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "api")
-    monkeypatch.setattr(spotify_service, "_spotify_api_capability_failed", False)
     monkeypatch.setattr(spotify_service, "_desktop_controller", None)
+    spotify_service._spotify_api_blocked_until.clear()
+    yield
+    spotify_service._spotify_api_blocked_until.clear()
 
 
 def _track(track_id: str, artist: str = "Artist") -> dict:
@@ -249,12 +253,49 @@ def test_spotify_mix_tool_delegates_to_spotify_playback(monkeypatch):
 
     def fake_play(seed):
         calls.append(seed)
-        return "mix-ok"
+        return spotify_service.SpotifyServicePlaybackOutcome(
+            "mix-ok",
+            ok=True,
+            provider="api",
+        )
 
     monkeypatch.setattr(spotify_service, "_play_spotify_seed", fake_play)
 
     assert spotify_tools.reproducir_mix_spotify.invoke({"semilla": "latin pop"}) == "mix-ok"
     assert calls == ["latin pop"]
+
+
+def test_spotify_mix_uses_typed_desktop_outcome_instead_of_message_text(monkeypatch):
+    monkeypatch.setattr(
+        spotify_service,
+        "_play_spotify_seed",
+        lambda _seed: spotify_service.SpotifyServicePlaybackOutcome(
+            "Inicio confirmado sin palabras especiales.",
+            ok=True,
+            provider="desktop",
+        ),
+    )
+
+    message = spotify_service.play_mix("latin pop")
+
+    assert "Inicio confirmado" in message
+    assert "autoplay" in message.lower() or "reproducción automática" in message.lower()
+
+
+def test_spotify_mix_does_not_append_autoplay_after_desktop_failure(monkeypatch):
+    monkeypatch.setattr(
+        spotify_service,
+        "_play_spotify_seed",
+        lambda _seed: spotify_service.SpotifyServicePlaybackOutcome(
+            "Spotify Desktop Playing could not be verified.",
+            ok=False,
+            provider="desktop",
+        ),
+    )
+
+    message = spotify_service.play_mix("latin pop")
+
+    assert message == "Spotify Desktop Playing could not be verified."
 
 
 def test_spotify_obtener_similares_handles_missing_seed_id():
@@ -573,8 +614,13 @@ def test_auto_mode_uses_desktop_without_cached_api_token(monkeypatch):
     monkeypatch.setattr(spotify_service, "_spotify_has_valid_cached_token", lambda: False)
     monkeypatch.setattr(
         spotify_service,
-        "_spotify_play_desktop",
-        lambda song: calls.append(song) or "desktop-ok",
+        "_spotify_play_desktop_outcome",
+        lambda song: calls.append(song)
+        or spotify_service.SpotifyServicePlaybackOutcome(
+            "desktop-ok",
+            ok=True,
+            provider="desktop",
+        ),
     )
 
     assert (
@@ -596,7 +642,7 @@ def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
     )
     monkeypatch.setattr(
         spotify_service,
-        "_spotify_play_desktop",
+        "_spotify_play_desktop_outcome",
         lambda _song: (_ for _ in ()).throw(
             AssertionError("desktop must not run")
         ),
@@ -608,7 +654,7 @@ def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
     )
 
 
-def test_auto_mode_falls_back_after_permanent_api_capability_failure(monkeypatch):
+def test_auto_mode_falls_back_and_temporarily_blocks_failed_api_capability(monkeypatch):
     monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "auto")
     monkeypatch.setattr(spotify_service, "_spotify_has_valid_cached_token", lambda: True)
     monkeypatch.setattr(
@@ -620,13 +666,90 @@ def test_auto_mode_falls_back_after_permanent_api_capability_failure(monkeypatch
             capability_failure=True,
         ),
     )
-    monkeypatch.setattr(spotify_service, "_spotify_play_desktop", lambda _song: "desktop-ok")
+    monkeypatch.setattr(
+        spotify_service,
+        "_spotify_play_desktop_outcome",
+        lambda _song: spotify_service.SpotifyServicePlaybackOutcome(
+            "desktop-ok",
+            ok=True,
+            provider="desktop",
+        ),
+    )
 
     assert (
         spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
         == "desktop-ok"
     )
-    assert spotify_service._spotify_api_capability_failed
+    assert spotify_service._spotify_api_temporarily_blocked("play")
+
+
+def test_api_capability_cooldown_is_operation_scoped_and_expires(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(spotify_service.time, "monotonic", lambda: now[0])
+
+    spotify_service._spotify_api_mark_capability_failure("play")
+
+    assert spotify_service._spotify_api_temporarily_blocked("play")
+    assert not spotify_service._spotify_api_temporarily_blocked("control")
+
+    now[0] += spotify_service._SPOTIFY_API_RETRY_COOLDOWN_SECONDS + 0.1
+
+    assert not spotify_service._spotify_api_temporarily_blocked("play")
+
+
+def test_api_search_does_not_record_track_when_playback_fails(monkeypatch):
+    track = {
+        "id": "numb123",
+        "uri": "spotify:track:numb123",
+        "name": "Numb",
+        "artists": [{"name": "Linkin Park"}],
+    }
+    mock_sp = MagicMock()
+    mock_sp.start_playback.side_effect = RuntimeError("playback failed")
+    monkeypatch.setattr(spotify_playback.client, "sp", mock_sp)
+    monkeypatch.setattr(spotify_playback, "_spotify_ready", lambda: (True, ""))
+    monkeypatch.setattr(spotify_playback, "_spotify_search_tracks", lambda **_kwargs: [track])
+    monkeypatch.setattr(spotify_playback, "_spotify_mejor_track", lambda *_args: track)
+    monkeypatch.setattr(
+        spotify_playback,
+        "_spotify_get_all_devices",
+        lambda: [{"id": "desktop", "name": "Desktop", "is_active": True}],
+    )
+    monkeypatch.setattr(spotify_playback, "_spotify_classify_error", lambda _error: "unknown")
+    set_last_requested_track("", "admin")
+
+    spotify_playback._spotify_play_api_message("Numb de Linkin Park")
+
+    assert get_last_requested_track("admin") == ""
+
+
+def test_api_records_track_after_playback_starts(monkeypatch):
+    track = {
+        "id": "numb123",
+        "uri": "spotify:track:numb123",
+        "name": "Numb",
+        "artists": [{"name": "Linkin Park"}],
+    }
+    mock_sp = MagicMock()
+    monkeypatch.setattr(spotify_playback.client, "sp", mock_sp)
+    monkeypatch.setattr(spotify_playback, "_spotify_ready", lambda: (True, ""))
+    monkeypatch.setattr(spotify_playback, "_spotify_search_tracks", lambda **_kwargs: [track])
+    monkeypatch.setattr(spotify_playback, "_spotify_mejor_track", lambda *_args: track)
+    monkeypatch.setattr(
+        spotify_playback,
+        "_spotify_get_all_devices",
+        lambda: [{"id": "desktop", "name": "Desktop", "is_active": True}],
+    )
+    monkeypatch.setattr(spotify_playback, "_spotify_dispositivo_objetivo", lambda: "desktop")
+    monkeypatch.setattr(spotify_playback, "_spotify_set_shuffle", lambda *_args: True)
+    monkeypatch.setattr(spotify_playback, "_spotify_obtener_similares", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(spotify_playback, "_spotify_usuario_actual_id", lambda: None)
+    monkeypatch.setattr(spotify_playback._time, "sleep", lambda _seconds: None)
+    set_last_requested_track("", "admin")
+
+    spotify_playback._spotify_play_api_message("Numb de Linkin Park")
+
+    assert get_last_requested_track("admin") == "Numb by Linkin Park"
 
 
 def test_desktop_ambiguity_is_localized(monkeypatch):

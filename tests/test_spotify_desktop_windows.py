@@ -508,7 +508,7 @@ def test_is_safe_click_rect_rejects_taskbar_and_out_of_bounds():
     assert _is_safe_click_rect(outside, win_bounds) is False
 
 
-def test_queue_candidate_uses_shift_f10_when_clicks_are_unsafe():
+def test_queue_candidate_refuses_unknown_menu_after_shift_f10():
     shortcuts = []
     adapter = SpotifyUIAutomationAdapter(
         root_factory=lambda _handle: FakeControl(children=[]),
@@ -538,7 +538,58 @@ def test_queue_candidate_uses_shift_f10_when_clicks_are_unsafe():
     )
     adapter._elements["c-unsafe"] = control
 
-    assert adapter.queue_candidate(candidate, handle=509)
+    assert not adapter.queue_candidate(candidate, handle=509)
     assert control.focused
     assert "+{F10}" in shortcuts
-    assert "{DOWN}{ENTER}" in shortcuts
+    assert "{DOWN}{ENTER}" not in shortcuts
+
+
+def test_queue_candidate_invokes_only_named_queue_item():
+    shortcuts = []
+    menu_item = FakeControl(name="Add to queue", control_type="MenuItem")
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[menu_item]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+    )
+    candidate_control = FakeControl(name="Play Song by Artist", control_type="Button")
+    candidate = SpotifyCandidate(
+        element_id="candidate-semantic",
+        title="Song",
+        artist="Artist",
+        kind="track",
+        subtitle="Song",
+    )
+    adapter._elements[candidate.element_id] = candidate_control
+
+    assert adapter.queue_candidate(candidate, handle=509)
+    assert candidate_control.focused
+    assert "+{F10}" in shortcuts
+    assert menu_item.invoked
+    assert "{DOWN}{ENTER}" not in shortcuts
+
+
+def test_like_control_has_no_blind_keyboard_fallback():
+    shortcuts = []
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[]),
+        send_shortcut=lambda shortcut: shortcuts.append(shortcut),
+    )
+
+    assert not adapter.control(509, "like")
+    assert "+%b" not in shortcuts
+    assert "%+b" not in shortcuts
+
+
+def test_observable_extended_control_states_use_accessible_names():
+    controls = [
+        FakeControl(name="Disable repeat", control_type="Button"),
+        FakeControl(name="Remove from your Liked Songs", control_type="Button"),
+        FakeControl(name="Unmute", control_type="Button"),
+    ]
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=controls),
+    )
+
+    assert adapter.repeat_state(509) is True
+    assert adapter.saved_state(509) is True
+    assert adapter.mute_state(509) is True

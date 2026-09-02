@@ -72,7 +72,7 @@ def test_like_current_track(monkeypatch):
     monkeypatch.setattr(client, "sp", mock_sp)
 
     res = service.like_track("")
-    assert "Guardado en tus Me Gusta" in res or "Saved to your Liked Songs" in res
+    assert "Me Gusta" in res or "Liked Songs" in res
     assert "Starboy" in res
     mock_sp.current_user_saved_tracks_add.assert_called_once_with(tracks=["starboy123"])
 
@@ -113,7 +113,7 @@ def test_unlike_current_track(monkeypatch):
     monkeypatch.setattr(client, "sp", mock_sp)
 
     res = service.unlike_track("")
-    assert "Eliminado de tus Me Gusta" in res or "Removed from your Liked Songs" in res
+    assert "Me Gusta" in res or "Liked Songs" in res
     assert "In the End" in res
     mock_sp.current_user_saved_tracks_delete.assert_called_once_with(tracks=["end123"])
 
@@ -174,14 +174,14 @@ def test_like_track_desktop_mode(monkeypatch):
     from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
     mock_ctrl.control.return_value = SpotifyDesktopResult(
         status=DesktopResultStatus.SUCCESS,
+        title="Clint Eastwood",
+        artist="Gorillaz",
         message_key="spotify_control_complete",
     )
-    mock_ctrl._windows.ensure_window.return_value = MagicMock()
-    mock_ctrl._uia.now_playing.return_value = ("Clint Eastwood", "Gorillaz")
     monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
 
     res = service.like_track("")
-    assert "Guardado en tus Me Gusta" in res or "Saved to your Liked Songs" in res
+    assert "Me Gusta" in res or "Liked Songs" in res
     assert "Clint Eastwood" in res
     mock_ctrl.control.assert_called_with("like")
 
@@ -192,14 +192,14 @@ def test_unlike_track_desktop_mode(monkeypatch):
     from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
     mock_ctrl.control.return_value = SpotifyDesktopResult(
         status=DesktopResultStatus.SUCCESS,
+        title="Feel Good Inc",
+        artist="Gorillaz",
         message_key="spotify_control_complete",
     )
-    mock_ctrl._windows.ensure_window.return_value = MagicMock()
-    mock_ctrl._uia.now_playing.return_value = ("Feel Good Inc", "Gorillaz")
     monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
 
     res = service.unlike_track("")
-    assert "Eliminado de tus Me Gusta" in res or "Removed from your Liked Songs" in res
+    assert "Me Gusta" in res or "Liked Songs" in res
     assert "Feel Good Inc" in res
     mock_ctrl.control.assert_called_with("unlike")
 
@@ -211,14 +211,14 @@ def test_like_track_auto_mode_fallback_when_api_unconfigured(monkeypatch):
     from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
     mock_ctrl.control.return_value = SpotifyDesktopResult(
         status=DesktopResultStatus.SUCCESS,
+        title="Dare",
+        artist="Gorillaz",
         message_key="spotify_control_complete",
     )
-    mock_ctrl._windows.ensure_window.return_value = MagicMock()
-    mock_ctrl._uia.now_playing.return_value = ("Dare", "Gorillaz")
     monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
 
     res = service.like_track("")
-    assert "Guardado en tus Me Gusta" in res or "Saved to your Liked Songs" in res
+    assert "Me Gusta" in res or "Liked Songs" in res
     mock_ctrl.control.assert_called_with("like")
 
 
@@ -242,9 +242,15 @@ def test_add_to_queue_desktop_mode(monkeypatch):
 def test_current_track_desktop_mode(monkeypatch):
     monkeypatch.setattr(service, "SPOTIFY_PLAYBACK_MODE", "desktop")
     mock_ctrl = MagicMock()
-    mock_ctrl._windows.ensure_window.return_value = MagicMock()
-    mock_ctrl._uia.now_playing.return_value = ("On Melancholy Hill", "Gorillaz")
-    mock_ctrl._uia.playback_state.return_value = "playing"
+    from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
+
+    mock_ctrl.current.return_value = SpotifyDesktopResult(
+        status=DesktopResultStatus.SUCCESS,
+        title="On Melancholy Hill",
+        artist="Gorillaz",
+        playback_state="playing",
+        message_key="spotify_current_track",
+    )
     monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
 
     res = service.current_track()
@@ -278,3 +284,83 @@ def test_control_desktop_repeat_volume_mute(monkeypatch):
     res_mute = service.control("silenciar")
     assert "silenciado" in res_mute or "muted" in res_mute
     mock_ctrl.control.assert_called_with("mute")
+
+
+def test_desktop_queue_unverified_does_not_claim_added_or_play_track(monkeypatch):
+    monkeypatch.setattr(service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    mock_ctrl = MagicMock()
+    from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
+
+    mock_ctrl.queue.return_value = SpotifyDesktopResult(
+        status=DesktopResultStatus.UNVERIFIED,
+        title="19-2000",
+        artist="Gorillaz",
+        message_key="spotify_queue_sent_unverified",
+    )
+    monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
+
+    message = service.add_to_queue("19-2000")
+
+    assert "no pude verificar" in message.lower() or "could not verify" in message.lower()
+    assert "reproduciendo" not in message.lower()
+    assert "now playing" not in message.lower()
+
+
+def test_named_unlike_uses_exact_candidate_action_without_current_control(monkeypatch):
+    monkeypatch.setattr(service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    mock_ctrl = MagicMock()
+    from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
+
+    mock_ctrl.library.return_value = SpotifyDesktopResult(
+        status=DesktopResultStatus.UNVERIFIED,
+        title="Numb",
+        artist="Linkin Park",
+        message_key="spotify_library_sent_unverified",
+    )
+    monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
+
+    message = service.unlike_track("Numb de Linkin Park")
+
+    mock_ctrl.library.assert_called_once()
+    mock_ctrl.control.assert_not_called()
+    assert "no pude verificar" in message.lower() or "could not verify" in message.lower()
+
+
+def test_unknown_desktop_playback_state_does_not_claim_playing(monkeypatch):
+    monkeypatch.setattr(service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    mock_ctrl = MagicMock()
+    from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
+
+    mock_ctrl.current.return_value = SpotifyDesktopResult(
+        status=DesktopResultStatus.UNVERIFIED,
+        title="On Melancholy Hill",
+        artist="Gorillaz",
+        message_key="spotify_playback_state_unknown",
+    )
+    monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
+
+    message = service.current_track()
+
+    assert "On Melancholy Hill" in message
+    assert "reproduciendo" not in message.lower()
+    assert "playing" not in message.lower()
+
+
+def test_unverified_current_like_does_not_claim_saved(monkeypatch):
+    monkeypatch.setattr(service, "SPOTIFY_PLAYBACK_MODE", "desktop")
+    mock_ctrl = MagicMock()
+    from modules.spotify.desktop.models import DesktopResultStatus, SpotifyDesktopResult
+
+    mock_ctrl.control.return_value = SpotifyDesktopResult(
+        status=DesktopResultStatus.UNVERIFIED,
+        title="Clint Eastwood",
+        artist="Gorillaz",
+        message_key="spotify_control_sent_unverified",
+    )
+    monkeypatch.setattr(service, "_get_desktop_controller", lambda: mock_ctrl)
+
+    message = service.like_track("")
+
+    assert "no pude verificar" in message.lower() or "could not verify" in message.lower()
+    assert "guardado" not in message.lower()
+    assert "saved" not in message.lower()
