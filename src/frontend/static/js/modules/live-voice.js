@@ -586,11 +586,48 @@ export class LiveVoiceClient {
             this.isScreenSharing = true;
             this.onScreenShareStateChange?.(true);
 
-            // Stream frames at ~1 FPS
+            // Stream frames at ~1 FPS with perceptual frame-diffing to reduce CPU/bandwidth
+            let lastSentTime = 0;
+            let lastThumbPixels = null;
+            const diffCanvas = document.createElement('canvas');
+            diffCanvas.width = 16;
+            diffCanvas.height = 16;
+            const diffCtx = diffCanvas.getContext('2d', { willReadFrequently: true });
+
             const captureAndSendFrame = () => {
                 if (!this.isScreenSharing || !this.screenVideo || !this.screenCanvas) return;
                 const video = this.screenVideo;
                 if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+                // Check perceptual difference using 16x16 thumbnail before expensive JPEG compression
+                let isSignificantChange = true;
+                const now = Date.now();
+                if (diffCtx) {
+                    try {
+                        diffCtx.drawImage(video, 0, 0, 16, 16);
+                        const currentData = diffCtx.getImageData(0, 0, 16, 16).data;
+                        if (lastThumbPixels) {
+                            let diffCount = 0;
+                            for (let i = 0; i < currentData.length; i += 4) {
+                                const d = Math.abs(currentData[i] - lastThumbPixels[i]) +
+                                          Math.abs(currentData[i + 1] - lastThumbPixels[i + 1]) +
+                                          Math.abs(currentData[i + 2] - lastThumbPixels[i + 2]);
+                                if (d > 35) diffCount++;
+                            }
+                            // 256 sample pixels: if fewer than 4 pixels changed and <8s elapsed, skip sending
+                            if (diffCount < 4 && (now - lastSentTime) < 8000) {
+                                isSignificantChange = false;
+                            }
+                        }
+                        if (isSignificantChange) {
+                            lastThumbPixels = new Uint8ClampedArray(currentData);
+                        }
+                    } catch (_err) {
+                        isSignificantChange = true;
+                    }
+                }
+
+                if (!isSignificantChange) return;
 
                 // Scale down maintaining aspect ratio (max dimension 1280)
                 let width = video.videoWidth;
@@ -616,6 +653,7 @@ export class LiveVoiceClient {
                 const b64Data = dataUrl.split(',')[1];
 
                 if (b64Data) {
+                    lastSentTime = now;
                     this._sendJson({
                         type: 'screen_frame',
                         mime_type: 'image/jpeg',

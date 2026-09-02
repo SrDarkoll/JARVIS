@@ -117,6 +117,9 @@ class LiveSession:
         self._closed = False
 
         self.diagnostics = LiveDiagnosticsCollector()
+        self._last_image_frame_data: str | None = None
+        self._last_image_frame_time: float = 0.0
+        self.frame_diff_min_interval: float = 8.0
         self.orchestrator = LiveActionOrchestrator(
             session_id=session_id,
             profile_id=profile_id,
@@ -237,13 +240,25 @@ class LiveSession:
     def audio_task_done(self, _chunk: bytes) -> None:
         self._input_audio_queue.task_done()
 
-    async def handle_screen_frame(self, data: str, mime_type: str = "image/jpeg") -> bool:
-        """Receive an incoming screen or camera frame from the client."""
+    async def handle_screen_frame(
+        self,
+        data: str,
+        mime_type: str = "image/jpeg",
+        force: bool = False,
+    ) -> bool:
+        """Receive an incoming screen or camera frame with deduplication for unchanged frames."""
         if self._closed or not data:
             return False
         frame_size = len(data.encode("utf-8"))
         if frame_size > self.max_image_frame_bytes or frame_size > self.max_image_queue_bytes:
             return False
+
+        now = time.monotonic()
+        if not force and self._last_image_frame_data == data:
+            if (now - self._last_image_frame_time) < self.frame_diff_min_interval:
+                # Frame is unchanged and heartbeat interval has not elapsed; skip queueing
+                return True
+
         while self._input_image_queue.full() or (
             self._input_image_bytes + frame_size > self.max_image_queue_bytes
         ):
@@ -251,6 +266,8 @@ class LiveSession:
                 return False
         await self._input_image_queue.put((data, mime_type))
         self._input_image_bytes += frame_size
+        self._last_image_frame_data = data
+        self._last_image_frame_time = now
         return True
 
     async def next_image_frame(self) -> tuple[str, str]:
@@ -309,6 +326,10 @@ class LiveSession:
             while not self._input_image_queue.empty():
                 if not self._drop_oldest_image_frame():
                     break
+
+            # Reset frame deduplication cache
+            self._last_image_frame_data = None
+            self._last_image_frame_time = 0.0
 
             await self.set_state(LiveSessionState.INTERRUPTED)
             await self.emit_json({

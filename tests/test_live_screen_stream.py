@@ -1,8 +1,8 @@
 import asyncio
 import json
-import pytest
-from voice.live_session import LiveSession, LiveSessionState
+
 from voice.live_gemini import GeminiLiveStreamer
+from voice.live_session import LiveSession
 
 
 def test_live_session_screen_frame_queue_and_overflow():
@@ -10,7 +10,7 @@ def test_live_session_screen_frame_queue_and_overflow():
         emitted = []
         session = LiveSession(
             session_id="screen-sess-1",
-            send_text=lambda t: emitted.append(t),
+            send_text=emitted.append,
             send_bytes=lambda b: None,
         )
 
@@ -122,7 +122,7 @@ def test_gemini_live_streamer_upstream_media_loop_formatting():
             pass
 
         assert len(sent_ws_messages) == 2
-        
+
         # Verify first message format
         msg1 = sent_ws_messages[0]
         assert "realtimeInput" in msg1
@@ -134,5 +134,32 @@ def test_gemini_live_streamer_upstream_media_loop_formatting():
         msg2 = sent_ws_messages[1]
         video2 = msg2["realtimeInput"]["video"]
         assert video2["data"] == "header_stripped_frame"
+
+    asyncio.run(_run())
+
+
+def test_live_session_screen_frame_deduplication():
+    async def _run():
+        session = LiveSession(
+            session_id="screen-dedup-1",
+            send_text=lambda _t: None,
+            send_bytes=lambda _b: None,
+        )
+
+        # First frame enqueued
+        assert await session.handle_screen_frame("frame_content_A", "image/jpeg") is True
+        assert session._input_image_queue.qsize() == 1
+
+        # Identical frame received immediately within heartbeat interval is skipped without queue churn
+        assert await session.handle_screen_frame("frame_content_A", "image/jpeg") is True
+        assert session._input_image_queue.qsize() == 1
+
+        # Different frame is enqueued
+        assert await session.handle_screen_frame("frame_content_B", "image/jpeg") is True
+        assert session._input_image_queue.qsize() == 2
+
+        # Forced frame bypasses deduplication
+        assert await session.handle_screen_frame("frame_content_B", "image/jpeg", force=True) is True
+        assert session._input_image_queue.qsize() == 3
 
     asyncio.run(_run())
