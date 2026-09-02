@@ -129,3 +129,66 @@ def config_info():
             "biometrics_active": True,
         }
     )
+
+
+@api_bp.route("/api/memory/graph", methods=["GET"])
+async def memory_graph():
+    from core.jarvis_state import get_active_profile_id
+    from modules.memory.service import unified_memory
+
+    profile_id = request.args.get("profile_id") or get_active_profile_id()
+    try:
+        limit = min(100, max(1, int(request.args.get("limit", 50))))
+    except ValueError:
+        limit = 50
+
+    try:
+        nodes = unified_memory.store.list_cognitive_nodes(profile_id=profile_id, limit=limit)
+        skills = unified_memory.store.list_skills(profile_id=profile_id, limit=25)
+
+        nodes_data = []
+        links_data = []
+
+        for n in nodes:
+            nodes_data.append(
+                {
+                    "id": n.node_id,
+                    "title": n.title,
+                    "type": n.node_type.value,
+                    "content": n.content[:200],
+                    "tags": list(n.tags),
+                }
+            )
+            for e in n.edges:
+                links_data.append(
+                    {
+                        "source": n.title,
+                        "target": e.target_title,
+                        "relation": e.relation,
+                        "weight": e.weight,
+                    }
+                )
+
+        for s in skills:
+            skill_id = f"skill_{s.name.lower().replace(' ', '_')}"
+            nodes_data.append(
+                {
+                    "id": skill_id,
+                    "title": s.name,
+                    "type": "skill",
+                    "content": f"{len(s.steps)} pasos | {', '.join(s.trigger_phrases)}",
+                    "tags": ["skill", "procedural"],
+                }
+            )
+
+        return jsonify(
+            {
+                "ok": True,
+                "profile_id": profile_id,
+                "count": len(nodes_data),
+                "nodes": nodes_data,
+                "links": links_data,
+            }
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

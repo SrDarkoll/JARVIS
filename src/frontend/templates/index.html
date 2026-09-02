@@ -118,6 +118,20 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="module-box tech-panel memory-graph-panel">
+                    <div class="panel-corners"></div>
+                    <div class="panel-header-row">
+                        <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="memory_graph_title">RED COGNITIVA</span> <span class="icon-bracket">]</span></h3>
+                        <button id="refresh-memory-graph" class="mini-hud-btn" type="button" aria-label="Actualizar grafo" title="Actualizar red neuronal">&#8635;</button>
+                    </div>
+                    <div class="memory-graph-container">
+                        <canvas id="memory-graph-canvas" class="memory-canvas"></canvas>
+                        <div id="memory-graph-info" class="memory-node-preview">
+                            <span class="memory-count-label" id="memory-node-count">Cargando sinapsis...</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="center-stage">

@@ -3,6 +3,8 @@
  * Maneja telemetría, reloj, clima y alertas proactivas.
  */
 
+import { MemoryGraphRenderer } from './memory-graph.js';
+
 export function classifyProactiveActionResult(httpResponse, payload = {}) {
     const httpOk = Boolean(httpResponse?.ok);
     const receipts = Array.isArray(payload?.receipts) ? payload.receipts : [];
@@ -51,6 +53,19 @@ export class HUDManager {
     constructor(elements) {
         this.elements = elements;
         this.locale = localStorage.getItem('jarvis_locale') || 'en-US';
+        this.memoryGraph = null;
+        if (this.elements?.memoryGraphCanvas) {
+            this.memoryGraph = new MemoryGraphRenderer({
+                canvas: this.elements.memoryGraphCanvas,
+                countEl: this.elements.memoryNodeCount,
+                infoEl: this.elements.memoryGraphInfo,
+                refreshBtn: this.elements.refreshMemoryGraph,
+            });
+        }
+    }
+
+    refreshMemoryGraph() {
+        return this.memoryGraph?.refresh();
     }
 
     setLocale(locale) {

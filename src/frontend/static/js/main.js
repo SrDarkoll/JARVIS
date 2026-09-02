@@ -87,6 +87,10 @@ document.addEventListener('DOMContentLoaded', () => {
         onboardingProviders: document.querySelectorAll('input[name="onboarding-provider"]'),
         diagnosticsToggle: document.getElementById('diagnostics-toggle'),
         diagnosticsPanels: document.querySelectorAll('.side-panel'),
+        memoryGraphCanvas: document.getElementById('memory-graph-canvas'),
+        memoryNodeCount: document.getElementById('memory-node-count'),
+        memoryGraphInfo: document.getElementById('memory-graph-info'),
+        refreshMemoryGraph: document.getElementById('refresh-memory-graph'),
         activateBtn: document.getElementById('activate-btn'),
         liveVoiceBtn: document.getElementById('live-voice-btn'),
         btnLiveVoiceText: document.getElementById('btn-live-voice-text'),
@@ -965,6 +969,9 @@ document.addEventListener('DOMContentLoaded', () => {
         dom.diagnosticsToggle.addEventListener('click', () => {
             const expanded = dom.diagnosticsToggle.getAttribute('aria-expanded') !== 'true';
             setDiagnosticsExpanded(expanded);
+            if (expanded) {
+                hud.refreshMemoryGraph();
+            }
         });
     }
 
