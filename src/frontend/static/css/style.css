@@ -271,7 +271,7 @@ body::before {
     display: flex;
     flex-direction: column;
     height: 100svh;
-    padding: clamp(5px, 1vh, 15px) clamp(15px, 2vw, 30px);
+    padding: clamp(4px, 0.8vh, 10px) clamp(12px, 1.6vw, 24px);
 }
 
 .top-nav {
@@ -374,9 +374,9 @@ body::before {
 .main-interface {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(280px, 340px) 1fr minmax(300px, 380px);
-    gap: clamp(10px, 2vw, 20px);
-    padding: 15px 0;
+    grid-template-columns: minmax(260px, 310px) minmax(0, 1fr) minmax(280px, 330px);
+    gap: clamp(8px, 1.4vw, 16px);
+    padding: clamp(6px, 1vh, 12px) 0;
     min-height: 0;
     overflow: hidden;
     position: relative;
@@ -387,8 +387,25 @@ body::before {
     flex-direction: column;
     gap: 8px;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     max-height: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) rgba(0, 229, 255, 0.05);
+}
+
+.side-panel::-webkit-scrollbar {
+    width: 4px;
+}
+
+.side-panel::-webkit-scrollbar-track {
+    background: rgba(0, 229, 255, 0.05);
+}
+
+.side-panel::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--primary);
 }
 
 .side-panel[inert] {
@@ -407,15 +424,14 @@ body::before {
 }
 
 #app.diagnostics-open .main-interface {
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(300px, 380px);
+    grid-template-columns: minmax(260px, 310px) minmax(0, 1fr) minmax(280px, 330px);
 }
 
-
-
-/* System log — expanded to show more history */
+/* System log — compact and focused on latest entries */
 .terminal-panel {
-    flex: 1;
-    min-height: 0;
+    flex: 0 0 auto;
+    height: clamp(95px, 16vh, 135px);
+    min-height: 85px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -427,21 +443,29 @@ body::before {
     overflow-y: auto;
 }
 
-/* Command panel — balanced with log */
+/* Command panel — flexible, fully scrollable without clipping */
 .control-center {
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 auto;
+    min-height: 160px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) rgba(0, 229, 255, 0.05);
 }
 
 .control-center::-webkit-scrollbar {
-    display: none;
+    width: 4px;
 }
-.control-center {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+
+.control-center::-webkit-scrollbar-track {
+    background: rgba(0, 229, 255, 0.05);
+}
+
+.control-center::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 2px;
 }
 
 /* --- PANELES TECH (Glassmorphism + Clip Path) --- */
@@ -451,7 +475,7 @@ body::before {
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--panel-border);
     clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px));
-    padding: 14px 16px;
+    padding: clamp(8px, 1.1vh, 12px) clamp(10px, 1.2vw, 14px);
     position: relative;
     box-shadow: inset 0 0 20px rgba(0, 229, 255, 0.05);
     transition: border-color 0.3s ease, box-shadow 0.3s ease;
@@ -492,7 +516,11 @@ body::before {
 
 /* Barras de Progreso Tech */
 .metric-item {
-    margin-bottom: 10px;
+    margin-bottom: 6px;
+}
+
+.metric-item:last-child {
+    margin-bottom: 0;
 }
 
 .metric-label-row {
@@ -501,20 +529,27 @@ body::before {
     align-items: flex-end;
     font-family: var(--font-body);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     color: var(--text-dim);
-    margin-bottom: 6px;
+    margin-bottom: 3px;
     letter-spacing: 1px;
 }
 
 .metric-num {
     font-family: var(--font-header);
     color: var(--primary);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+}
+
+.metric-breakdown {
+    font-size: 0.66rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+    letter-spacing: 0.5px;
 }
 
 .bar-tech {
-    height: 6px;
+    height: 5px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(0, 229, 255, 0.2);
     position: relative;
@@ -539,16 +574,32 @@ body::before {
 }
 
 /* Clima */
+.weather-data {
+    padding: 2px 0;
+}
+
 .weather-display {
-    text-align: center;
-    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 4px;
 }
 
 .weather-display .temp {
     font-family: var(--font-header);
-    font-size: 2.5rem;
+    font-size: 1.6rem;
     font-weight: 700;
-    margin-bottom: 5px;
+    line-height: 1;
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.weather-display .desc {
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    text-align: right;
+    line-height: 1.25;
 }
 
 /* Panel Derecho: Listas y Logs */
@@ -636,7 +687,7 @@ body::before {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 4px;
-    margin: 8px 0;
+    margin: 6px 0;
 }
 
 .tech-btn {
@@ -645,8 +696,8 @@ body::before {
     color: var(--text-dim);
     font-family: var(--font-body);
     font-weight: 600;
-    font-size: 0.65rem;
-    padding: 6px 4px;
+    font-size: 0.62rem;
+    padding: 5px 4px;
     letter-spacing: 1px;
     text-transform: uppercase;
     transition: all 0.2s;
@@ -686,9 +737,9 @@ body::before {
 }
 
 .control-alerts {
-    max-height: 80px;
+    max-height: 60px;
     overflow-y: auto;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
 }
 
 .control-alert {
@@ -717,10 +768,10 @@ body::before {
 }
 
 .voice-observability {
-    max-height: 120px;
+    max-height: 90px;
     border: 1px solid rgba(0, 229, 255, 0.2);
     background: rgba(0, 0, 0, 0.28);
-    padding: 6px 8px;
+    padding: 4px 6px;
 }
 
 .voice-observability .control-alert {
@@ -761,12 +812,14 @@ body::before {
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
-    gap: clamp(8px, 1.2vh, 16px);
+    gap: clamp(6px, 1vh, 12px);
     position: relative;
     overflow-x: hidden;
     overflow-y: auto;
     min-height: 0;
-    padding: clamp(6px, 1vh, 12px) 0;
+    padding: clamp(4px, 0.8vh, 10px) 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) rgba(0, 229, 255, 0.05);
 }
 
 /* Miras de apuntado estilo Iron Man */
@@ -813,8 +866,8 @@ body::before {
    ==================================================== */
 .core-container {
     position: relative;
-    width: clamp(160px, min(22vw, 28vh), 300px);
-    height: clamp(160px, min(22vw, 28vh), 300px);
+    width: clamp(120px, min(17vw, 21vh), 190px);
+    height: clamp(120px, min(17vw, 21vh), 190px);
     /* Grid centra canvas y cualquier capa superpuesta */
     display: grid;
     place-items: center;
@@ -871,7 +924,7 @@ body::before {
 }
 
 .voice-meter {
-    height: clamp(32px, 6vh, 60px);
+    height: clamp(18px, 3vh, 32px);
     margin: 0;
     display: flex;
     align-items: flex-end;
@@ -898,19 +951,19 @@ body::before {
 /* Contenedor del texto (Subtítulos tipo cristal) */
 .tech-glass {
     background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.08), transparent);
-    padding: 16px 40px;
+    padding: 8px 24px;
     text-align: center;
-    max-width: 85%;
-    width: 85%;
+    max-width: 90%;
+    width: 90%;
     position: relative;
     border-top: 1px solid rgba(0, 229, 255, 0.2);
     border-bottom: 1px solid rgba(0, 229, 255, 0.2);
     backdrop-filter: blur(8px);
-    /* Bloquear desbordamiento del transcript */
-    max-height: clamp(100px, 18vh, 160px);
+    max-height: clamp(60px, 11vh, 95px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 .decor-line {
@@ -918,8 +971,8 @@ body::before {
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--primary), transparent);
     opacity: 0.6;
-    margin: 10px 0;
-    box-shadow: 0 0 10px var(--primary-glow);
+    margin: 4px 0;
+    box-shadow: 0 0 6px var(--primary-glow);
 }
 
 #transcript {
@@ -1259,15 +1312,17 @@ body::before {
 
 /* --- CONVERSACION SEGMENTADA --- */
 .conversation-panel {
-    margin-top: 10px;
-    width: min(88%, 760px);
-    max-width: min(88%, 760px);
-    height: clamp(210px, 34vh, 340px);
-    max-height: none;
-    min-height: 210px;
-    flex: 0 0 clamp(210px, 34vh, 340px);
-    padding: 10px 14px;
+    margin-top: 4px;
+    width: min(92%, 760px);
+    max-width: min(92%, 760px);
+    flex: 1 1 auto;
+    min-height: 120px;
+    max-height: clamp(140px, 26vh, 240px);
+    padding: 8px 12px;
     text-align: left;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background:
         linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.07), transparent),
         linear-gradient(180deg, rgba(0, 229, 255, 0.035), transparent);
@@ -1360,17 +1415,17 @@ body::before {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding-top: 8px;
+    gap: 6px;
+    padding-top: 4px;
     flex-shrink: 0;
     width: 100%;
 }
 
 .command-center-wrap {
-    width: min(88%, 680px);
+    width: min(92%, 680px);
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
 }
 
 .command-composer {
@@ -1380,7 +1435,7 @@ body::before {
     background: rgba(2, 12, 24, 0.9);
     border: 1px solid var(--primary);
     border-radius: 6px;
-    padding: 3px 8px;
+    padding: 2px 6px;
     box-shadow: 0 0 15px var(--primary-dim), inset 0 0 10px rgba(0, 242, 255, 0.08);
     backdrop-filter: blur(12px);
     transition: all 0.3s ease;
@@ -1393,17 +1448,17 @@ body::before {
 
 #command-input {
     flex: 1;
-    min-height: 44px;
-    height: 44px;
+    min-height: 38px;
+    height: 38px;
     background: transparent;
     border: none;
     outline: none;
     color: var(--text-main);
     font-family: var(--font-body);
-    font-size: 0.95rem;
+    font-size: 0.92rem;
     font-weight: 500;
     letter-spacing: 0.5px;
-    padding: 4px 8px;
+    padding: 2px 8px;
 }
 
 #command-input::placeholder {
@@ -1416,10 +1471,10 @@ body::before {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    min-width: 44px;
-    height: 44px;
-    min-height: 44px;
-    padding: 6px 12px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 4px 10px;
     background: rgba(0, 242, 255, 0.15);
     border: 1px solid rgba(0, 242, 255, 0.4);
     border-radius: 4px;
@@ -1514,19 +1569,19 @@ body::before {
     border: 1px solid var(--primary);
     color: var(--primary);
     font-family: var(--font-header);
-    font-size: 0.82rem;
-    padding: 10px 28px;
-    letter-spacing: 2px;
+    font-size: 0.78rem;
+    padding: 7px 22px;
+    letter-spacing: 1.5px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     position: relative;
     overflow: hidden;
     box-shadow: 0 0 20px var(--primary-dim);
-    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
     transition: all 0.3s;
     cursor: pointer;
-    min-height: 44px;
+    min-height: 38px;
 }
 
 .voice-btn-tech:hover {
@@ -1665,9 +1720,10 @@ body::before {
 
 /* --- RESPONSIVE DESIGN (Media Queries) --- */
 @media (max-width: 1400px) {
+    #app.diagnostics-open .main-interface,
     .main-interface {
-        grid-template-columns: 280px 1fr 280px;
-        gap: 15px;
+        grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(250px, 290px);
+        gap: 10px;
     }
 }
 
@@ -2185,14 +2241,14 @@ body::before {
 .memory-graph-panel {
     display: flex;
     flex-direction: column;
-    margin-top: 14px;
+    margin-top: 0;
 }
 
 .panel-header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .panel-header-row .hud-title {
@@ -2203,10 +2259,10 @@ body::before {
     background: transparent;
     border: 1px solid rgba(0, 242, 255, 0.3);
     color: var(--color-primary, #00d2ff);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: 3px;
     cursor: pointer;
     display: flex;
@@ -2242,12 +2298,12 @@ body::before {
 .memory-canvas {
     display: block;
     width: 100%;
-    height: 140px;
+    height: clamp(80px, 13vh, 115px);
 }
 
 .memory-node-preview {
-    min-height: 24px;
-    padding: 6px 8px;
+    min-height: 20px;
+    padding: 3px 6px;
     background: rgba(0, 5, 12, 0.7);
     border-top: 1px solid rgba(0, 242, 255, 0.1);
     font-family: var(--font-tech, 'Rajdhani', sans-serif);
