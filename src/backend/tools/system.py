@@ -300,6 +300,7 @@ def abrir_aplicacion(nombre_app: str) -> str:
     if not app_raw:
         return "Nombre de aplicación no especificado."
     app = app_raw.lower()
+    app_normalized = re.sub(r"^(?:el|la|los|las|un|una|the)\s+", "", app).strip()
 
     if IS_WINDOWS:
         import webbrowser
@@ -333,7 +334,7 @@ def abrir_aplicacion(nombre_app: str) -> str:
             "gmod": "4000",
         }
         for alias, game_id in steam_games.items():
-            if alias in app or app in alias:
+            if alias in app or app in alias or alias in app_normalized:
                 try:
                     webbrowser.open(f"steam://rungameid/{game_id}")
                     return f"Iniciando {app_raw} a través de Steam..."
@@ -345,6 +346,8 @@ def abrir_aplicacion(nombre_app: str) -> str:
             "chrome": "chrome.exe",
             "firefox": "firefox.exe",
             "edge": "msedge.exe",
+            "navegador": "msedge.exe",
+            "browser": "msedge.exe",
             "vscode": "code.exe",
             "visual studio code": "code.exe",
             "cursor": "cursor.exe",
@@ -361,16 +364,26 @@ def abrir_aplicacion(nombre_app: str) -> str:
             "calc": "calc.exe",
             "bloc de notas": "notepad.exe",
             "notepad": "notepad.exe",
+            "notas": "notepad.exe",
             "explorador": "explorer.exe",
+            "archivos": "explorer.exe",
             "cmd": "cmd.exe",
             "terminal": "wt.exe",
             "powershell": "powershell.exe",
             "word": "winword.exe",
             "excel": "excel.exe",
             "powerpoint": "powerpnt.exe",
+            "paint": "mspaint.exe",
+            "administrador de tareas": "taskmgr.exe",
+            "task manager": "taskmgr.exe",
         }
-        if app in uri_map:
-            target = uri_map[app]
+        target = uri_map.get(app) or uri_map.get(app_normalized)
+        if not target:
+            for k, v in uri_map.items():
+                if k == app or k == app_normalized or k in app or k in app_normalized:
+                    target = v
+                    break
+        if target:
             if target.endswith(":") or "://" in target:
                 webbrowser.open(target)
                 return f"Iniciando {app_raw}..."
@@ -386,8 +399,14 @@ def abrir_aplicacion(nombre_app: str) -> str:
             return f"Iniciando {app_raw}..."
         except Exception:
             pass
+        if app_normalized and app_normalized != app:
+            try:
+                os.startfile(app_normalized)
+                return f"Iniciando {app_raw}..."
+            except Exception:
+                pass
 
-        # 4. Búsqueda en accesos directos de Menú Inicio y Escritorio
+        # 4. Búsqueda rápida en accesos directos de Menú Inicio y Escritorio (sin recursión profunda)
         roots = [
             os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
             r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
@@ -397,7 +416,14 @@ def abrir_aplicacion(nombre_app: str) -> str:
         all_lnks = []
         for r in roots:
             if os.path.exists(r):
-                for dirpath, _, filenames in os.walk(r):
+                for dirpath, dirnames, filenames in os.walk(r):
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if not d.startswith(".") and d.lower() not in {"venv", "node_modules", ".git", "target", "build", "scratch"}
+                    ]
+                    if "desktop" in r.lower() and dirpath != r:
+                        dirnames.clear()
+                        continue
                     for f in filenames:
                         if f.lower().endswith(".lnk") or f.lower().endswith(".url"):
                             all_lnks.append(os.path.join(dirpath, f))
