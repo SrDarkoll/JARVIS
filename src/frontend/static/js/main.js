@@ -399,6 +399,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 80);
     });
 
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('autostart')) {
+            setTimeout(() => {
+                dom.loader?.click();
+                if (urlParams.has('skip_onboarding')) {
+                    setTimeout(() => {
+                        dom.onboardingSkip?.click();
+                    }, 2100);
+                }
+                if (urlParams.has('diagnostics')) {
+                    setTimeout(() => {
+                        dom.diagnosticsToggle?.click();
+                    }, 2400);
+                }
+            }, 300);
+        }
+    } catch (_) {}
+
     // --- HUD Y RELOJ ---
     setInterval(() => hud.updateTime(), 1000);
     hud.updateTime();
