@@ -39,12 +39,27 @@ export class MemoryGraphRenderer {
     _setupCanvas() {
         const rect = this.canvas.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
-        this.width = rect.width > 50 ? rect.width : 280;
-        this.height = rect.height > 50 ? rect.height : 180;
+        const w = rect.width > 30 ? Math.floor(rect.width) : 260;
+        const h = rect.height > 30 ? Math.floor(rect.height) : 95;
 
-        this.canvas.width = this.width * dpr;
-        this.canvas.height = this.height * dpr;
-        this.ctx.scale(dpr, dpr);
+        if (this.width !== w || this.height !== h) {
+            this.width = w;
+            this.height = h;
+            this.canvas.width = Math.round(w * dpr);
+            this.canvas.height = Math.round(h * dpr);
+            if (this.ctx.setTransform) {
+                this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
+            this.ctx.scale(dpr, dpr);
+
+            if (this.nodes && this.nodes.length > 0) {
+                const pad = 10;
+                for (const n of this.nodes) {
+                    n.x = Math.max(pad, Math.min(w - pad, n.x));
+                    n.y = Math.max(pad, Math.min(h - pad, n.y));
+                }
+            }
+        }
     }
 
     _bindEvents() {
@@ -62,9 +77,16 @@ export class MemoryGraphRenderer {
         }
 
         window.addEventListener('resize', () => this._setupCanvas());
+        if (typeof ResizeObserver !== 'undefined') {
+            this._ro = new ResizeObserver(() => {
+                this._setupCanvas();
+            });
+            this._ro.observe(this.canvas);
+        }
     }
 
     async refresh() {
+        this._setupCanvas();
         try {
             const res = await fetch('/api/memory/graph?limit=40');
             if (!res.ok) return;
@@ -86,12 +108,14 @@ export class MemoryGraphRenderer {
         const cy = this.height / 2;
 
         if (rawNodes.length === 0) {
-            // Placeholder demonstration nodes when memory is fresh
+            // Placeholder demonstration nodes scaled to canvas bounds
+            const spanX = Math.min(45, cx * 0.45);
+            const spanY = Math.min(22, cy * 0.45);
             this.nodes = [
-                { id: 'p1', title: 'JARVIS', type: 'concept', x: cx, y: cy, vx: 0, vy: 0, radius: 6, color: '#00d2ff', content: 'Asistente IA central' },
-                { id: 'p2', title: 'Usuario', type: 'concept', x: cx - 50, y: cy - 30, vx: 0, vy: 0, radius: 5, color: '#00ffaa', content: 'Administrador del sistema' },
-                { id: 'p3', title: 'Spotify', type: 'skill', x: cx + 55, y: cy + 30, vx: 0, vy: 0, radius: 5, color: '#ffaa00', content: 'Control de reproducción musical' },
-                { id: 'p4', title: 'Rutinas', type: 'skill', x: cx - 40, y: cy + 45, vx: 0, vy: 0, radius: 4, color: '#b388ff', content: 'Automatizaciones aprendidas' },
+                { id: 'p1', title: 'JARVIS', type: 'concept', x: cx, y: cy, vx: 0, vy: 0, radius: 5.5, color: '#00d2ff', content: 'Asistente IA central' },
+                { id: 'p2', title: 'Usuario', type: 'concept', x: cx - spanX, y: cy - spanY, vx: 0, vy: 0, radius: 4.5, color: '#00ffaa', content: 'Administrador del sistema' },
+                { id: 'p3', title: 'Spotify', type: 'skill', x: cx + spanX, y: cy - spanY * 0.6, vx: 0, vy: 0, radius: 4.5, color: '#ffaa00', content: 'Control de reproducción musical' },
+                { id: 'p4', title: 'Rutinas', type: 'skill', x: cx - spanX * 0.5, y: cy + spanY, vx: 0, vy: 0, radius: 4, color: '#b388ff', content: 'Automatizaciones aprendidas' },
             ];
             this.links = [
                 { sourceId: 'p1', targetId: 'p2', relation: 'administrado_por' },
@@ -103,10 +127,11 @@ export class MemoryGraphRenderer {
         }
 
         const titleToId = new Map();
+        const maxDist = Math.max(12, Math.min(this.width / 2, this.height / 2) - 18);
         this.nodes = rawNodes.map((n, idx) => {
             titleToId.set(n.title.toLowerCase(), n.id);
             const angle = (idx / rawNodes.length) * Math.PI * 2;
-            const dist = 35 + Math.random() * (Math.min(this.width, this.height) / 2 - 45);
+            const dist = 10 + Math.random() * maxDist;
             return {
                 id: n.id,
                 title: n.title,

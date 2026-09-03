@@ -686,8 +686,8 @@ body::before {
 .control-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    margin: 6px 0;
+    gap: 3px;
+    margin: 4px 0;
 }
 
 .tech-btn {
@@ -696,9 +696,10 @@ body::before {
     color: var(--text-dim);
     font-family: var(--font-body);
     font-weight: 600;
-    font-size: 0.62rem;
-    padding: 5px 4px;
-    letter-spacing: 1px;
+    font-size: 0.60rem;
+    padding: 4px 3px;
+    letter-spacing: 0.6px;
+    line-height: 1.15;
     text-transform: uppercase;
     transition: all 0.2s;
     position: relative;
@@ -2241,6 +2242,9 @@ body::before {
 .memory-graph-panel {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 110px;
+    max-height: 160px;
     margin-top: 0;
 }
 
@@ -2248,7 +2252,7 @@ body::before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .panel-header-row .hud-title {
@@ -2293,15 +2297,23 @@ body::before {
     border: 1px solid rgba(0, 242, 255, 0.12);
     border-radius: 4px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .memory-canvas {
     display: block;
     width: 100%;
-    height: clamp(80px, 13vh, 115px);
+    flex: 1 1 auto;
+    height: 90px;
+    min-height: 60px;
+    max-height: 115px;
 }
 
 .memory-node-preview {
+    flex-shrink: 0;
     min-height: 20px;
     padding: 3px 6px;
     background: rgba(0, 5, 12, 0.7);
