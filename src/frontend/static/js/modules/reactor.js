@@ -7,12 +7,13 @@ import * as THREE from '../../vendor/three.module.min.js';
 
 const STATE_COLORS = Object.freeze({
     idle: 0x00f2ff,
-    listening: 0x00ff88,
-    transcribing: 0x00c8ff,
-    processing: 0xffcc00,
+    listening: 0xffcc00,       // Golden amber during active listening
+    transcribing: 0x00d2ff,    // High-tech cyan
+    processing: 0x0077ff,      // Deep sapphire while reasoning
     confirmation: 0xffaa00,
-    success: 0x00ffaa,
-    error: 0xff3366,
+    speaking: 0x00ffaa,        // Emerald green while responding
+    success: 0x00ffaa,         // Emerald green on success
+    error: 0xff3366,           // Crimson alert
     offline: 0x778899,
 });
 
@@ -97,6 +98,7 @@ export class ArcReactor {
     }
 
     setState(state) {
+        this.currentState = state;
         const hex = STATE_COLORS[state] || STATE_COLORS.idle;
         if (this.core && this.core.material) {
             this.core.material.color.setHex(hex);
@@ -104,28 +106,41 @@ export class ArcReactor {
         if (this.particles && this.particles.material) {
             this.particles.material.color.setHex(hex);
         }
+        if (this.rings) {
+            this.rings.forEach((r, idx) => {
+                if (r.mesh && r.mesh.material) {
+                    r.mesh.material.color.setHex(idx === 1 && state === 'idle' ? 0x0077ff : hex);
+                }
+            });
+        }
+        const container = this.canvas?.parentElement;
+        if (container) {
+            container.dataset.state = state;
+        }
     }
 
     animate() {
         requestAnimationFrame(() => this.animate());
 
         if (!this.reducedMotion) {
+            const mult = this.currentState === 'processing' ? 2.5 : (this.currentState === 'listening' ? 1.4 : 1.0);
             if (this.core) {
-                this.core.rotation.y += 0.005;
-                this.core.rotation.z += 0.002;
-                const s = 1 + Math.sin(Date.now() * 0.002) * 0.05;
+                this.core.rotation.y += 0.005 * mult;
+                this.core.rotation.z += 0.002 * mult;
+                const pulseRate = this.currentState === 'listening' ? 0.006 : 0.002;
+                const s = 1 + Math.sin(Date.now() * pulseRate) * (this.currentState === 'listening' ? 0.08 : 0.05);
                 this.core.scale.set(s, s, s);
             }
 
             this.rings.forEach((r) => {
                 if (r.mesh) {
-                    r.mesh.rotation.x += r.speed;
-                    r.mesh.rotation.y += r.speed * 0.5;
+                    r.mesh.rotation.x += r.speed * mult;
+                    r.mesh.rotation.y += r.speed * 0.5 * mult;
                 }
             });
 
             if (this.particles) {
-                this.particles.rotation.y -= 0.001;
+                this.particles.rotation.y -= 0.001 * mult;
             }
         }
 

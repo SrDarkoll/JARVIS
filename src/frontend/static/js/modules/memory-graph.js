@@ -22,6 +22,7 @@ export class MemoryGraphRenderer {
 
         this.nodes = [];
         this.links = [];
+        this.synapseSignals = [];
         this.hoveredNode = null;
         this.selectedNode = null;
         this.animFrameId = null;
@@ -97,6 +98,7 @@ export class MemoryGraphRenderer {
                     const count = data.count || 0;
                     this.countEl.textContent = `${count} ${count === 1 ? 'nodo cognitivo' : 'nodos cognitivos'}`;
                 }
+                this.pulseSynapses();
             }
         } catch (_err) {
             // Fails gracefully in offline or restricted environments
@@ -122,6 +124,7 @@ export class MemoryGraphRenderer {
                 { sourceId: 'p1', targetId: 'p3', relation: 'controla' },
                 { sourceId: 'p1', targetId: 'p4', relation: 'ejecuta' },
             ];
+            this.pulseSynapses();
             this._startLoop();
             return;
         }
@@ -251,6 +254,32 @@ export class MemoryGraphRenderer {
             ctx.stroke();
         }
 
+        // Render traveling synaptic photons
+        for (let i = this.synapseSignals.length - 1; i >= 0; i--) {
+            const sig = this.synapseSignals[i];
+            const s = nodeMap.get(sig.sourceId);
+            const t = nodeMap.get(sig.targetId);
+            if (!s || !t) {
+                this.synapseSignals.splice(i, 1);
+                continue;
+            }
+            sig.progress += sig.speed;
+            if (sig.progress >= 1) {
+                this.synapseSignals.splice(i, 1);
+                continue;
+            }
+            const px = s.x + (t.x - s.x) * sig.progress;
+            const py = s.y + (t.y - s.y) * sig.progress;
+
+            ctx.beginPath();
+            ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#00f2ff';
+            ctx.shadowColor = '#00f2ff';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
         // Render nodes
         const now = Date.now() * 0.003;
         for (const node of this.nodes) {
@@ -280,6 +309,18 @@ export class MemoryGraphRenderer {
                 ctx.textAlign = 'center';
                 ctx.fillText(node.title, node.x, node.y - r - 3);
             }
+        }
+    }
+
+    pulseSynapses() {
+        if (!this.links || this.links.length === 0) return;
+        for (const link of this.links) {
+            this.synapseSignals.push({
+                sourceId: link.sourceId,
+                targetId: link.targetId,
+                progress: 0,
+                speed: 0.02 + Math.random() * 0.025,
+            });
         }
     }
 

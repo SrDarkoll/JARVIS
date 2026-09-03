@@ -191,7 +191,21 @@ export const translations = {
         "live_error_gemini_live_protocol_error": "Gemini Live returned an invalid protocol message. The session was closed safely.",
         "live_error_live_audio_capture_unsupported": "This browser cannot provide stable Live audio capture. Text remains available.",
         "live_error_live_audio_transport_degraded": "The audio connection is congested. JARVIS is recovering without sending stale audio.",
-        "live_error_live_voice_unavailable": "Live voice is unavailable. Continue with the text command center."
+        "live_error_live_voice_unavailable": "Live voice is unavailable. Continue with the text command center.",
+        "cinema_label": "CINEMA",
+        "cinema_exit": "EXIT",
+        "cinema_toggle": "Cinema mode / Fullscreen",
+        "tab_routines": "ROUTINES",
+        "tab_system": "SYSTEM",
+        "filter_all": "ALL",
+        "filter_ai": "AI",
+        "filter_voice": "VOICE",
+        "filter_err": "ERRORS",
+        "copy_action": "Copy response",
+        "copy_copied": "Copied!",
+        "resend_action": "Resend command",
+        "media_player_title": "JARVIS Media Feed",
+        "media_no_playback": "No active playback"
     },
     es: {
         "init_text": "INICIALIZANDO J.A.R.V.I.S.",
@@ -384,7 +398,21 @@ export const translations = {
         "tts_empty": "> TTS: speak() llamado con texto vacío.",
         "briefing_intro": "Briefing informativo del día, Administrador.",
         "bio_start": "> BIO: Registro del Administrador iniciado...",
-        "log_user": "> Administrador: \"{text}\""
+        "log_user": "> Administrador: \"{text}\"",
+        "cinema_label": "CINEMA",
+        "cinema_exit": "SALIR",
+        "cinema_toggle": "Modo Cinema / Pantalla completa",
+        "tab_routines": "RUTINAS",
+        "tab_system": "SISTEMA",
+        "filter_all": "TODOS",
+        "filter_ai": "IA",
+        "filter_voice": "VOZ",
+        "filter_err": "ERRORES",
+        "copy_action": "Copiar respuesta",
+        "copy_copied": "¡Copiado!",
+        "resend_action": "Reenviar comando",
+        "media_player_title": "JARVIS Media Feed",
+        "media_no_playback": "Sin reproducción activa"
     }
 };
 

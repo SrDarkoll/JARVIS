@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.3.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.4.0">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -59,6 +59,10 @@
                     aria-controls="diagnostics-left diagnostics-right" data-i18n-aria-label="diagnostics_open"
                     aria-label="Abrir diagnóstico">
                     <span data-i18n="diagnostics_label">DIAGNÓSTICO</span>
+                </button>
+                <button id="cinema-toggle" class="header-action cinema-action" type="button"
+                    data-i18n-aria-label="cinema_toggle" aria-label="Pantalla completa" title="Modo Cinema / Pantalla completa">
+                    <span id="cinema-toggle-text" data-i18n="cinema_label">CINEMA</span>
                 </button>
             </div>
         </header>
@@ -270,6 +274,12 @@
                 <div class="module-box tech-panel terminal-panel">
                     <div class="panel-corners"></div>
                     <h3 class="hud-title"><span class="icon-bracket">[</span> <span data-i18n="log_title">REGISTRO SISTEMA</span> <span class="icon-bracket">]</span></h3>
+                    <div class="terminal-filter-bar">
+                        <button class="log-filter-btn active" type="button" data-filter="all" data-i18n="filter_all">TODOS</button>
+                        <button class="log-filter-btn" type="button" data-filter="ia" data-i18n="filter_ai">IA</button>
+                        <button class="log-filter-btn" type="button" data-filter="voice" data-i18n="filter_voice">VOZ</button>
+                        <button class="log-filter-btn" type="button" data-filter="err" data-i18n="filter_err">ERR</button>
+                    </div>
                     <div id="log-content" class="log-entries custom-scrollbar">
                         <div class="log-entry" data-i18n="log_conn">> Conexión neuronal establecida.</div>
                         <div class="log-entry" data-i18n="log_periph">> Módulos periféricos verificados.</div>
@@ -294,19 +304,27 @@
                             <strong id="security-blocked-count" class="glow-text-warning">0</strong>
                         </div>
                     </div>
+                    <div class="command-tabs">
+                        <button class="cmd-tab-btn active" type="button" data-tab="routines"><span class="tab-icon">⚡</span> <span data-i18n="tab_routines">RUTINAS</span></button>
+                        <button class="cmd-tab-btn" type="button" data-tab="system"><span class="tab-icon">⚙</span> <span data-i18n="tab_system">SISTEMA</span></button>
+                    </div>
                     <div class="control-actions">
-                        <button id="complete-setup-action" class="tech-btn full-width hidden" type="button"
-                            data-i18n="onboarding_complete_setup">Completar configuración</button>
-                        <button id="replay-onboarding-action" class="tech-btn full-width" type="button"
-                            data-i18n="onboarding_replay">Repetir configuración inicial</button>
-                        <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RECARGAR PLUGINS</button>
-                        <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">CAMBIAR MODO ESTRICTO</button>
-                        <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">CAMBIAR MODO PROACTIVO</button>
-                        <button class="quick-action tech-btn" data-action="voice_enroll_admin" data-i18n="btn_enroll_admin">REGISTRAR VOZ DE ADMINISTRADOR</button>
-                        <button class="quick-action tech-btn" data-action="rutina_trabajo" data-i18n="btn_work_routine">RUTINA DE TRABAJO</button>
-                        <button class="quick-action tech-btn" data-action="rutina_gaming" data-i18n="btn_gaming_routine">RUTINA DE JUEGO</button>
-                        <button class="quick-action tech-btn" data-action="rutina_buenos_dias" data-i18n="btn_morning_routine">RUTINA DE MAÑANA</button>
-                        <button class="quick-action tech-btn full-width" data-action="analizar_pantalla" data-i18n="btn_analyze_hud">ANALIZAR HUD ÓPTICO</button>
+                        <div id="tab-routines" class="cmd-tab-group">
+                            <button class="quick-action tech-btn" data-action="rutina_trabajo" data-i18n="btn_work_routine">RUTINA DE TRABAJO</button>
+                            <button class="quick-action tech-btn" data-action="rutina_gaming" data-i18n="btn_gaming_routine">RUTINA DE JUEGO</button>
+                            <button class="quick-action tech-btn" data-action="rutina_buenos_dias" data-i18n="btn_morning_routine">RUTINA DE MAÑANA</button>
+                            <button class="quick-action tech-btn" data-action="analizar_pantalla" data-i18n="btn_analyze_hud">ANALIZAR HUD ÓPTICO</button>
+                        </div>
+                        <div id="tab-system" class="cmd-tab-group hidden">
+                            <button id="complete-setup-action" class="tech-btn full-width hidden" type="button"
+                                data-i18n="onboarding_complete_setup">Completar configuración</button>
+                            <button id="replay-onboarding-action" class="tech-btn full-width" type="button"
+                                data-i18n="onboarding_replay">Repetir configuración inicial</button>
+                            <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RECARGAR PLUGINS</button>
+                            <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">CAMBIAR MODO ESTRICTO</button>
+                            <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">CAMBIAR MODO PROACTIVO</button>
+                            <button class="quick-action tech-btn" data-action="voice_enroll_admin" data-i18n="btn_enroll_admin">REGISTRAR VOZ DE ADMINISTRADOR</button>
+                        </div>
                     </div>
                     <div id="proactive-alerts" class="control-alerts custom-scrollbar">
                         <div class="control-empty" data-i18n="proactive_clean">Escaneo proactivo limpio.</div>
@@ -325,6 +343,21 @@
 
         <footer class="bottom-controls">
             <div class="command-center-wrap">
+                <div id="hud-media-player" class="hud-media-player hidden" aria-label="Reproductor multimedia">
+                    <div class="media-art-wrap">
+                        <img id="media-player-art" class="media-art" src="" alt="Portada" style="display:none;">
+                        <span id="media-default-icon" class="media-default-icon">♪</span>
+                    </div>
+                    <div class="media-details">
+                        <span id="media-player-title" class="media-title" data-i18n="media_player_title">JARVIS Media Feed</span>
+                        <span id="media-player-artist" class="media-artist" data-i18n="media_no_playback">Sin reproducción activa</span>
+                    </div>
+                    <div class="media-controls">
+                        <button id="media-btn-prev" class="media-ctrl-btn" type="button" aria-label="Canción anterior" title="Anterior">⏮</button>
+                        <button id="media-btn-playpause" class="media-ctrl-btn play-btn" type="button" aria-label="Pausa / Reanudar" title="Pausar / Reanudar">❚❚</button>
+                        <button id="media-btn-next" class="media-ctrl-btn" type="button" aria-label="Siguiente canción" title="Siguiente">⏭</button>
+                    </div>
+                </div>
                 <form id="command-form" class="command-composer">
                     <label class="sr-only" for="command-input" data-i18n="command_label">Comando para JARVIS</label>
                     <input id="command-input" type="text" maxlength="4000"
@@ -386,7 +419,7 @@
         </footer>
     </main>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.3.0"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.4.0"></script>
 </body>
 
 </html>

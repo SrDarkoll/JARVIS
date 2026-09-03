@@ -128,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const voice = new VoiceManager();
     const reactor = new ArcReactor('arc-canvas');
     const widgets = new WidgetManager(dom.widgetContainer);
+    ui.reactor = reactor;
 
     // --- CONSTANTES ---
     const WAKE_WORD = 'jarvis';
@@ -886,6 +887,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setTranscript(reply);
             ui.updateAssistantSegment(reply);
             setCommandState('success');
+            hud?.memoryGraph?.pulseSynapses?.();
             if (dom.commandInput) dom.commandInput.value = '';
             return true;
         } catch {
@@ -938,6 +940,94 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     dom.quickActionButtons.forEach(btn => btn.addEventListener('click', () => runQuickAction(btn.dataset.action)));
+
+    // --- MODO CINEMA / FULLSCREEN ---
+    const cinemaToggle = document.getElementById('cinema-toggle');
+    const cinemaText = document.getElementById('cinema-toggle-text');
+    if (cinemaToggle) {
+        cinemaToggle.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        });
+        document.addEventListener('fullscreenchange', () => {
+            const isFull = Boolean(document.fullscreenElement);
+            document.body.classList.toggle('fullscreen-cinema', isFull);
+            if (cinemaText) {
+                cinemaText.textContent = t(isFull ? 'cinema_exit' : 'cinema_label');
+            }
+        });
+    }
+
+    // --- FILTROS DE REGISTRO / TERMINAL ---
+    document.querySelectorAll('.log-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const filter = btn.dataset.filter || 'all';
+            ui.setLogFilter(filter);
+        });
+    });
+
+    // --- PESTAÑAS DEL PANEL DE COMANDOS ---
+    document.querySelectorAll('.cmd-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.cmd-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const tab = btn.dataset.tab;
+            const tabRoutines = document.getElementById('tab-routines');
+            const tabSystem = document.getElementById('tab-system');
+            if (tab === 'routines') {
+                tabRoutines?.classList.remove('hidden');
+                tabSystem?.classList.add('hidden');
+            } else {
+                tabRoutines?.classList.add('hidden');
+                tabSystem?.classList.remove('hidden');
+            }
+        });
+    });
+
+    // --- MINI-PLAYER MULTIMEDIA HUD ---
+    const hudMediaPlayer = document.getElementById('hud-media-player');
+    const mediaTitle = document.getElementById('media-player-title');
+    const mediaArtist = document.getElementById('media-player-artist');
+    const mediaArt = document.getElementById('media-player-art');
+    const defaultMediaIcon = document.getElementById('media-default-icon');
+    const btnPrev = document.getElementById('media-btn-prev');
+    const btnPlayPause = document.getElementById('media-btn-playpause');
+    const btnNext = document.getElementById('media-btn-next');
+
+    let mediaIsPlaying = true;
+
+    window.addEventListener('jarvis:media-state', (e) => {
+        const data = e.detail || {};
+        if (hudMediaPlayer) hudMediaPlayer.classList.remove('hidden');
+        if (mediaTitle) mediaTitle.textContent = data.track || t('media_player_title');
+        if (mediaArtist) mediaArtist.textContent = data.artist || t('media_no_playback');
+        if (data.image && mediaArt) {
+            mediaArt.src = data.image;
+            mediaArt.style.display = 'block';
+            if (defaultMediaIcon) defaultMediaIcon.style.display = 'none';
+        }
+        mediaIsPlaying = true;
+        if (btnPlayPause) btnPlayPause.textContent = '❚❚';
+    });
+
+    btnPrev?.addEventListener('click', () => submitTextCommand('cancion anterior'));
+    btnNext?.addEventListener('click', () => submitTextCommand('siguiente cancion'));
+    btnPlayPause?.addEventListener('click', () => {
+        if (mediaIsPlaying) {
+            submitTextCommand('pausar musica');
+            mediaIsPlaying = false;
+            if (btnPlayPause) btnPlayPause.textContent = '▶';
+        } else {
+            submitTextCommand('reanudar musica');
+            mediaIsPlaying = true;
+            if (btnPlayPause) btnPlayPause.textContent = '❚❚';
+        }
+    });
 
     if (dom.commandForm) {
         dom.commandForm.addEventListener('submit', (e) => {
@@ -2257,6 +2347,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const speakToken = ++activeSpeakToken;
         addLogEntry(`> TTS: speak() token=${speakToken}, isSpeaking=${isSpeaking}, texto="${text.substring(0, 40)}..."`);
         isSpeaking = true;
+        reactor.setState('speaking');
         wakeWordCooldownUntil = Date.now() + 3000;
         animateWaves(true);
         addLogEntry(`> J.A.R.V.I.S.: "${text}"`);
@@ -2295,6 +2386,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (currentAudio && currentAudio.src && currentAudio.src.startsWith('blob:')) URL.revokeObjectURL(currentAudio.src);
                 currentAudio = null;
                 isSpeaking = false;
+                reactor.setState('idle');
                 animateWaves(false);
                 if (errKind === 'timeout') ttsBackoffUntil = Date.now() + 12000;
                 wakeWordCooldownUntil = Date.now() + (ok ? 1400 : 4000);
