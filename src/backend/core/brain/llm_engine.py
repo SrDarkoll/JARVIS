@@ -93,9 +93,9 @@ def _tool_schema_from_langchain_tool(tool) -> dict:
 
     if args_schema is not None:
         if hasattr(args_schema, "model_json_schema"):
-            parameters = args_schema.model_json_schema()
+            parameters = dict(args_schema.model_json_schema())
         elif hasattr(args_schema, "schema"):
-            parameters = args_schema.schema()
+            parameters = dict(args_schema.schema())
 
     if not parameters:
         properties = {}
@@ -114,12 +114,28 @@ def _tool_schema_from_langchain_tool(tool) -> dict:
         parameters = {"type": "object", "properties": properties}
         if required:
             parameters["required"] = required
+    else:
+        parameters.pop("title", None)
+        parameters.pop("description", None)
+        raw_props = parameters.get("properties")
+        if isinstance(raw_props, dict):
+            clean_props = {}
+            for pk, pv in raw_props.items():
+                if isinstance(pv, dict):
+                    clean_props[pk] = {k: v for k, v in pv.items() if k != "title"}
+                else:
+                    clean_props[pk] = pv
+            parameters["properties"] = clean_props
+
+    first_line_desc = description.split("\n")[0].strip() if "\n" in description else description
+    if len(first_line_desc) > 200:
+        first_line_desc = first_line_desc[:200]
 
     return {
         "type": "function",
         "function": {
             "name": name,
-            "description": description,
+            "description": first_line_desc or description,
             "parameters": parameters,
         },
     }

@@ -741,11 +741,17 @@ class _RuntimeGroqPlanner:
             )
 
         bound_model, plain_model, registry = brain_state.get_tooling_snapshot()
-        model = bound_model or plain_model
+        needs_tools = necesita_tools(request.text)
+        if not needs_tools and plain_model is not None:
+            model = plain_model
+            allowed_tools: tuple[str, ...] = ()
+        else:
+            model = bound_model or plain_model
+            allowed_tools = tuple(registry.by_name) if bound_model is not None else ()
+
         if model is None:
             raise LLMUnavailableError
 
-        allowed_tools = tuple(registry.by_name) if bound_model is not None else ()
         try:
             return GroqPlanner(model, allowed_tools=allowed_tools).plan(
                 request,
@@ -764,7 +770,7 @@ class _RuntimeGroqPlanner:
             raise LLMServiceError from None
         fallback_allowed_tools: tuple[str, ...] = ()
         try:
-            if registry.tools and hasattr(fallback_model, "bind_tools"):
+            if needs_tools and registry.tools and hasattr(fallback_model, "bind_tools"):
                 fallback_model = fallback_model.bind_tools(
                     list(registry.tools),
                     tool_choice="auto",
@@ -875,7 +881,7 @@ def _build_planner_messages(
             request.text,
             profile_id=request.profile_id,
         ),
-        *history[-10:],
+        *history[-4:],
         HumanMessage(content=request.text),
     ]
 

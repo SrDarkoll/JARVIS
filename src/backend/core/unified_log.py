@@ -232,7 +232,10 @@ class UnifiedLogTee:
 
     def write(self, value: str) -> int:
         text = str(value or "")
-        written = self._original.write(text)
+        try:
+            written = self._original.write(text)
+        except OSError:
+            written = len(text)
         thread_id = threading.get_ident()
         with self._lock:
             buffered = self._buffers.get(thread_id, "") + text
@@ -251,7 +254,10 @@ class UnifiedLogTee:
         write_log(self._category, clean_line)
 
     def flush(self) -> None:
-        self._original.flush()
+        try:
+            self._original.flush()
+        except OSError:
+            pass
 
     def isatty(self) -> bool:
         return bool(getattr(self._original, "isatty", lambda: False)())

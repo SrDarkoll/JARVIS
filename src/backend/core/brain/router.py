@@ -1257,6 +1257,25 @@ def plan_hybrid(
                 {"destino": destination_raw},
             )
 
+    process_markers = [
+        "procesos mas pesados",
+        "procesos pesados",
+        "procesos que mas consumen",
+        "que procesos consumen mas",
+        "cuales son los procesos mas pesados",
+        "ver procesos",
+        "top procesos",
+        "heavy processes",
+        "top processes",
+        "heavy process",
+    ]
+    if any(marker in text_ascii for marker in process_markers):
+        return _tool_plan(
+            request,
+            "ver_procesos_pesados",
+            {},
+        )
+
     return None
 
 

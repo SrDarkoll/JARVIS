@@ -30,12 +30,7 @@ else:
 from piper.config import SynthesisConfig
 from piper.voice import PiperVoice
 
-try:
-    from rvc_python.infer import RVCInference  # pyright: ignore[reportMissingImports]
-
-    HAVE_RVC = True
-except ImportError:
-    HAVE_RVC = False
+HAVE_RVC = False
 
 
 class TTSEngine:
@@ -154,8 +149,9 @@ class TTSEngine:
 
         print("[TTS] Initializing voice clone (RVC)...")
         use_rvc = os.getenv("JARVIS_USE_RVC", "false").lower() == "true"
-        if HAVE_RVC and os.path.exists(self.rvc_path) and use_rvc:
+        if use_rvc and os.path.exists(self.rvc_path):
             try:
+                from rvc_python.infer import RVCInference  # pyright: ignore[reportMissingImports]
                 self.rvc = RVCInference(device="cpu")
                 idx = self.rvc_index if os.path.exists(self.rvc_index) else ""
                 self.rvc.load_model(self.rvc_path, version="v2", index_path=idx)
