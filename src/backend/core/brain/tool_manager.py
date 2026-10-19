@@ -14,7 +14,9 @@ from core.command_pipeline.execution import (
     ControlledToolBlockedError,
     ToolAuthorizationRequiredError,
     ToolConfirmationRequiredError,
+    ToolContextInvalidError,
     ToolExecutionService,
+    ToolOperationIntentError,
     ToolPolicyBlockedError,
 )
 from core.command_pipeline.models import (
@@ -22,7 +24,9 @@ from core.command_pipeline.models import (
     CommandRequest,
     ExecutionReceipt,
     ReceiptStatus,
+    ToolExecutionResult,
 )
+from core.command_pipeline.task_context import contextual_execution_decision
 from core.jarvis_config import AUTOCURACION_ACTIVA, BASE_DIR, PLUGINS_DIR, ROOT_DIR, SRC_DIR
 from core.jarvis_observability import obs_event, obs_inc, obs_tool
 from core.service_container import services
@@ -40,8 +44,8 @@ def _resultado_parece_error(texto: str) -> bool:
     t = (texto or "").strip().lower()
     if not t:
         return False
-    if "access_denied" in t:
-        return False
+    if t.startswith(("access_denied", "acceso_denegado", "accion_denegada")):
+        return True
     t = "".join(character for character in unicodedata.normalize("NFKD", t) if not unicodedata.combining(character))
     patrones = [
         "error",
@@ -151,6 +155,23 @@ def _recargar_plugins_runtime() -> str:
 def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = "router") -> bool:
     """Anti-hallucination guard: blocks critical tools if user context does not request them."""
     import re
+
+    from modules.spotify.intent import SPOTIFY_MUTATION_TOOLS, requested_mutation
+
+    if tool_name in SPOTIFY_MUTATION_TOOLS and source not in {"auth_resume", "routine", "control_panel"}:
+        return requested_mutation(tool_name, user_input)
+    if tool_name == "abrir_documento" and source not in {"auth_resume", "routine", "control_panel"}:
+        from core.brain.router import _extract_document_request
+        return bool(_extract_document_request(user_input))
+
+    if tool_name in {"reproducir_en_spotify", "reproducir_mix_spotify"} and source not in {
+        "auth_resume", "routine", "control_panel", "fast_repeat", "spotify_clarification",
+    }:
+        from core.brain.router import _extract_music_request, _extract_spotify_mix_request
+
+        if tool_name == "reproducir_mix_spotify":
+            return bool(_extract_spotify_mix_request(user_input))
+        return bool(_extract_music_request(user_input))
 
     if source in {"auth_resume", "routine", "control_panel", "router", "router_dynamic", "router_directo", "gemini_live", "live_voice"}:
         return True
@@ -299,6 +320,23 @@ def _blocked_error(reason: str) -> ControlledToolBlockedError:
     return ToolPolicyBlockedError(public_reason)
 
 
+def _matches_requested_spotify_selection(request: CommandRequest, step: ActionStep) -> bool:
+    if step.tool_name != "reproducir_en_spotify" or set(step.arguments) != {"cancion"}:
+        return False
+    from modules.spotify.desktop.matching import normalize_text
+    from modules.spotify.desktop.models import SpotifyCandidate
+    from modules.spotify.followup import resolve_requested_selection
+
+    choices = request.metadata.get("spotify_pending_choices")
+    if not isinstance(choices, (list, tuple)) or not all(isinstance(item, SpotifyCandidate) for item in choices):
+        return False
+    candidate = resolve_requested_selection(request.profile_id, request.text, choices)
+    if candidate is None:
+        return False
+    expected = " ".join(part for part in (candidate.title, f"de {candidate.artist}" if candidate.artist else "") if part)
+    return normalize_text(str(step.arguments["cancion"])) == normalize_text(expected)
+
+
 def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
     tool_name = step.tool_name
     args = dict(step.arguments)
@@ -332,23 +370,35 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
     def _finish(value: Any, status: str) -> Any:
         nonlocal outcome, result_preview
         outcome = status
-        result_preview = str(value or "")[:2000]
+        result_preview = "tool_result_available" if value else "tool_result_empty"
         return value
 
-    print(f"\n[TOOL] >> INICIO: {tool_name} | args={args} | canal={source}", flush=True)
+    print(f"\n[TOOL] >> INICIO: {tool_name} | canal={source}", flush=True)
     write_log(
         "TOOL",
         f"START {tool_name}",
         source=source,
         profile_id=profile_id,
-        args=args,
     )
 
     try:
         # Anti-hallucination guard by context
-        if not _tool_permitida_por_contexto(tool_name, user_input, source):
+        from modules.spotify.intent import SPOTIFY_MUTATION_TOOLS, mutation_tool_for_control
+
+        policy_tool_name = tool_name
+        if tool_name == "controlar_reproduccion":
+            policy_tool_name = mutation_tool_for_control(args.get("accion", "")) or tool_name
+        contextual_decision = contextual_execution_decision(request, step)
+        if contextual_decision is False:
+            raise ToolContextInvalidError()
+        if contextual_decision is None and not (
+            _tool_permitida_por_contexto(policy_tool_name, user_input, source)
+            or _matches_requested_spotify_selection(request, step)
+        ):
             outcome = "blocked"
             result_preview = "context_guard_blocked"
+            if policy_tool_name in SPOTIFY_MUTATION_TOOLS:
+                raise ToolOperationIntentError()
             raise ToolPolicyBlockedError()
 
         # Security guard: profile_id travels explicitly or via ContextVar.
@@ -356,7 +406,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         if callable(guard_fn):
             try:
                 allowed, reason = guard_fn(
-                    tool_name,
+                    policy_tool_name,
                     args,
                     user_input,
                     source,
@@ -371,7 +421,6 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
                     False,
                     elapsed,
                     source,
-                    user_input=user_input,
                     error=result_preview,
                 )
                 raise ToolPolicyBlockedError() from exc
@@ -385,14 +434,13 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
                     False,
                     elapsed,
                     source,
-                    user_input=user_input,
                     error=result_preview,
                 )
                 raise blocked_error
 
         from core.brain import security_engine
 
-        if security_engine._tool_requiere_autorizacion(tool_name):
+        if security_engine._tool_requiere_autorizacion(policy_tool_name):
             from utils.jarvis_auth import verificar_autorizacion
 
             if not verificar_autorizacion(profile_id):
@@ -415,9 +463,22 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             "el_usuario_ya_confirmo",
         ):
             execution_args.pop(internal_key, None)
+        if tool_name == "controlar_pc" and source == "auth_resume":
+            execution_args["el_usuario_ya_confirmo"] = True
         with jarvis_state.active_profile(profile_id):
             result = tool.invoke(execution_args)
+        if isinstance(result, ToolExecutionResult):
+            ok = result.status in {ReceiptStatus.SUCCEEDED, ReceiptStatus.ACCEPTED}
+            elapsed = (_time.perf_counter() - started) * 1000.0
+            obs_tool(tool_name, ok, elapsed, source)
+            return _finish(result, "ok" if ok else result.status.value)
         result_txt = str(result)
+
+        denial = result_txt.strip().lower()
+        if denial.startswith(("access_denied", "acceso_denegado")):
+            raise ToolAuthorizationRequiredError()
+        if denial.startswith("accion_denegada"):
+            raise ToolConfirmationRequiredError()
 
         ok = not _resultado_parece_error(result_txt)
         if not ok and AUTOCURACION_ACTIVA:
@@ -430,14 +491,14 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         if not ok:
             security_manager._proactive_register_tool_error(
                 tool_name,
-                result_txt or "tool_reported_failure",
+                "tool_reported_failure",
             )
             outcome = "error"
-            result_preview = result_txt or "tool_reported_failure"
+            result_preview = "tool_reported_failure"
             raise _ToolReportedFailure(result_txt or "tool_reported_failure")
 
         elapsed = (_time.perf_counter() - started) * 1000.0
-        obs_tool(tool_name, ok, elapsed, source, user_input=user_input, error="" if ok else result_txt)
+        obs_tool(tool_name, ok, elapsed, source)
         return _finish(result, "ok")
     except (ControlledToolBlockedError, LookupError, _ToolReportedFailure):
         raise
@@ -461,7 +522,6 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             False,
             elapsed,
             source,
-            user_input=user_input,
             error=diagnostic,
         )
         outcome = "error"
@@ -469,7 +529,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         raise RuntimeError("tool_execution_failed") from exc
     finally:
         elapsed = (_time.perf_counter() - started) * 1000.0
-        print(f"[TOOL] << FIN: {tool_name} | estado={outcome} | tiempo={round(elapsed, 2)}ms | resultado={result_preview[:160]}\n", flush=True)
+        print(f"[TOOL] << FIN: {tool_name} | estado={outcome} | tiempo={round(elapsed, 2)}ms\n", flush=True)
         write_log(
             "TOOL",
             f"END {tool_name}",
@@ -500,10 +560,12 @@ services.tool_execution = _tool_execution_service
 
 
 def _receipt_value(receipt) -> Any:
+    if receipt.status is ReceiptStatus.BLOCKED and receipt.result is None:
+        return f"ACCESS_DENIED: {receipt.user_message}"
+    if receipt.user_message and receipt.user_message != str(receipt.result or ""):
+        return receipt.user_message
     if receipt.result is not None:
         return receipt.result
-    if receipt.status is ReceiptStatus.BLOCKED:
-        return f"ACCESS_DENIED: {receipt.user_message}"
     return receipt.user_message
 
 
@@ -572,8 +634,10 @@ def _invocar_tool(tc: dict, tool_map: dict, context: dict) -> Any:
 
 
 def _intentar_autocuracion(tool_name: str, args: dict, user_input: str, motivo: str = "") -> str | None:
+    if tool_name == "ajustar_volumen":
+        return None
     obs_inc("autocure_attempts", 1)
-    obs_event("autocure_attempt", tool=tool_name, args=args, motivo=(motivo or "")[:200])
+    obs_event("autocure_attempt", tool=tool_name)
     try:
         if tool_name == "abrir_navegador":
             destino = brain_utils._normalizar_destino_web((args or {}).get("destino", ""))
@@ -597,15 +661,6 @@ def _intentar_autocuracion(tool_name: str, args: dict, user_input: str, motivo: 
             if not _resultado_parece_error(str(res)):
                 return str(res)
 
-        if tool_name == "ajustar_volumen":
-            from core import core_tools
-
-            valor = (args or {}).get("valor", 50)
-            try:
-                core_tools._ajustar_volumen_absoluto(int(valor))
-                return f"Volume adjusted to {valor}% by autocuration."
-            except Exception:
-                pass
     except Exception:
         pass
     return None

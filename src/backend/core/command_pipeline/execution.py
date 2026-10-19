@@ -16,6 +16,7 @@ from core.command_pipeline.models import (
     CommandRequest,
     ExecutionReceipt,
     ReceiptStatus,
+    ToolExecutionResult,
 )
 
 
@@ -58,6 +59,22 @@ class ToolPolicyBlockedError(ControlledToolBlockedError):
     diagnostic_code = "tool_policy_blocked"
     message_en = "That action is blocked by the security policy."
     message_es = "Esa accion esta bloqueada por la politica de seguridad."
+
+
+class ToolContextInvalidError(ControlledToolBlockedError):
+    """A contextual proposal no longer matches its server-side provenance."""
+
+    diagnostic_code = "context_reference_unavailable"
+    message_en = "I could not safely link that follow-up. Which task do you want to resume?"
+    message_es = "No pude vincular ese seguimiento de forma segura. Que tarea deseas retomar?"
+
+
+class ToolOperationIntentError(ControlledToolBlockedError):
+    """The model proposed a Spotify mutation different from the user's request."""
+
+    diagnostic_code = "spotify_operation_intent_required"
+    message_es = "No realicé esa operación de cola o favoritos: tu mensaje no la solicitó."
+    message_en = "I did not change the queue or favorites: your message did not request that operation."
 
 
 def operation_signature(step: ActionStep) -> str:
@@ -131,20 +148,38 @@ class ToolExecutionService:
 
         if not owner:
             original = future.result(timeout=30)
-            return replace(original, status=ReceiptStatus.DUPLICATE)
+            if original.status is ReceiptStatus.SUCCEEDED:
+                return replace(original, status=ReceiptStatus.DUPLICATE)
+            return original
 
         started_at = datetime.now(UTC)
         try:
             value = self._invoke_once(request, step)
+            if isinstance(value, ToolExecutionResult):
+                result = value.result
+                user_message = value.user_message or str(value.result or "")
+                verified = value.verified
+                diagnostic_code = value.diagnostic_code
+                status = (
+                    ReceiptStatus.ACCEPTED
+                    if value.accepted
+                    else value.status
+                )
+            else:
+                result = value
+                user_message = str(value or "")
+                verified = False
+                diagnostic_code = ""
+                status = ReceiptStatus.SUCCEEDED
             receipt = ExecutionReceipt(
                 request_id=request.request_id,
                 step_id=step.step_id,
                 tool_name=step.tool_name,
-                status=ReceiptStatus.SUCCEEDED,
-                result=value,
-                user_message=str(value or ""),
-                verified=True,
-                diagnostic_code="",
+                status=status,
+                result=result,
+                user_message=user_message,
+                verified=verified,
+                diagnostic_code=diagnostic_code,
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
             )

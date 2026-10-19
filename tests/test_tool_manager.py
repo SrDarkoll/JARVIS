@@ -169,10 +169,12 @@ class TestResultadoPareceError:
             is True
         )
 
-    def test_ignores_access_denied(self):
+    def test_access_denied_is_a_failure(self):
         from core.brain import tool_manager
 
-        assert tool_manager._resultado_parece_error("ACCESS_DENIED") is False
+        assert tool_manager._resultado_parece_error("ACCESS_DENIED: blocked") is True
+        assert tool_manager._resultado_parece_error("ACCESO_DENEGADO: bloqueado") is True
+        assert tool_manager._resultado_parece_error("ACCION_DENEGADA: confirma") is True
 
     def test_ignores_normal_response(self):
         from core.brain import tool_manager
@@ -205,6 +207,173 @@ class TestToolExecutionBoundary:
             "_tool_requiere_autorizacion",
             lambda _tool_name: False,
         )
+
+    def test_tool_reported_denial_is_a_blocked_receipt(self, monkeypatch):
+        from core.brain import tool_manager
+        from core.command_pipeline.execution import ToolExecutionService
+        from core.command_pipeline.models import ActionStep, CommandRequest, ReceiptStatus
+
+        class DenyingTool:
+            def invoke(self, _args):
+                return "ACCESO_DENEGADO: Requiere autorización."
+
+        self._allow_tool(monkeypatch)
+        request = CommandRequest.create(
+            text="abre la aplicación",
+            profile_id="admin",
+            channel="chat",
+            metadata={"_tool_map": {"abrir_aplicacion": DenyingTool()}},
+        )
+        receipt = ToolExecutionService(tool_manager._invoke_tool_once).execute(
+            request,
+            ActionStep("denial", "abrir_aplicacion"),
+        )
+
+        assert receipt.status is ReceiptStatus.BLOCKED
+        assert receipt.verified is False
+        assert receipt.diagnostic_code == "tool_authorization_required"
+
+    def test_structured_partial_is_not_reinterpreted_from_its_message(self, monkeypatch):
+        from core.brain import tool_manager
+        from core.command_pipeline.execution import ToolExecutionService
+        from core.command_pipeline.models import ActionStep, CommandRequest, ReceiptStatus, ToolExecutionResult
+
+        class PartialTool:
+            def invoke(self, _args):
+                return ToolExecutionResult(
+                    result={"steps": []}, user_message="Error parcial controlado; una acción sí terminó.",
+                    status=ReceiptStatus.PARTIAL, diagnostic_code="routine_partial",
+                )
+
+        self._allow_tool(monkeypatch)
+        request = CommandRequest.create(
+            text="modo trabajo", profile_id="admin", channel="chat",
+            metadata={"_tool_map": {"ejecutar_rutina": PartialTool()}},
+        )
+        receipt = ToolExecutionService(tool_manager._invoke_tool_once).execute(
+            request, ActionStep("routine", "ejecutar_rutina"),
+        )
+        assert receipt.status is ReceiptStatus.PARTIAL
+        assert receipt.diagnostic_code == "routine_partial"
+        assert "sí terminó" in receipt.user_message
+
+    def test_tool_arguments_and_results_are_not_printed_to_stdout(
+        self, monkeypatch, capsys,
+    ):
+        from core.brain import tool_manager
+        from core.command_pipeline.execution import ToolExecutionService
+        from core.command_pipeline.models import ActionStep, CommandRequest
+
+        class PrivateTool:
+            def invoke(self, _args):
+                return "PRIVATE_RESULT_123"
+
+        self._allow_tool(monkeypatch)
+        request = CommandRequest.create(
+            text="run private tool",
+            profile_id="admin",
+            channel="chat",
+            metadata={"_tool_map": {"private_tool": PrivateTool()}},
+        )
+        ToolExecutionService(tool_manager._invoke_tool_once).execute(
+            request,
+            ActionStep("private", "private_tool", {"value": "PRIVATE_ARGUMENT_123"}),
+        )
+
+        output = capsys.readouterr().out
+        assert "PRIVATE_ARGUMENT_123" not in output
+        assert "PRIVATE_RESULT_123" not in output
+
+    def test_tool_diagnostics_omit_private_input_arguments_and_results(
+        self, monkeypatch,
+    ):
+        from core.brain import tool_manager
+        from core.command_pipeline.execution import ToolExecutionService
+        from core.command_pipeline.models import ActionStep, CommandRequest
+
+        diagnostics = []
+
+        class PrivateTool:
+            def __init__(self, result):
+                self.result = result
+
+            def invoke(self, _args):
+                return self.result
+
+        self._allow_tool(monkeypatch)
+        monkeypatch.setattr(
+            tool_manager,
+            "write_log",
+            lambda *args, **kwargs: diagnostics.append((args, kwargs)),
+        )
+        monkeypatch.setattr(
+            tool_manager,
+            "obs_tool",
+            lambda *args, **kwargs: diagnostics.append((args, kwargs)),
+        )
+        monkeypatch.setattr(
+            tool_manager,
+            "obs_event",
+            lambda *args, **kwargs: diagnostics.append((args, kwargs)),
+        )
+        monkeypatch.setattr(
+            tool_manager.security_manager,
+            "_proactive_register_tool_error",
+            lambda *args: diagnostics.append((args, {})),
+        )
+
+        for result in ("PRIVATE_RESULT_123", "ERROR: PRIVATE_RESULT_123"):
+            request = CommandRequest.create(
+                text="PRIVATE_INPUT_123",
+                profile_id="admin",
+                channel="chat",
+                metadata={"_tool_map": {"private_tool": PrivateTool(result)}},
+            )
+            ToolExecutionService(tool_manager._invoke_tool_once).execute(
+                request,
+                ActionStep("private", "private_tool", {"value": "PRIVATE_ARGUMENT_123"}),
+            )
+
+        serialized = repr(diagnostics)
+        assert "PRIVATE_INPUT_123" not in serialized
+        assert "PRIVATE_ARGUMENT_123" not in serialized
+        assert "PRIVATE_RESULT_123" not in serialized
+
+    def test_confirmed_system_control_receives_trusted_confirmation_only(
+        self, monkeypatch,
+    ):
+        from core.brain import tool_manager
+        from core.command_pipeline.execution import ToolExecutionService
+        from core.command_pipeline.models import ActionStep, CommandRequest, ReceiptStatus
+        from tools import system
+
+        launched = []
+        monkeypatch.setattr(system, "IS_WINDOWS", True)
+        monkeypatch.setattr(system, "verificar_autorizacion", lambda _pid: True)
+        monkeypatch.setattr(system.subprocess, "Popen", launched.append)
+        self._allow_tool(monkeypatch)
+        tool_map = {"controlar_pc": system.controlar_pc}
+        executor = ToolExecutionService(tool_manager._invoke_tool_once)
+        confirmed = CommandRequest.create(
+            text="sí, apágala",
+            profile_id="admin",
+            channel="auth_resume",
+            metadata={"_tool_map": tool_map},
+        )
+        unconfirmed = CommandRequest.create(
+            text="apaga la computadora",
+            profile_id="admin",
+            channel="llm_loop",
+            metadata={"_tool_map": tool_map},
+        )
+        args = {"accion": "apagar", "el_usuario_ya_confirmo": True, "_confirmed": True}
+
+        first = executor.execute(confirmed, ActionStep("confirmed", "controlar_pc", args))
+        second = executor.execute(unconfirmed, ActionStep("unconfirmed", "controlar_pc", args))
+
+        assert first.status is ReceiptStatus.SUCCEEDED
+        assert second.status is ReceiptStatus.BLOCKED
+        assert launched == [["shutdown", "/s", "/t", "10"]]
 
     def test_entry_deduplicates_same_request_and_step(self, monkeypatch):
         from core.brain import brain_state, tool_manager

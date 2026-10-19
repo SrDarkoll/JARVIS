@@ -17,7 +17,7 @@ from core.jarvis_config import (
     PLUGINS_ENABLED,
     VISION_ENABLED,
 )
-from core.llm_providers import provider_base_url, resolve_llm_provider_config
+from core.llm_providers import provider_base_url, resolve_gemini_vision_model, resolve_llm_provider_config
 from core.runtime_logger import log_warning
 from core.service_container import services
 from langchain_core.messages import AIMessage
@@ -365,7 +365,7 @@ def _build_llm_clients(provider_env: Mapping[str, str]):
     vision = None
     if VISION_ENABLED:
         vision_model = (
-            str(provider_env.get("JARVIS_GEMINI_VISION_MODEL") or "gemini-2.5-flash")
+            resolve_gemini_vision_model(provider_env)
             if provider_config.primary_provider == "gemini"
             else str(provider_env.get("JARVIS_GROQ_VISION_MODEL") or GROQ_VISION_MODEL)
         )

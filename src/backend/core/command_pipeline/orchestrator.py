@@ -9,10 +9,12 @@ from typing import Any
 from core.command_pipeline.execution import validate_plan_operations
 from core.command_pipeline.models import (
     ActionPlan,
+    CommandOutcome,
     CommandRequest,
     CommandResponse,
     ExecutionReceipt,
     PlanSource,
+    ReceiptStatus,
 )
 from core.command_pipeline.reasoning import ReasoningMode
 from core.errors import LLMServiceError, LLMUnavailableError
@@ -52,6 +54,13 @@ class CommandOrchestrator:
         if plan.direct_response and plan.steps:
             raise ValueError("mixed_action_plan")
         validate_plan_operations(plan.steps)
+        seen_step_ids: set[str] = set()
+        for step in plan.steps:
+            if step.step_id in seen_step_ids:
+                raise ValueError("duplicate_step_id")
+            if any(dependency not in seen_step_ids for dependency in step.depends_on):
+                raise ValueError("invalid_step_dependency")
+            seen_step_ids.add(step.step_id)
 
     def _planner_messages(
         self,
@@ -75,6 +84,7 @@ class CommandOrchestrator:
             request_id=request.request_id,
             source=PlanSource.DETERMINISTIC,
             direct_response=text,
+            direct_outcome=CommandOutcome.UNAVAILABLE,
             requires_follow_up=True,
             confidence=0.4,
         )
@@ -101,6 +111,8 @@ class CommandOrchestrator:
     ) -> ActionPlan:
         if candidate is not None:
             self._validate_plan(request, candidate)
+            if candidate.conversation_only:
+                return candidate
 
         if self._reasoning_mode is ReasoningMode.OFFLINE:
             return candidate or self._offline_plan(request)
@@ -148,7 +160,7 @@ class CommandOrchestrator:
     ) -> CommandResponse:
         t_start = time.perf_counter()
         send = emit or (lambda _event: None)
-        print(f"\n[COMANDO] >> RECIBIDO: '{request.text}' | canal={request.channel} | perfil={request.profile_id}", flush=True)
+        print(f"\n[COMANDO] >> RECIBIDO: canal={request.channel} | perfil={request.profile_id}", flush=True)
         send(
             {
                 "type": "status",
@@ -180,7 +192,34 @@ class CommandOrchestrator:
                     "request_id": request.request_id,
                 }
             )
-            receipts = tuple(self._executor.execute(request, step) for step in plan.steps)
+            collected_receipts: list[ExecutionReceipt] = []
+            receipts_by_step: dict[str, ExecutionReceipt] = {}
+            for step in plan.steps:
+                dependency_satisfied = all(
+                    receipts_by_step[dependency].status
+                    in {ReceiptStatus.SUCCEEDED, ReceiptStatus.DUPLICATE}
+                    for dependency in step.depends_on
+                )
+                if dependency_satisfied:
+                    receipt = self._executor.execute(request, step)
+                else:
+                    receipt = ExecutionReceipt(
+                        request_id=request.request_id,
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        status=ReceiptStatus.BLOCKED,
+                        result=None,
+                        user_message=(
+                            "No ejecuté esta acción porque falló un paso necesario."
+                            if request.language.startswith("es")
+                            else "I did not run this action because a required step failed."
+                        ),
+                        verified=False,
+                        diagnostic_code="dependency_not_satisfied",
+                    )
+                collected_receipts.append(receipt)
+                receipts_by_step[step.step_id] = receipt
+            receipts = tuple(collected_receipts)
             for step, receipt in zip(plan.steps, receipts, strict=True):
                 if (
                     receipt.request_id != request.request_id
@@ -212,7 +251,7 @@ class CommandOrchestrator:
 
         response = self._responses.compose(request, plan, receipts, metrics=metrics)
         try:
-            print(f"[RESPUESTA JARVIS] << '{response.text}'\n", flush=True)
+            print(f"[RESPUESTA JARVIS] << resultado={response.outcome.value}\n", flush=True)
         except Exception:
             pass
         self._history.append_interaction(request, response)

@@ -24,10 +24,48 @@ class ReceiptStatus(StrEnum):
     """Final outcome of one requested tool operation."""
 
     SUCCEEDED = "succeeded"
+    ACCEPTED = "accepted"
     BLOCKED = "blocked"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
+    PARTIAL = "partial"
     DUPLICATE = "duplicate"
+
+
+class CommandOutcome(StrEnum):
+    """Truthful user-visible completion level for one command."""
+
+    RESPONDED = "responded"
+    ACCEPTED = "accepted"
+    EXECUTED = "executed"
+    VERIFIED = "verified"
+    SUCCEEDED = "succeeded"  # Legacy wire value; new responses use a precise level.
+    DUPLICATE = "duplicate"
+    BLOCKED = "blocked"
+    UNAVAILABLE = "unavailable"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionResult:
+    """Explicit tool result with optional postcondition evidence."""
+
+    result: Any
+    user_message: str = ""
+    verified: bool = False
+    accepted: bool = False
+    diagnostic_code: str = ""
+    status: ReceiptStatus = ReceiptStatus.SUCCEEDED
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", ReceiptStatus(self.status))
+        if self.verified and self.accepted:
+            raise ValueError("tool_result_cannot_be_accepted_and_verified")
+        if self.verified and self.status is not ReceiptStatus.SUCCEEDED:
+            raise ValueError("unsuccessful_tool_result_cannot_be_verified")
+        if self.accepted and self.status not in {ReceiptStatus.SUCCEEDED, ReceiptStatus.ACCEPTED}:
+            raise ValueError("unsuccessful_tool_result_cannot_be_accepted")
 
 
 def _frozen_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -96,8 +134,15 @@ class ActionPlan:
     source: PlanSource
     steps: tuple[ActionStep, ...] = ()
     direct_response: str = ""
+    direct_outcome: CommandOutcome = CommandOutcome.RESPONDED
     requires_follow_up: bool = False
     confidence: float = 1.0
+    conversation_only: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "direct_outcome", CommandOutcome(self.direct_outcome))
+        if self.conversation_only and (self.source is not PlanSource.DETERMINISTIC or self.steps):
+            raise ValueError("invalid_conversation_only_plan")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,16 +175,20 @@ class CommandResponse:
     request_id: str
     text: str
     should_listen: bool
-    outcome: str
+    outcome: CommandOutcome
     receipts: tuple[ExecutionReceipt, ...] = ()
     metrics: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outcome", CommandOutcome(self.outcome))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
             "text": self.text,
             "should_listen": self.should_listen,
-            "outcome": self.outcome,
+            "outcome": self.outcome.value,
+            "verified": self.outcome is CommandOutcome.VERIFIED,
             "receipts": [receipt.to_dict() for receipt in self.receipts],
             "metrics": dict(self.metrics),
         }
