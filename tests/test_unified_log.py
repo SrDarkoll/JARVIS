@@ -62,6 +62,60 @@ def test_write_conversation_uses_readable_roles(unified_log_path: Path):
     assert "[CONVERSATION] JARVIS(admin): Reproduciendo Monster." in content
 
 
+def test_conversation_is_echoed_to_console_and_journal_once(tmp_path, monkeypatch):
+    log_path = tmp_path / "conversation.txt"
+    console = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", console)
+    try:
+        unified_log.install_console_capture(log_file=log_path, enabled=True, max_bytes=100_000, backup_count=1)
+        unified_log.write_conversation("USUARIO", "Hola desde la voz", profile_id="admin", channel="gemini_live")
+        unified_log.write_conversation("JARVIS", "Te escucho", profile_id="admin", channel="gemini_live")
+        assert console.getvalue().count("USUARIO(admin): Hola desde la voz") == 1
+        assert console.getvalue().count("JARVIS(admin): Te escucho") == 1
+        journal = log_path.read_text(encoding="utf-8")
+        assert journal.count("USUARIO(admin): Hola desde la voz") == 1
+        assert journal.count("JARVIS(admin): Te escucho") == 1
+        assert "[STDOUT] [CONVERSATION]" not in journal
+    finally:
+        unified_log.reset_unified_log_for_tests()
+
+
+def test_console_conversation_redacts_credentials_and_prevents_forged_lines(unified_log_path, monkeypatch):
+    console = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", console)
+    monkeypatch.setenv("SYNTHETIC_API_KEY", "synthetic-private-value")
+    unified_log.write_conversation(
+        "USUARIO", "api_key=other-private-value synthetic-private-value\n[ERROR] forged",
+        profile_id="admin", channel="chat",
+    )
+    output = console.getvalue()
+    assert "[REDACTED]" in output
+    assert "other-private-value" not in output
+    assert "synthetic-private-value" not in output
+    assert len(output.splitlines()) == 1
+
+
+def test_disabled_journal_does_not_echo_private_conversations(tmp_path, monkeypatch):
+    console = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", console)
+    unified_log.configure_unified_log(tmp_path / "disabled.txt", enabled=False, max_bytes=1000, backup_count=0)
+    try:
+        unified_log.write_conversation("USUARIO", "private synthetic text", profile_id="admin")
+        assert console.getvalue() == ""
+    finally:
+        unified_log.reset_unified_log_for_tests()
+
+
+def test_broken_console_cannot_break_conversation_persistence(unified_log_path, monkeypatch):
+    class BrokenConsole:
+        def write(self, _value):
+            raise OSError("synthetic closed terminal")
+
+    monkeypatch.setattr(sys, "stdout", BrokenConsole())
+    unified_log.write_conversation("JARVIS", "Respuesta sintética", profile_id="admin", channel="gemini_live")
+    assert "JARVIS(admin): Respuesta sintética" in unified_log_path.read_text(encoding="utf-8")
+
+
 def test_write_log_redacts_environment_and_explicit_credentials(
     unified_log_path: Path,
     monkeypatch,
@@ -132,6 +186,30 @@ def test_disabled_unified_log_does_not_create_a_file(tmp_path: Path):
     try:
         unified_log.write_log("TEST", "not persisted")
         assert not log_path.exists()
+    finally:
+        unified_log.reset_unified_log_for_tests()
+
+
+def test_unified_log_uses_only_configured_runtime_path(monkeypatch, tmp_path: Path):
+    from core import jarvis_config
+
+    runtime_log = tmp_path / "runtime" / "log.txt"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("JARVIS_TEST_MODE", "0")
+    monkeypatch.setattr(jarvis_config, "ROOT_DIR", str(project_root))
+
+    try:
+        unified_log.configure_unified_log(
+            runtime_log,
+            enabled=True,
+            max_bytes=1024,
+            backup_count=1,
+        )
+        unified_log.write_log("TEST", "single private sink")
+
+        assert runtime_log.is_file()
+        assert not (project_root / "logs" / "log.txt").exists()
     finally:
         unified_log.reset_unified_log_for_tests()
 

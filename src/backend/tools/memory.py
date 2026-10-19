@@ -4,8 +4,10 @@ import json
 import os
 import re
 import threading
+from contextlib import closing
 
 from core import jarvis_config
+from core.command_pipeline.models import ReceiptStatus, ToolExecutionResult
 from langchain_core.messages import AIMessage, HumanMessage
 from services.memory_manager import memory_manager
 
@@ -189,31 +191,43 @@ from langchain_core.tools import tool
 
 
 @tool
-def guardar_dato_memoria(dato: str) -> str:
+def guardar_dato_memoria(dato: str) -> ToolExecutionResult:
     """Guarda un dato, preferencia o recuerdo en la memoria permanente del usuario para recordarlo siempre."""
     clean_fact = _texto_limpio_memoria(dato).strip("- ")
-    if not clean_fact:
-        return "Dato de memoria vacío."
-    pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
-    current_facts = memory_manager.get_profile_data(pid).get("facts", "")
-    merged = _fusionar_facts_memoria(current_facts, [clean_fact])
-    memory_manager.set_facts(pid, merged)
-    guardar_memoria_perfiles()
-
-    # Sync to unified cognitive memory graph
-    try:
-        from modules.memory.service import unified_memory
-
-        title_match = clean_fact.split(":")[0].strip() if ":" in clean_fact else clean_fact[:30]
-        unified_memory.save_cognitive_memory(
-            title=title_match,
-            content=clean_fact,
-            profile_id=pid,
+    if not 3 <= len(clean_fact) <= 250:
+        return ToolExecutionResult(
+            result="", status=ReceiptStatus.FAILED, diagnostic_code="memory_fact_invalid",
+            user_message="La memoria básica admite datos de entre 3 y 250 caracteres. Divide una nota larga en datos breves.",
         )
-    except Exception:
-        pass
+    pid = _normalizar_profile_id(jarvis_state.get_active_profile_id())
+    with memory_manager.lock:
+        current_facts = memory_manager.snapshot(pid).facts
+        merged = _fusionar_facts_memoria(current_facts, [clean_fact])
+        if f"- {clean_fact}" not in _limpiar_facts_memoria(merged).splitlines():
+            return ToolExecutionResult(
+                result="", status=ReceiptStatus.FAILED, diagnostic_code="memory_fact_not_retained",
+                user_message="No pude conservar ese dato en la memoria básica. Tiene un límite de 25 datos breves; los anteriores se conservaron.",
+            )
+        memory_manager.set_facts(pid, merged)
+        if not guardar_memoria_perfiles():
+            memory_manager.set_facts(pid, current_facts)
+            return ToolExecutionResult(
+                result="", status=ReceiptStatus.FAILED, diagnostic_code="memory_fact_save_failed",
+                user_message="No pude guardar el dato de forma permanente. Los datos anteriores se conservaron. Vuelve a intentarlo.",
+            )
 
-    return f"Dato guardado en la memoria permanente: '{clean_fact}'."
+    if jarvis_config.RUNTIME_FEATURES.cognitive_memory_enabled:
+        try:
+            from modules.memory.service import unified_memory
+
+            title_match = clean_fact.split(":")[0].strip() if ":" in clean_fact else clean_fact[:30]
+            unified_memory.save_cognitive_memory(title=title_match, content=clean_fact, profile_id=pid)
+        except Exception:
+            pass
+
+    message = f"Dato guardado en la memoria permanente: '{clean_fact}'."
+    return ToolExecutionResult(result=message, user_message=message, verified=True,
+                               diagnostic_code="memory_fact_persisted")
 
 
 # ─────────────────────────────────────────
@@ -325,34 +339,28 @@ def cargar_memoria_perfiles() -> dict:
     return perfiles
 
 
-def guardar_memoria_perfiles():
+def guardar_memoria_perfiles() -> bool:
     try:
-        snapshot = memory_manager.get_all_profiles()
-
-        # Aplicamos limpieza final antes de guardar
-        for pid in snapshot:
-            snapshot[pid]["history"] = _serializar_history(snapshot[pid]["history"])
-            snapshot[pid]["facts"] = _limpiar_facts_memoria(snapshot[pid]["facts"])
-
         import sqlite3
 
-        db_path = _db_path()
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        for pid, data in snapshot.items():
-            hist_str = json.dumps(data["history"], ensure_ascii=False)
-            facts = data["facts"]
-            c.execute(
-                """
-                INSERT INTO profiles(profile_id, history, facts) VALUES(?, ?, ?)
-                ON CONFLICT(profile_id) DO UPDATE SET history=excluded.history, facts=excluded.facts
-            """,
-                (pid, hist_str, facts),
-            )
-        conn.commit()
-        conn.close()
+        # Serialize snapshot creation and commit so an older async save cannot overwrite a newer fact.
+        with memory_manager.lock:
+            snapshot = memory_manager.get_all_profiles()
+            with closing(sqlite3.connect(_db_path(), timeout=1.0)) as conn, conn:
+                for pid, data in snapshot.items():
+                    hist_str = json.dumps(_serializar_history(data["history"]), ensure_ascii=False)
+                    facts = _limpiar_facts_memoria(data["facts"])
+                    conn.execute(
+                        """
+                        INSERT INTO profiles(profile_id, history, facts) VALUES(?, ?, ?)
+                        ON CONFLICT(profile_id) DO UPDATE SET history=excluded.history, facts=excluded.facts
+                        """,
+                        (pid, hist_str, facts),
+                    )
+        return True
     except Exception as e:
-        print(f"[ERROR DB SAVE] {e}")
+        print(f"[ERROR DB SAVE] {type(e).__name__}")
+        return False
 
 
 # ─────────────────────────────────────────

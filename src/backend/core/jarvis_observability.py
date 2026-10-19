@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 
 from core.jarvis_config import OBS_DIR, OBS_LOG_FILE
-from core.unified_log import write_log
+from core.unified_log import redact_data, write_log
 
 os.makedirs(OBS_DIR, exist_ok=True)
 
@@ -29,10 +29,52 @@ OBS_METRICS: dict = {
 
 # --- Background Logger ---
 class LogWorker(threading.Thread):
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        max_bytes: int | None = None,
+        backup_count: int | None = None,
+    ):
         super().__init__(name="LogWorker", daemon=True)
         self.queue = queue.Queue()
         self.stop_signal = False
+        self.max_bytes = max(
+            1,
+            int(
+                max_bytes
+                if max_bytes is not None
+                else os.getenv("JARVIS_OBS_LOG_MAX_BYTES", str(5 * 1024 * 1024))
+            ),
+        )
+        self.backup_count = max(
+            0,
+            int(
+                backup_count
+                if backup_count is not None
+                else os.getenv("JARVIS_OBS_LOG_BACKUP_COUNT", "3")
+            ),
+        )
+
+    def _rotate_if_needed(self, filepath: str, incoming_bytes: int) -> None:
+        try:
+            current_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            if current_size + incoming_bytes <= self.max_bytes:
+                return
+            if self.backup_count == 0:
+                with open(filepath, "w", encoding="utf-8"):
+                    pass
+                return
+            oldest = f"{filepath}.{self.backup_count}"
+            if os.path.exists(oldest):
+                os.remove(oldest)
+            for index in range(self.backup_count - 1, 0, -1):
+                source = f"{filepath}.{index}"
+                if os.path.exists(source):
+                    os.replace(source, f"{filepath}.{index + 1}")
+            if os.path.exists(filepath):
+                os.replace(filepath, f"{filepath}.1")
+        except OSError:
+            return
 
     def run(self):
         while not self.stop_signal:
@@ -42,10 +84,12 @@ class LogWorker(threading.Thread):
                 if item is None:
                     break
 
-                filepath, line = item
-                if not filepath:
-                    continue
                 try:
+                    filepath, line = item
+                    if not filepath:
+                        continue
+                    encoded_size = len((line + "\n").encode("utf-8"))
+                    self._rotate_if_needed(filepath, encoded_size)
                     with open(filepath, "a", encoding="utf-8") as f:
                         f.write(line + "\n")
                 except Exception as e:
@@ -57,6 +101,10 @@ class LogWorker(threading.Thread):
 
     def log(self, filepath, line):
         self.queue.put((filepath, line))
+
+    def stop(self) -> None:
+        self.stop_signal = True
+        self.queue.put(None)
 
 
 _log_worker = LogWorker()
@@ -74,7 +122,9 @@ def obs_event(event_type: str, **payload) -> None:
         "ts": datetime.now().isoformat(timespec="seconds"),
         "event": event_type,
     }
-    event.update(payload or {})
+    safe_payload = redact_data(payload or {})
+    if isinstance(safe_payload, dict):
+        event.update(safe_payload)
     try:
         line = json.dumps(event, ensure_ascii=False, default=str)
     except Exception:
@@ -97,7 +147,6 @@ def obs_tool(
     ok: bool,
     elapsed_ms: float,
     source: str,
-    user_input: str = "",
     error: str = "",
 ) -> None:
     with OBS_LOCK:
@@ -117,7 +166,6 @@ def obs_tool(
         ok=bool(ok),
         elapsed_ms=round(float(elapsed_ms), 2),
         source=source,
-        user_input=(user_input or "")[:180],
         error=(error or "")[:300],
     )
 

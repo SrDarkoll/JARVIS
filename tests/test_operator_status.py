@@ -99,6 +99,30 @@ class OperatorStatusTests(unittest.TestCase):
         self.assertIsNone(payload["missions"]["active"])
         self.assertEqual(payload["missions"]["counts"]["total"], 0)
 
+    def test_operator_status_reads_the_runtime_security_snapshot_shape(self):
+        from operator_status import build_operator_status
+
+        payload = build_operator_status(
+            active_profile_id="admin",
+            authorized=True,
+            profiles={},
+            plans=[],
+            security_snapshot={
+                "policy": {"strict_mode": True},
+                "state": {
+                    "last_block_reason": "tool_not_allowed",
+                    "last_block_ts": "2026-09-04T01:00:00",
+                },
+            },
+            proactive_snapshot={},
+            audit=[],
+            policy_overrides={},
+        )
+
+        self.assertTrue(payload["security"]["strict_mode"])
+        self.assertEqual(payload["security"]["last_block_reason"], "tool_not_allowed")
+        self.assertEqual(payload["security"]["last_block_ts"], "2026-09-04T01:00:00")
+
 
 if __name__ == "__main__":
     unittest.main()

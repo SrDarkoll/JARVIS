@@ -29,7 +29,7 @@ _CREDENTIAL_ASSIGNMENT_RE = re.compile(
     r"\b\s*[:=]\s*)(?:bearer\s+)?[^\s,;&]+"
 )
 _SENSITIVE_QUERY_RE = re.compile(
-    r"(?i)([?&](?:access_token|api[_-]?key|client_secret|password|secret|token)=)"
+    r"(?i)([?&](?:access_token|api[_-]?key|client_secret|password|secret|token|key)=)"
     r"[^&#\s]+"
 )
 _BEARER_TOKEN_RE = re.compile(r"(?i)(\bbearer\s+)[^\s,;&]+")
@@ -97,6 +97,11 @@ def _redact_value(value: object, *, key: object = "") -> object:
     return redact_text(value)
 
 
+def redact_data(value: object, *, key: object = "") -> object:
+    """Return a recursively redacted value suitable for any log sink."""
+    return _redact_value(value, key=key)
+
+
 def _format_context_value(value: object, *, key: object = "") -> str:
     redacted = _redact_value(value, key=key)
     if isinstance(redacted, (dict, list)):
@@ -141,26 +146,6 @@ def configure_unified_log(
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
-
-            # Also mirror to project root logs/log.txt for convenient access
-            if os.getenv("JARVIS_TEST_MODE") != "1":
-                try:
-                    from core import jarvis_config
-
-                    project_log = Path(jarvis_config.ROOT_DIR) / "logs" / "log.txt"
-                    if project_log.resolve() != _log_path.resolve():
-                        project_log.parent.mkdir(parents=True, exist_ok=True)
-                        local_handler = RotatingFileHandler(
-                            project_log,
-                            maxBytes=max(1, int(max_bytes)),
-                            backupCount=max(0, int(backup_count)),
-                            encoding="utf-8",
-                            delay=False,
-                        )
-                        local_handler.setFormatter(formatter)
-                        logger.addHandler(local_handler)
-                except Exception:
-                    pass
 
         _file_logger = logger
 
@@ -212,6 +197,18 @@ def write_conversation(
         f"{normalized_role}({normalized_profile}): {text}",
         channel=channel,
     )
+    if not _enabled:
+        return
+    try:
+        console = sys.stdout
+        while isinstance(console, UnifiedLogTee):
+            console = console._original
+        line = redact_text(f"{normalized_role}({normalized_profile}): {text}")
+        with _console_lock:
+            console.write(f"[CONVERSATION] {line}\n")
+            console.flush()
+    except Exception:
+        return
 
 
 class UnifiedLogTee:

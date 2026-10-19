@@ -10,6 +10,8 @@ To add a new language:
 """
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 # Path to models directory (resolved at import time)
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,11 +25,23 @@ MODELS_DIR = os.path.join(_ROOT_DIR, "models")
 # All modules must use get_current_language() instead of reading jarvis_settings.
 # ============================================================================
 _current_language = "en"
+_request_language: ContextVar[str | None] = ContextVar("jarvis_request_language", default=None)
 
 
 def get_current_language() -> str:
     """Returns the currently active language code."""
-    return _current_language
+    return _request_language.get() or _current_language
+
+
+@contextmanager
+def language_scope(language: str):
+    """Localize one request without changing other sessions or the UI setting."""
+    normalized = "en" if str(language or "").strip().lower().startswith("en") else "es"
+    token = _request_language.set(normalized)
+    try:
+        yield
+    finally:
+        _request_language.reset(token)
 
 
 def set_current_language(lang: str) -> None:
@@ -38,7 +52,7 @@ def set_current_language(lang: str) -> None:
 
 def get_bt() -> dict:
     """Shortcut: returns the translation dict for the active language."""
-    return BACKEND_TRANSLATIONS.get(_current_language, BACKEND_TRANSLATIONS["en"])
+    return BACKEND_TRANSLATIONS.get(get_current_language(), BACKEND_TRANSLATIONS["en"])
 
 
 # ============================================================================

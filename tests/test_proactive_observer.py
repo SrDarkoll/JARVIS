@@ -144,9 +144,10 @@ def test_proactive_langchain_tools():
     assert "No se encontro" in out_exec
 
 
-def test_proactive_tools_in_base_catalog():
+def test_proactive_tools_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_PROACTIVE_TOOLS_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 

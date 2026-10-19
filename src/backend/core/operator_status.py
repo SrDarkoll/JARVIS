@@ -167,6 +167,8 @@ def build_operator_status(
     ]
 
     security = _safe_dict(security_snapshot)
+    security_policy = _safe_dict(security.get("policy"))
+    security_state = _safe_dict(security.get("state"))
     proactive = _safe_dict(proactive_snapshot)
     audit_entries = _safe_list(audit)
 
@@ -187,9 +189,19 @@ def build_operator_status(
         },
         "memory": _memory_summary(profile_id, profiles),
         "security": {
-            "strict_mode": bool(security.get("strict_mode", False)),
-            "last_block_reason": str(security.get("last_block_reason") or ""),
-            "last_block_ts": str(security.get("last_block_ts") or ""),
+            "strict_mode": bool(
+                security.get("strict_mode", security_policy.get("strict_mode", False))
+            ),
+            "last_block_reason": str(
+                security.get("last_block_reason")
+                or security_state.get("last_block_reason")
+                or ""
+            ),
+            "last_block_ts": str(
+                security.get("last_block_ts")
+                or security_state.get("last_block_ts")
+                or ""
+            ),
             "audit_events": len(audit_entries),
             "recent_audit": audit_entries[-8:],
         },

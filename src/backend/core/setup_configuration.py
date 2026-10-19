@@ -45,8 +45,6 @@ def validate_provider_setup(
     raw_secret = str(api_key or "")
     if name not in _ALLOWED_PROVIDERS:
         raise SetupConfigurationError("invalid_provider")
-    if save_local is not True:
-        raise SetupConfigurationError("invalid_request")
     if any(char in raw_secret for char in ("\r", "\n", "\0")):
         raise SetupConfigurationError("invalid_key_format")
     secret = raw_secret.strip()
@@ -54,6 +52,8 @@ def validate_provider_setup(
         raise SetupConfigurationError("invalid_key_format")
     if not secret.isascii() or not secret.isprintable():
         raise SetupConfigurationError("invalid_key_format")
+    if save_local is not True:
+        raise SetupConfigurationError("invalid_request")
     return ProviderSetup(name, secret, True)
 
 

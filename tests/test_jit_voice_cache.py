@@ -172,9 +172,10 @@ def test_jit_tool_invocation():
     assert "Live Voice Streaming" in out
 
 
-def test_jit_tool_in_base_catalog():
+def test_jit_tool_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_COGNITIVE_MEMORY_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 
