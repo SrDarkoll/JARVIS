@@ -24,7 +24,8 @@ if os.getenv("JARVIS_TEST_MODE") == "1" and os.name == "nt":
 
     _safe_tempfile.TemporaryDirectory = _WindowsTestTemporaryDirectory
 
-sys.stdout.reconfigure(encoding="utf-8")
+if callable(getattr(sys.stdout, "reconfigure", None)):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 if os.getenv("JARVIS_TEST_MODE") != "1":
     from core.unified_log import install_console_capture
@@ -71,6 +72,11 @@ from core.security.api_auth import (
     configured_api_token,
     is_valid_local_ui_cookie,
     is_valid_raw_api_token,
+)
+from core.security.browser_profile import (
+    can_manage_browser_profiles,
+    configure_profile_sessions,
+    ensure_browser_profile,
 )
 from core.service_container import services
 from engines.tts_engine import TTSEngine
@@ -478,6 +484,7 @@ app = Quart(
     static_url_path="/static",
 )
 app.config["MAX_CONTENT_LENGTH"] = int((os.getenv("JARVIS_MAX_REQUEST_BYTES") or str(12 * 1024 * 1024)).strip())
+configure_profile_sessions(app)
 app = cors(app, allow_origin=_cors_origins)
 app.register_blueprint(tts_bp)
 app.register_blueprint(api_bp)
@@ -492,9 +499,11 @@ _CRITICAL_API_PATHS = {
     "/api/auth_status",
     "/api/control/quick",
     "/api/language",
+    "/api/memory/graph",
     "/api/observability",
     "/api/observabilidad",
     "/api/operator/status",
+    "/api/reminders",
     "/api/profiles",
     "/api/perfiles",
     "/api/plugins",
@@ -513,6 +522,7 @@ _CRITICAL_API_PATHS = {
     "/api/voice/registration/admin/init",
     "/api/voice/registro/admin/capturar",
     "/api/voice/registro/admin/iniciar",
+    "/media",
 }
 _ORIGIN_PROTECTED_API_PATHS = {
     "/api/chat",
@@ -522,6 +532,7 @@ _ORIGIN_PROTECTED_API_PATHS = {
     "/api/voice/live/status",
     "/api/voice/stream",
 }
+_PUBLIC_API_PATHS = {"/api/health"}
 
 
 def _is_loopback(addr: str | None) -> bool:
@@ -579,6 +590,8 @@ def _is_critical_api_path(path: str) -> bool:
 
 def _is_origin_protected_api_path(path: str) -> bool:
     normalized = (path or "").rstrip("/") or "/"
+    if normalized.startswith("/api/") and normalized not in _PUBLIC_API_PATHS:
+        return True
     if normalized in _ORIGIN_PROTECTED_API_PATHS:
         return True
     return any(normalized.startswith(prefix + "/") for prefix in _ORIGIN_PROTECTED_API_PATHS)
@@ -671,6 +684,22 @@ async def _require_token_for_websocket_routes():
     obs_event("ws_token_required", path=path, ip=websocket.remote_addr)
     message = "Token required for critical routes." if is_critical else "Token required for protected routes."
     return _websocket_auth_error(message, 401)
+
+
+@app.before_request
+async def _initialize_browser_profile():
+    if request.method == "OPTIONS" or request.path.startswith("/static/"):
+        return None
+    if (_is_loopback(request.remote_addr) and _is_trusted_browser_origin()) or _has_valid_api_token():
+        ensure_browser_profile()
+    owner_paths = (
+        "/api/security", "/api/proactive", "/api/plugins", "/api/setup/provider",
+        "/api/observability", "/api/observabilidad", "/api/operator/status",
+    )
+    path = request.path.rstrip("/")
+    if any(path == prefix or path.startswith(prefix + "/") for prefix in owner_paths) and not can_manage_browser_profiles():
+        return jsonify({"error": "profile_access_denied"}), 403
+    return None
 
 
 @app.after_request
@@ -777,7 +806,13 @@ DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 memory_lock = jarvis_state.memoria_lock
 _profiles_memory = jarvis_state._perfiles_memoria
 
-init_api_routes(services, os.getenv("JARVIS_BROWSER_MODE", "system"), ROOT_DIR)
+init_api_routes(
+    services,
+    os.getenv("JARVIS_BROWSER_MODE", "system"),
+    ROOT_DIR,
+    tts_engine=tts_engine,
+    biometrics_enabled=BIOMETRICS_ENABLED,
+)
 init_chat_routes(ChatRoutesConfig(IP_LAST_CALL, _IP_LAST_CALL_LOCK, CHAT_LIMIT_SECONDS))
 init_tts_routes(
     TTSRoutesConfig(

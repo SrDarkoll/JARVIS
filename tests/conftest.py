@@ -25,12 +25,19 @@ tempfile.tempdir = str(TEST_TMP_DIR)
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-os.environ.setdefault("GROQ_API_KEY", "test-key-smoke")
+os.environ["GROQ_API_KEY"] = "test-key-smoke"
+os.environ["GOOGLE_API_KEY"] = ""
+os.environ["GEMINI_API_KEY"] = ""
+os.environ["JARVIS_LLM_PROVIDER"] = ""
 os.environ["JARVIS_TEST_MODE"] = "1"
 os.environ["JARVIS_AUTOCURACION"] = "false"
 # Tests must never inherit the developer's real API credential from the shell
 # or .env. Individual auth tests opt in with a known monkeypatched token.
 os.environ["JARVIS_API_TOKEN"] = ""
+# Spotify tests must not load the developer's real OAuth credentials from .env.
+# Provider tests opt in with mocks; real desktop checks use an explicit harness.
+os.environ["SPOTIPY_CLIENT_ID"] = ""
+os.environ["SPOTIPY_CLIENT_SECRET"] = ""
 os.environ["JARVIS_RUNTIME_DIR"] = str(TEST_RUNTIME_DIR)
 os.environ["JARVIS_DB_PATH"] = str(TEST_RUNTIME_DIR / "memoria_jarvis_test.db")
 os.environ["JARVIS_CACHE_DIR"] = str(TEST_RUNTIME_DIR / ".cache")

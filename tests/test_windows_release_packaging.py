@@ -55,6 +55,18 @@ def test_release_builder_requires_voice_distribution_notices():
         assert f'"{required_path}"' in builder
 
 
+def test_release_builder_rejects_untracked_required_runtime_files():
+    builder = (ROOT / "scripts/build_windows_release.ps1").read_text(encoding="utf-8")
+
+    for required_path in (
+        "src/backend/core/security/browser_profile.py",
+        "src/backend/services/reminder_service.py",
+        "src/frontend/static/js/modules/reminders.js",
+    ):
+        assert f'"{required_path}"' in builder
+    assert "Required release file is not tracked" in builder
+
+
 def test_bundled_voice_models_have_attribution_and_license_files():
     notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
 

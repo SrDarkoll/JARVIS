@@ -3,7 +3,8 @@
 param(
     [string]$Version = "0.1.0-alpha.4",
     [string]$SourceRoot = "",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [string]$BuildDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,21 +19,28 @@ if (-not $OutputDirectory) {
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 
+if ($Version -notmatch '^[0-9][A-Za-z0-9.+-]*$') {
+    throw "Release version must be a filename-safe version identifier."
+}
+
 $packageName = "JARVIS-v$Version-windows"
-$buildRoot = [System.IO.Path]::GetFullPath(
-    (Join-Path $SourceRoot "scratch\release-build")
-)
+if (-not $BuildDirectory) {
+    $BuildDirectory = Join-Path $SourceRoot "scratch\release-build"
+}
+$buildRoot = [System.IO.Path]::GetFullPath($BuildDirectory).TrimEnd("\", "/")
 $packageRoot = Join-Path $buildRoot $packageName
 $archivePath = Join-Path $OutputDirectory "$packageName.zip"
 $checksumPath = "$archivePath.sha256"
 
-$expectedBuildPrefix = $SourceRoot.TrimEnd("\", "/") +
+$expectedBuildPrefix = [System.IO.Path]::GetFullPath(
+    (Join-Path $SourceRoot "scratch")
+).TrimEnd("\", "/") +
     [System.IO.Path]::DirectorySeparatorChar
 if (-not $buildRoot.StartsWith(
     $expectedBuildPrefix,
     [System.StringComparison]::OrdinalIgnoreCase
 )) {
-    throw "Release build directory must stay inside the source root."
+    throw "Release build directory must stay inside the source root's scratch directory."
 }
 
 $runtimeFiles = @(
@@ -58,6 +66,12 @@ $runtimeDirectories = @(
     "third_party"
 )
 $runtimePaths = @($runtimeFiles + $runtimeDirectories)
+$requiredRuntimeFiles = @(
+    "src/backend/core/security/browser_profile.py",
+    "src/backend/services/reminder_service.py",
+    "src/backend/services/notification_policy.py",
+    "src/frontend/static/js/modules/reminders.js"
+)
 $requiredDistributionFiles = @(
     "third_party\licenses\Apache-2.0.txt",
     "third_party\licenses\CC-BY-SA-4.0.txt",
@@ -66,12 +80,6 @@ $requiredDistributionFiles = @(
     "third_party\model_cards\es_MX-claude-high.md",
     "third_party\PIPER_VOICES_REPOSITORY_NOTICE.md"
 )
-
-if (Test-Path -LiteralPath $buildRoot) {
-    Remove-Item -LiteralPath $buildRoot -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 $trackedFiles = @(
     & git -C $SourceRoot ls-files --cached -- @runtimePaths
@@ -85,12 +93,23 @@ foreach ($requiredFile in $runtimeFiles) {
         throw "Required release file is not tracked: $requiredFile"
     }
 }
+foreach ($requiredFile in $requiredRuntimeFiles) {
+    if ($requiredFile -notin $trackedFiles) {
+        throw "Required release file is not tracked: $requiredFile"
+    }
+}
 foreach ($requiredFile in $requiredDistributionFiles) {
     $gitPath = $requiredFile.Replace("\", "/")
     if ($gitPath -notin $trackedFiles) {
         throw "Required third-party notice is not tracked: $requiredFile"
     }
 }
+
+if (Test-Path -LiteralPath $buildRoot) {
+    Remove-Item -LiteralPath $buildRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 foreach ($relativePath in $trackedFiles) {
     if ([System.IO.Path]::IsPathRooted($relativePath) -or

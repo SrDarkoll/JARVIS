@@ -73,8 +73,22 @@ def test_provider_defaults_use_current_stable_models():
         }
     )
 
-    assert config.primary_model == "gemini-2.5-flash"
+    assert config.primary_model == "gemini-3.5-flash-lite"
     assert config.fallback_model == "qwen/qwen3.6-27b"
+
+
+def test_gemini_vision_uses_shared_default_and_explicit_overrides():
+    from core.llm_providers import resolve_gemini_vision_model
+
+    assert resolve_gemini_vision_model({}) == "gemini-3.5-flash-lite"
+    assert resolve_gemini_vision_model({"JARVIS_GEMINI_MODEL": "gemini-3.8-flash"}) == "gemini-3.8-flash"
+    assert resolve_gemini_vision_model({"JARVIS_GEMINI_VISION_MODEL": "models/gemini-2.5-flash"}) == "gemini-2.5-flash"
+
+
+def test_gemini_text_model_keeps_explicit_legacy_selection():
+    config = resolve_llm_provider_config({"GEMINI_API_KEY": "test", "JARVIS_GEMINI_MODEL": "gemini-2.5-flash"})
+
+    assert config.primary_model == "gemini-2.5-flash"
 
 
 def test_provider_rejects_a_gemini_model_in_groq_configuration():

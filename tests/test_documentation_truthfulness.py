@@ -54,3 +54,40 @@ def test_api_token_documentation_covers_protected_http_and_websocket_routes():
 
     assert "protected http/websocket routes" in readme.lower()
     assert "protected http and websocket routes" in env_example.lower()
+
+
+def test_gemini_live_configuration_documents_privacy_cost_and_stable_tools():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    for key in (
+        "JARVIS_LIVE_CONTEXT_COMPRESSION_ENABLED",
+        "JARVIS_LIVE_COMPRESSION_TRIGGER_TOKENS",
+        "JARVIS_LIVE_COMPRESSION_TARGET_TOKENS",
+        "JARVIS_LIVE_INPUT_TRANSCRIPTION_ENABLED",
+        "JARVIS_LIVE_OUTPUT_TRANSCRIPTION_ENABLED",
+        "JARVIS_LIVE_MAX_SESSIONS",
+        "JARVIS_LIVE_MAX_SESSIONS_PER_PROFILE",
+    ):
+        assert key in env_example
+
+    readme_lower = readme.lower()
+    assert "stable voice-tool allowlist" in readme_lower
+    assert "transcription token surcharge" in readme_lower
+    assert "native session resumption remains disabled" in readme_lower
+    assert "dynamically exposes the registered base tool schemas" not in readme_lower
+
+
+def test_stable_core_documents_hybrid_reasoning_and_experimental_flags():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert 'JARVIS_REASONING_MODE="hybrid"' in env_example
+    for flag in (
+        "JARVIS_COMPUTER_USE_ENABLED",
+        "JARVIS_PROACTIVE_TOOLS_ENABLED",
+        "JARVIS_COGNITIVE_MEMORY_ENABLED",
+        "JARVIS_ACTION_PLANS_ENABLED",
+    ):
+        assert flag in env_example
+    assert "experimental tool surfaces are excluded" in readme.lower()
