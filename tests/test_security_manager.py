@@ -85,6 +85,35 @@ class TestSecurityGuard:
                 assert allowed is True
                 assert reason == ""
 
+    def test_security_guard_audits_allowed_tool_without_argument_values(
+        self,
+        mock_security_deps,
+        monkeypatch,
+    ):
+        audit = MagicMock()
+        monkeypatch.setattr(mock_security_deps, "_security_audit", audit)
+        with patch.object(
+            mock_security_deps,
+            "SECURITY_POLICY",
+            {"blocked_tools": [], "strict_mode": False},
+        ):
+            allowed, reason = mock_security_deps._security_guard(
+                "listar_ventanas",
+                {"password": "must-not-be-audited"},
+                "list windows",
+                "test",
+                profile_id="admin",
+            )
+
+        assert allowed is True
+        assert reason == ""
+        audit.assert_called_once()
+        _action = audit.call_args.args[0]
+        metadata = audit.call_args.kwargs["metadata"]
+        assert _action == "tool_allowed"
+        assert metadata["argument_names"] == ["password"]
+        assert "must-not-be-audited" not in str(audit.call_args)
+
     def test_security_guard_requires_explicit_confirmation_even_when_authorized(self, mock_security_deps):
         with patch.object(mock_security_deps, "SECURITY_POLICY", {"blocked_tools": [], "strict_mode": False}):
             with patch.object(mock_security_deps, "verificar_autorizacion", lambda pid: True):

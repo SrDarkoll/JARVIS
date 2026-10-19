@@ -5,9 +5,12 @@ import time as _time
 from datetime import datetime
 from urllib.parse import urlparse
 
-from core import jarvis_config
+from core import jarvis_config, jarvis_state
 from core.jarvis_context import context
 from core.security.tool_policy import evaluate_tool_policy, export_tool_policy_table
+from core.unified_log import redact_data
+
+from services.notification_policy import notification_policy
 
 # DEPENDENCY INJECTION
 _invocar_tool = None
@@ -220,7 +223,7 @@ def _security_audit(
         "metadata": metadata or {},
     }
     try:
-        line = json.dumps(evt, ensure_ascii=False, default=str)
+        line = json.dumps(redact_data(evt), ensure_ascii=False, default=str)
         # Usamos el LogWorker asíncrono de observabilidad para evitar latencia de disco
         from core.jarvis_observability import _log_worker
 
@@ -322,6 +325,8 @@ def _security_guard(
         return False, msg
 
     if bool(policy.get("strict_mode")):
+        if tool_name == "abrir_documento":
+            return False, "Document opening is disabled in strict mode."
         if tool_name in {"abrir_navegador", "navegar_en_navegador"}:
             host = _security_host_for_destino((args or {}).get("destino", ""))
             allowed_domains = policy.get("allowed_web_domains") or []
@@ -392,6 +397,24 @@ def _security_guard(
         )
         return False, decision.reason
 
+    if decision.policy.audit_log:
+        _security_audit(
+            "tool_allowed",
+            level="info",
+            tool=tool_name,
+            reason="Tool permitted by security policy.",
+            source=source,
+            metadata={
+                "profile_id": str(profile_id or "")[:64],
+                "risk_level": decision.policy.risk_level,
+                "authorized": authorized,
+                "confirmed": confirmed,
+                "argument_names": sorted(
+                    str(name)[:64] for name in (args or {})
+                ),
+            },
+        )
+
     return True, ""
 
 
@@ -415,6 +438,7 @@ def _proactive_push_alert(
     cooldown: int | None = None,
 ) -> bool:
     now_ts = _time.time()
+    delivery_allowed = notification_policy.allows_automatic(jarvis_state.get_active_profile_id(), severity=severity)
     if not key:
         key = f"{kind}:{(message or '')[:60]}"
     with PROACTIVE_LOCK:
@@ -432,6 +456,7 @@ def _proactive_push_alert(
             "severity": str(severity or "info"),
             "message": str(message or "").strip(),
             "key": key,
+            "delivery_deferred": not delivery_allowed,
         }
         PROACTIVE_STATE.setdefault("alerts", []).append(alert)
         PROACTIVE_STATE["alerts"] = PROACTIVE_STATE["alerts"][-200:]
@@ -447,7 +472,7 @@ def _proactive_push_alert(
             key=key,
         )
 
-    if send_telegram and "enviar_telegram_sync" in globals() and callable(enviar_telegram_sync):
+    if delivery_allowed and send_telegram and "enviar_telegram_sync" in globals() and callable(enviar_telegram_sync):
         try:
             msg_to_send = normalizar_tratamiento_admin(message) if callable(normalizar_tratamiento_admin) else message
             threading.Thread(
