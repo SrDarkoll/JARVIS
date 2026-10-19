@@ -97,10 +97,11 @@ class SpotifyDesktopController:
         request: SpotifyRequest,
         generation: int,
         *,
-        retry_search: bool = False,
+        retry_search: bool = True,
     ) -> tuple[MatchDecision | None, list[SpotifyCandidate], str | None]:
         deadline = self._monotonic() + self._action_timeout
         next_search_retry = self._monotonic() + 0.75
+        search_retried = False
         ranked: list[SpotifyCandidate] = []
         while True:
             if self._cancelled(generation):
@@ -119,15 +120,17 @@ class SpotifyDesktopController:
             remaining = deadline - self._monotonic()
             if remaining <= 0:
                 return decision, ranked, None
-            if retry_search and self._monotonic() >= next_search_retry:
+            if retry_search and not search_retried and self._monotonic() >= next_search_retry:
                 if not self._windows.is_foreground(window):
                     return None, ranked, "spotify_focus_lost"
                 try:
                     self._uia.search(window.handle, request.query)
                 except RuntimeError as error:
+                    if str(error) == "spotify_focus_lost":
+                        return None, ranked, "spotify_focus_lost"
                     if str(error) != "spotify_search_unavailable":
                         raise
-                next_search_retry = self._monotonic() + 1.0
+                search_retried = True
             self._sleep(min(0.2, remaining))
 
     def _search_when_ready(
@@ -148,6 +151,8 @@ class SpotifyDesktopController:
                 self._uia.search(window.handle, query)
                 return "ready"
             except RuntimeError as error:
+                if str(error) == "spotify_focus_lost":
+                    return "focus_lost"
                 if str(error) != "spotify_search_unavailable":
                     raise
 
@@ -182,6 +187,11 @@ class SpotifyDesktopController:
                 return window
             self._sleep(min(0.25, remaining))
 
+    def _verification_failed(self, stage: str, reason: str) -> bool:
+        self._logger.info("spotify_desktop_verification stage=%s reason=%s", stage, reason)
+        write_log("SPOTIFY", "Desktop playback verification", stage=stage, reason=reason)
+        return False
+
     def _verify(
         self,
         window,
@@ -201,14 +211,16 @@ class SpotifyDesktopController:
 
             remaining = deadline - self._monotonic()
             if remaining <= 0:
-                return False
+                return self._verification_failed("identity", "timeout")
             self._sleep(min(0.2, remaining))
 
-    def _ensure_playing(self, window, generation: int) -> bool | None:
+    def _ensure_playing(
+        self, window, generation: int, *, candidate: SpotifyCandidate
+    ) -> bool | None:
         playback_state = getattr(self._uia, "playback_state", None)
         control = getattr(self._uia, "control", None)
         if not callable(playback_state):
-            return True
+            return self._verification_failed("playback_state", "unavailable")
 
         deadline = self._monotonic() + self._action_timeout
         stable_since: float | None = None
@@ -216,28 +228,37 @@ class SpotifyDesktopController:
         while True:
             if self._cancelled(generation):
                 return None
+            observed_track = self._uia.now_playing(window.handle)
+            window_title = "" if observed_track else self._windows.current_title(window)
             observed = playback_state(window.handle)
             now = self._monotonic()
+            if self._cancelled(generation):
+                return None
+            if now > deadline:
+                return self._verification_failed("playback_state", "timeout")
+            if not self._matches(candidate, observed_track, window_title):
+                return self._verification_failed("identity", "changed")
             if observed is None:
-                return True
-            if observed == "playing":
+                stable_since = None
+            elif observed == "playing":
                 stable_since = stable_since if stable_since is not None else now
                 if now - stable_since >= self._playback_stability:
                     return True
             elif observed == "paused":
                 stable_since = None
-                if resumed or not callable(control):
-                    return False
-                if not self._windows.is_foreground(window):
-                    return False
-                if not control(window.handle, "resume"):
-                    return False
-                resumed = True
+                if not resumed:
+                    if now >= deadline:
+                        return self._verification_failed("playback_state", "timeout")
+                    if not self._windows.is_foreground(window):
+                        return self._verification_failed("playback_state", "focus_lost")
+                    if not callable(control) or not control(window.handle, "resume"):
+                        return self._verification_failed("playback_state", "resume_rejected")
+                    resumed = True
             else:
-                return False
+                return self._verification_failed("playback_state", "unknown_state")
             remaining = deadline - self._monotonic()
             if remaining <= 0:
-                return False
+                return self._verification_failed("playback_state", "timeout")
             self._sleep(min(0.2, remaining))
 
     @staticmethod
@@ -296,7 +317,7 @@ class SpotifyDesktopController:
                 states=tuple(states),
             )
 
-        playing = self._ensure_playing(window, generation)
+        playing = self._ensure_playing(window, generation, candidate=expected)
         if playing is None:
             return self._cancelled_result(states)
         if not playing:
@@ -317,6 +338,15 @@ class SpotifyDesktopController:
         )
 
     def play(self, request: SpotifyRequest) -> SpotifyDesktopResult:
+        result = self._play(request)
+        stage = result.states[-1].value if result.states else "unknown"
+        if len(result.states) > 1 and result.states[-1] is AutomationState.FAILED:
+            stage = result.states[-2].value
+        self._logger.info("spotify_desktop_result status=%s code=%s stage=%s", result.status.value, result.message_key, stage)
+        write_log("SPOTIFY", "Desktop playback result", status=result.status.value, code=result.message_key, stage=stage)
+        return result
+
+    def _play(self, request: SpotifyRequest) -> SpotifyDesktopResult:
         states = [AutomationState.IDLE]
         ranked: list[SpotifyCandidate] = []
         decision_status = "not_started"
@@ -344,6 +374,7 @@ class SpotifyDesktopController:
                     return self._cancelled_result(states)
             states.append(AutomationState.FOCUSING)
             if not self._windows.focus(window) or not self._windows.is_foreground(window):
+                decision_status = "focus_lost"
                 states.append(AutomationState.FAILED)
                 return SpotifyDesktopResult(
                     status=DesktopResultStatus.FAILED,
@@ -356,7 +387,7 @@ class SpotifyDesktopController:
                 window,
                 request.query,
                 generation,
-                readiness_timeout=self._start_timeout if cold_start else 0.0,
+                readiness_timeout=self._start_timeout,
             )
             decision_status = search_status
             if search_status == "cancelled":
@@ -390,7 +421,7 @@ class SpotifyDesktopController:
                 window,
                 request,
                 generation,
-                retry_search=cold_start,
+                retry_search=True,
             )
             decision_status = decision.status.value if decision is not None else "cancelled"
             if decision_error:
@@ -484,7 +515,7 @@ class SpotifyDesktopController:
                     )
                 selected = retry
 
-            playing = self._ensure_playing(window, generation)
+            playing = self._ensure_playing(window, generation, candidate=selected)
             if playing is None:
                 return self._cancelled_result(states)
             if not playing:
@@ -503,14 +534,24 @@ class SpotifyDesktopController:
                 message_key="spotify_playback_started",
                 states=tuple(states),
             )
-        except (FileNotFoundError, ImportError):
+        except FileNotFoundError:
+            decision_status = "spotify_client_not_found"
             states.append(AutomationState.FAILED)
             return SpotifyDesktopResult(
                 status=DesktopResultStatus.UNAVAILABLE,
-                message_key="spotify_desktop_unavailable",
+                message_key=decision_status,
+                states=tuple(states),
+            )
+        except ImportError:
+            decision_status = "spotify_uia_unavailable"
+            states.append(AutomationState.FAILED)
+            return SpotifyDesktopResult(
+                status=DesktopResultStatus.UNAVAILABLE,
+                message_key=decision_status,
                 states=tuple(states),
             )
         except TimeoutError:
+            decision_status = "spotify_start_timeout"
             states.append(AutomationState.FAILED)
             return SpotifyDesktopResult(
                 status=DesktopResultStatus.UNAVAILABLE,
@@ -532,8 +573,9 @@ class SpotifyDesktopController:
             final_state = states[-1].value
             duration_ms = max(0, int((self._monotonic() - started) * 1000))
             self._logger.info(
-                "spotify_desktop_operation final_state=%s duration_ms=%d",
+                "spotify_desktop_operation final_state=%s decision=%s duration_ms=%d",
                 final_state,
+                decision_status,
                 duration_ms,
             )
             write_log(
@@ -634,6 +676,11 @@ class SpotifyDesktopController:
                     title=observed[0] if observed else "",
                     artist=observed[1] if observed else "",
                     message_key="spotify_control_complete",
+                )
+            if not self._windows.is_foreground(window):
+                return SpotifyDesktopResult(
+                    status=DesktopResultStatus.FAILED,
+                    message_key="spotify_focus_lost",
                 )
             if not self._uia.control(window.handle, action):
                 return SpotifyDesktopResult(

@@ -44,15 +44,21 @@ def _visible_windows() -> list[SpotifyWindow]:
 
     user32 = ctypes.windll.user32
     result: list[SpotifyWindow] = []
-    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-
-    hdesk = None
-    try:
-        hdesk = user32.OpenInputDesktop(0, False, 0x10000000)
-        if hdesk:
-            user32.SetThreadDesktop(hdesk)
-    except Exception:
-        hdesk = None
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    signatures = {
+        "OpenInputDesktop": (wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
+        "CloseDesktop": (wintypes.BOOL, [wintypes.HANDLE]),
+        "EnumDesktopWindows": (wintypes.BOOL, [wintypes.HANDLE, callback_type, wintypes.LPARAM]),
+        "EnumWindows": (wintypes.BOOL, [callback_type, wintypes.LPARAM]),
+        "IsWindowVisible": (wintypes.BOOL, [wintypes.HWND]),
+        "GetWindowTextLengthW": (ctypes.c_int, [wintypes.HWND]),
+        "GetWindowTextW": (ctypes.c_int, [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]),
+        "GetWindowThreadProcessId": (wintypes.DWORD, [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]),
+    }
+    for name, (return_type, arguments) in signatures.items():
+        function = getattr(user32, name)
+        function.restype = return_type
+        function.argtypes = arguments
 
     def callback(handle, _parameter):
         try:
@@ -77,11 +83,23 @@ def _visible_windows() -> list[SpotifyWindow]:
         return True
 
     cb = callback_type(callback)
-    if hdesk:
-        user32.EnumDesktopWindows(hdesk, cb, 0)
-    else:
+    hdesk = None
+    enumerated = False
+    try:
+        hdesk = user32.OpenInputDesktop(0, False, 0x0001)  # DESKTOP_READOBJECTS
+        if hdesk:
+            enumerated = bool(user32.EnumDesktopWindows(hdesk, cb, 0))
+    except (OSError, ValueError, ctypes.ArgumentError):
+        enumerated = False
+    finally:
+        if hdesk:
+            try:
+                user32.CloseDesktop(hdesk)
+            except OSError:
+                pass
+    if not enumerated:
         user32.EnumWindows(cb, 0)
-    return result
+    return list({(window.handle, window.pid): window for window in result}.values())
 
 
 def _start_spotify_client() -> None:
@@ -101,24 +119,60 @@ def _start_spotify_client() -> None:
 
 
 def _focus_window(handle: int) -> bool:
-    if not IS_WINDOWS:
+    if not IS_WINDOWS or handle <= 0:
         return False
-    user32 = ctypes.windll.user32
-    hwnd = wintypes.HWND(handle)
-    user32.ShowWindow(hwnd, 9)
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+        signatures = {
+            "IsWindow": (wintypes.BOOL, [wintypes.HWND]),
+            "IsIconic": (wintypes.BOOL, [wintypes.HWND]),
+            "ShowWindow": (wintypes.BOOL, [wintypes.HWND, ctypes.c_int]),
+            "GetWindowThreadProcessId": (wintypes.DWORD, [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]),
+            "AttachThreadInput": (wintypes.BOOL, [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]),
+            "SetForegroundWindow": (wintypes.BOOL, [wintypes.HWND]),
+            "SetFocus": (wintypes.HWND, [wintypes.HWND]),
+            "GetForegroundWindow": (wintypes.HWND, []),
+        }
+        for name, (return_type, arguments) in signatures.items():
+            function = getattr(user32, name)
+            function.restype = return_type
+            function.argtypes = arguments
 
-    current_thread = user32.GetCurrentThreadId()
-    target_thread = user32.GetWindowThreadProcessId(hwnd, None)
-
-    if current_thread != target_thread:
-        user32.AttachThreadInput(current_thread, target_thread, True)
-        user32.SetForegroundWindow(hwnd)
-        user32.SetFocus(hwnd)
-        user32.AttachThreadInput(current_thread, target_thread, False)
-    else:
-        user32.SetForegroundWindow(hwnd)
-        user32.SetFocus(hwnd)
-    return True
+        hwnd = wintypes.HWND(handle)
+        if not user32.IsWindow(hwnd):
+            return False
+        current_thread = kernel32.GetCurrentThreadId()
+        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+        if not target_thread:
+            return False
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)
+        foreground_handle = user32.GetForegroundWindow()
+        if int(foreground_handle or 0) == handle:
+            return True
+        foreground_thread = (
+            user32.GetWindowThreadProcessId(foreground_handle, None) if foreground_handle else 0
+        )
+        attached_threads: list[int] = []
+        try:
+            for thread_id in dict.fromkeys((foreground_thread, target_thread)):
+                if not thread_id or thread_id == current_thread:
+                    continue
+                if not user32.AttachThreadInput(current_thread, thread_id, True):
+                    return False
+                attached_threads.append(thread_id)
+            if not user32.SetForegroundWindow(hwnd):
+                return False
+            user32.SetFocus(hwnd)
+            return int(user32.GetForegroundWindow() or 0) == handle
+        finally:
+            for thread_id in reversed(attached_threads):
+                user32.AttachThreadInput(current_thread, thread_id, False)
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 def _activate_process_window(pid: int) -> bool:
@@ -143,7 +197,25 @@ def _activate_process_window(pid: int) -> bool:
 def _foreground_window() -> int:
     if not IS_WINDOWS:
         return 0
-    return int(ctypes.windll.user32.GetForegroundWindow())
+    function = ctypes.windll.user32.GetForegroundWindow
+    function.argtypes = []
+    function.restype = wintypes.HWND
+    return int(function() or 0)
+
+
+def _is_spotify_foreground(handle: int) -> bool:
+    if not IS_WINDOWS or handle <= 0 or _foreground_window() != handle:
+        return False
+    try:
+        process_id = wintypes.DWORD()
+        function = ctypes.windll.user32.GetWindowThreadProcessId
+        function.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        function.restype = wintypes.DWORD
+        return bool(function(wintypes.HWND(handle), ctypes.byref(process_id))) and (
+            int(process_id.value) in _spotify_process_ids()
+        )
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 def _window_bounds(handle: int) -> tuple[int, int, int, int]:
@@ -157,8 +229,10 @@ def _window_bounds(handle: int) -> tuple[int, int, int, int]:
 
 def _is_usable_spotify_window(window: SpotifyWindow) -> bool:
     try:
+        if IS_WINDOWS and ctypes.windll.user32.IsIconic(wintypes.HWND(window.handle)):
+            return True
         left, top, right, bottom = _window_bounds(window.handle)
-    except OSError:
+    except (AttributeError, OSError):
         return False
     return right - left >= 320 and bottom - top >= 200
 
@@ -178,6 +252,7 @@ class WindowsSpotifyWindowAdapter:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval: float = 0.25,
+        focus_timeout: float = 1.0,
     ) -> None:
         self._process_ids = process_ids
         self._windows = windows
@@ -192,6 +267,7 @@ class WindowsSpotifyWindowAdapter:
         self._monotonic = monotonic
         self._sleep = sleep
         self._poll_interval = max(0.01, poll_interval)
+        self._focus_timeout = max(0.0, focus_timeout)
 
     def discover_window(self) -> SpotifyWindow | None:
         process_ids = self._process_ids()
@@ -217,13 +293,32 @@ class WindowsSpotifyWindowAdapter:
                 return window
 
     def focus(self, window: SpotifyWindow) -> bool:
+        if not self._matches_window(window):
+            return False
         focused = self._focus_window(window.handle)
         if not focused or not self.is_foreground(window):
-            focused = self._activate_process_window(window.pid)
-        return focused and self.is_foreground(window)
+            if not self._matches_window(window):
+                return False
+            self._activate_process_window(window.pid)
+        deadline = self._monotonic() + self._focus_timeout
+        while True:
+            if self.is_foreground(window):
+                return True
+            if not self._matches_window(window):
+                return False
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                return False
+            self._sleep(min(self._poll_interval, remaining))
 
     def is_foreground(self, window: SpotifyWindow) -> bool:
-        return self._foreground_window() == window.handle
+        return self._foreground_window() == window.handle and self._matches_window(window)
+
+    def _matches_window(self, window: SpotifyWindow) -> bool:
+        return window.pid in self._process_ids() and any(
+            candidate.handle == window.handle and candidate.pid == window.pid
+            for candidate in self._windows()
+        )
 
     def current_title(self, window: SpotifyWindow) -> str:
         for candidate in self._windows():
@@ -423,14 +518,11 @@ _NOW_PLAYING_PATTERNS = (
 
 
 def _default_uia_root(handle: int):
-    try:
-        from pywinauto.application import Application
+    from pywinauto import Desktop
 
-        return Application(backend="uia").connect(handle=handle).top_window()
-    except Exception:
-        from pywinauto import Desktop
-
-        return Desktop(backend="uia").window(handle=handle)
+    # top_window() can select an auxiliary Chromium window instead of the
+    # exact Spotify HWND that the controller validated.
+    return Desktop(backend="uia").window(handle=handle).wrapper_object()
 
 
 def _default_shortcut(shortcut: str) -> None:
@@ -451,6 +543,10 @@ def _default_text_input(value: str) -> None:
 
 def _control_name(control: Any) -> str:
     try:
+        info = getattr(control, "element_info", None)
+        name = str(getattr(info, "name", "") or "").strip()
+        if name:
+            return name
         return str(control.window_text() or "").strip()
     except Exception:
         return ""
@@ -464,10 +560,25 @@ def _control_type(control: Any) -> str:
     return str(getattr(info, "control_type", "") or "")
 
 
-def _invoke_control(control: Any) -> bool:
+def _optional_pattern(control: Any, name: str):
+    # pywinauto properties raise NoPatternInterfaceError while being read,
+    # not only when their methods are called.
+    try:
+        return getattr(control, name, None)
+    except Exception:
+        return None
+
+
+def _invoke_control(
+    control: Any,
+    *,
+    can_activate: Callable[[], bool] | None = None,
+    handle: int | None = None,
+) -> bool:
+    allowed = can_activate or (lambda: True)
     # 1. Direct UIA Invoke pattern
     invoke = getattr(control, "invoke", None)
-    if callable(invoke):
+    if callable(invoke) and allowed():
         try:
             invoke()
             return True
@@ -475,8 +586,8 @@ def _invoke_control(control: Any) -> bool:
             pass
 
     # 2. iface_invoke pattern COM call
-    iface_invoke = getattr(control, "iface_invoke", None)
-    if iface_invoke is not None:
+    iface_invoke = _optional_pattern(control, "iface_invoke")
+    if iface_invoke is not None and allowed():
         try:
             iface_invoke.Invoke()
             return True
@@ -484,37 +595,40 @@ def _invoke_control(control: Any) -> bool:
             pass
 
     # 3. Legacy IAccessible DoDefaultAction
-    iface_legacy = getattr(control, "iface_legacy_iaccessible", None)
-    if iface_legacy is not None:
+    iface_legacy = _optional_pattern(control, "iface_legacy_iaccessible")
+    if iface_legacy is not None and allowed():
         try:
             iface_legacy.DoDefaultAction()
             return True
         except Exception:
             pass
 
-    # 4. Selection item pattern
-    select = getattr(control, "select", None)
-    if callable(select):
-        try:
-            select()
-            return True
-        except Exception:
-            pass
-
-    # 5. Click fallback
+    # Selection highlights a result but does not necessarily play it.
+    # Only an actual activation or click counts as a dispatched action.
     click = getattr(control, "click_input", None)
-    if callable(click):
-        try:
-            click()
-            return True
-        except Exception:
-            pass
+    if callable(click) and allowed():
+        return _click_control(control, can_activate=allowed, handle=handle)
 
     return False
 
 
-def _click_control(control: Any) -> bool:
+def _click_control(
+    control: Any,
+    *,
+    can_activate: Callable[[], bool] | None = None,
+    handle: int | None = None,
+) -> bool:
     try:
+        if handle is not None:
+            rectangle = control.rectangle()
+            left, top, right, bottom = _window_bounds(handle)
+            if not (
+                left <= rectangle.left < rectangle.right <= right
+                and top <= rectangle.top < rectangle.bottom <= bottom
+            ):
+                return False
+        if can_activate is not None and not can_activate():
+            return False
         control.click_input()
         return True
     except Exception:
@@ -545,8 +659,8 @@ def _is_safe_click_rect(rect: Any, win_bounds: tuple[int, int, int, int] | None 
                 return False
             return True
 
-        # Fallback when window bounds are unavailable: enforce general screen margins
-        return 60 < cy < 960 and 60 < cx < 1860
+        # No guessed screen coordinates when the target bounds are unknown.
+        return False
     except Exception:
         return False
 
@@ -561,7 +675,7 @@ def _prepare_control_for_activation(control: Any) -> tuple[bool, bool]:
     except Exception:
         return True, False
 
-    scroll_item = getattr(control, "iface_scroll_item", None)
+    scroll_item = _optional_pattern(control, "iface_scroll_item")
     if scroll_item is None:
         return False, False
     try:
@@ -648,25 +762,47 @@ class SpotifyUIAutomationAdapter:
         self._send_text = send_text
         self._max_candidates = max(1, max_candidates)
         self._elements: dict[str, Any] = {}
+        self._elements_handle: int | None = None
 
-    def _controls(self, handle: int) -> list[Any]:
+    @staticmethod
+    def _require_foreground(handle: int) -> None:
+        if not _is_spotify_foreground(handle):
+            raise RuntimeError("spotify_focus_lost")
+
+    def _shortcut(self, handle: int, shortcut: str) -> None:
+        self._require_foreground(handle)
+        self._send_shortcut(shortcut)
+
+    def _controls(self, handle: int, *, control_types: tuple[str, ...] = ()) -> list[Any]:
         try:
-            return list(self._root_factory(handle).descendants())
+            root = self._root_factory(handle)
+            if control_types:
+                try:
+                    return [control for kind in control_types for control in root.descendants(control_type=kind)]
+                except TypeError:
+                    # Small injected adapters may expose only descendants().
+                    pass
+            return list(root.descendants())
         except Exception:
             return []
 
     def _search_control(self, handle: int):
-        fallback = None
-        for control in self._controls(handle):
+        for control in self._controls(handle, control_types=("ComboBox", "Edit")):
             control_type = _control_type(control).lower()
             name = normalize_text(_control_name(control))
-            if control_type == "combobox":
-                if any(label in name for label in _SEARCH_NAMES):
-                    return control
-                fallback = fallback or control
-            elif control_type == "edit" and (not name or any(label in name for label in _SEARCH_NAMES)):
-                fallback = fallback or control
-        return fallback
+            if control_type not in {"combobox", "edit"} or name not in _SEARCH_NAMES:
+                continue
+            visible = getattr(control, "is_visible", None)
+            enabled = getattr(control, "is_enabled", None)
+            try:
+                if callable(visible) and not visible():
+                    continue
+                if callable(enabled) and not enabled():
+                    continue
+            except Exception:
+                continue
+            return control
+        return None
 
     def search_available(self, handle: int) -> bool:
         return self._search_control(handle) is not None
@@ -678,19 +814,26 @@ class SpotifyUIAutomationAdapter:
 
         control = self._search_control(handle)
         if control is None:
-            self._send_shortcut("^k")
+            self._shortcut(handle, "^k")
             control = self._search_control(handle)
         if control is None:
             raise RuntimeError("spotify_search_unavailable")
 
-        try:
-            control.set_focus()
-        except Exception:
-            pass
+        self._require_foreground(handle)
+        # Chromium may acknowledge UIA SetFocus while keeping keyboard focus
+        # on Home or its hidden address bar. Click the semantically located
+        # input, never a guessed coordinate, before entering/submitting text.
+        if not _click_control(control, can_activate=lambda: _is_spotify_foreground(handle), handle=handle):
+            self._require_foreground(handle)
+            try:
+                control.set_focus()
+            except Exception:
+                raise RuntimeError("spotify_search_unavailable") from None
 
         query_written = False
         setter = getattr(control, "set_edit_text", None)
         if callable(setter):
+            self._require_foreground(handle)
             try:
                 setter(clean_query)
                 query_written = True
@@ -703,23 +846,28 @@ class SpotifyUIAutomationAdapter:
             except Exception:
                 value_pattern = None
             if value_pattern is not None:
+                self._require_foreground(handle)
                 try:
                     value_pattern.SetValue(clean_query)
-                    self._send_shortcut("{END}x{BACKSPACE}")
+                    self._shortcut(handle, "{END}x{BACKSPACE}")
                     query_written = True
+                except RuntimeError:
+                    raise
                 except Exception:
                     pass
 
         if not query_written:
-            self._send_shortcut("^a{BACKSPACE}")
+            self._shortcut(handle, "^a{BACKSPACE}")
+            self._require_foreground(handle)
             self._send_text(clean_query)
-        self._send_shortcut("{ENTER}")
+        self._shortcut(handle, "{ENTER}")
 
     def read_candidates(self, handle: int) -> list[SpotifyCandidate]:
         self._elements.clear()
+        self._elements_handle = handle
         candidates: list[SpotifyCandidate] = []
         seen: set[tuple[str, str]] = set()
-        for control in self._controls(handle):
+        for control in self._controls(handle, control_types=("Button",)):
             if _control_type(control).lower() != "button":
                 continue
             parsed = _parse_play_button(_control_name(control))
@@ -746,21 +894,29 @@ class SpotifyUIAutomationAdapter:
 
     def activate(self, candidate: SpotifyCandidate) -> bool:
         control = self._elements.get(candidate.element_id)
-        if control is None:
+        handle = self._elements_handle
+        if control is None or handle is None or not _is_spotify_foreground(handle):
             return False
         ready, scrolled = _prepare_control_for_activation(control)
         if not ready:
             return False
+
+        def allowed() -> bool:
+            return _is_spotify_foreground(handle)
+
         if scrolled:
-            return _invoke_control(control)
-        return _click_control(control) or _invoke_control(control)
+            return _invoke_control(control, can_activate=allowed, handle=handle)
+        return _click_control(control, can_activate=allowed, handle=handle) or _invoke_control(
+            control, can_activate=allowed, handle=handle,
+        )
 
     def activate_fallback(self, candidate: SpotifyCandidate) -> bool:
         control = self._elements.get(candidate.element_id)
-        if control is None:
+        handle = self._elements_handle
+        if control is None or handle is None or not _is_spotify_foreground(handle):
             return False
         ready, _scrolled = _prepare_control_for_activation(control)
-        return ready and _invoke_control(control)
+        return ready and _invoke_control(control, can_activate=lambda: _is_spotify_foreground(handle), handle=handle)
 
     def _find_context_menu_item(self, handle: int, action: str) -> Any | None:
         terms = _MENU_ACTION_TERMS.get(normalize_text(action), set())
@@ -784,7 +940,7 @@ class SpotifyUIAutomationAdapter:
         if canonical not in _MENU_ACTION_TERMS:
             return False
         control = self._elements.get(candidate.element_id)
-        if control is None:
+        if control is None or handle is None or not _is_spotify_foreground(handle):
             return False
         ready, _scrolled = _prepare_control_for_activation(control)
         if not ready:
@@ -802,7 +958,7 @@ class SpotifyUIAutomationAdapter:
             rect = getattr(control, "rectangle", None)
             if callable(rect):
                 r = rect()
-                if _is_safe_click_rect(r, win_bounds):
+                if _is_safe_click_rect(r, win_bounds) and _is_spotify_foreground(handle):
                     control.click_input(button="right")
                     opened = True
         except Exception:
@@ -810,8 +966,9 @@ class SpotifyUIAutomationAdapter:
 
         if not opened:
             try:
+                self._require_foreground(handle)
                 control.set_focus()
-                self._send_shortcut("+{F10}")
+                self._shortcut(handle, "+{F10}")
                 opened = True
             except Exception:
                 pass
@@ -826,16 +983,11 @@ class SpotifyUIAutomationAdapter:
         if handle:
             menu_item = self._find_context_menu_item(handle, canonical)
             if menu_item is not None:
-                if _invoke_control(menu_item):
+                if _invoke_control(menu_item, can_activate=lambda: _is_spotify_foreground(handle), handle=handle):
                     return True
-                try:
-                    menu_item.click_input()
-                    return True
-                except Exception:
-                    pass
 
         try:
-            self._send_shortcut("{ESC}")
+            self._shortcut(handle, "{ESC}")
         except Exception:
             pass
         return False
@@ -847,7 +999,7 @@ class SpotifyUIAutomationAdapter:
         normalized_action = normalize_text(action)
         canonical = _ACTION_ALIASES.get(normalized_action, normalized_action)
         names = _CONTROL_NAMES.get(canonical, set())
-        for control in self._controls(handle):
+        for control in self._controls(handle, control_types=("Button", "CheckBox")):
             if _control_type(control).lower() not in {"button", "checkbox"}:
                 continue
             observed = normalize_text(_control_name(control))
@@ -855,56 +1007,59 @@ class SpotifyUIAutomationAdapter:
             is_specific = canonical in {"like", "unlike"} and any(name in observed for name in names)
             if not is_specific and not _is_player_control(control):
                 continue
-            if any(name in observed for name in names) and _invoke_control(control):
-                return True
+            if any(observed == name or observed.startswith(name + " ") for name in names):
+                if not _is_spotify_foreground(handle):
+                    return False
+                if _invoke_control(control, can_activate=lambda: _is_spotify_foreground(handle), handle=handle):
+                    return True
 
         # Foreground-scoped Spotify shortcuts are fallbacks when semantic player
         # controls are unavailable. The controller still verifies observable state.
         if canonical in {"pause", "resume"}:
             try:
-                self._send_shortcut(" ")
+                self._shortcut(handle, " ")
                 return True
             except Exception:
                 pass
         elif canonical == "next":
             try:
-                self._send_shortcut("^{RIGHT}")
+                self._shortcut(handle, "^{RIGHT}")
                 return True
             except Exception:
                 pass
         elif canonical == "previous":
             try:
-                self._send_shortcut("^{LEFT}")
+                self._shortcut(handle, "^{LEFT}")
                 return True
             except Exception:
                 pass
         elif canonical in {"shuffle_on", "shuffle_off"}:
             try:
-                self._send_shortcut("^s")
+                self._shortcut(handle, "^s")
                 return True
             except Exception:
                 pass
         elif canonical in {"repeat_on", "repeat_off"}:
             try:
-                self._send_shortcut("^r")
+                self._shortcut(handle, "^r")
                 return True
             except Exception:
                 pass
         elif canonical == "volume_up":
             try:
-                self._send_shortcut("^{UP}")
+                self._shortcut(handle, "^{UP}")
                 return True
             except Exception:
                 pass
         elif canonical == "volume_down":
             try:
-                self._send_shortcut("^{DOWN}")
+                self._shortcut(handle, "^{DOWN}")
                 return True
             except Exception:
                 pass
         elif canonical == "mute":
             try:
-                self._send_shortcut("^+{DOWN}")
+                self._shortcut(handle, "^+{DOWN}")
                 return True
             except Exception:
                 pass
@@ -914,7 +1069,7 @@ class SpotifyUIAutomationAdapter:
     def playback_state(self, handle: int) -> str | None:
         button_names = {
             normalize_text(_control_name(control))
-            for control in self._controls(handle)
+            for control in self._controls(handle, control_types=("Button",))
             if _control_type(control).lower() == "button" and _is_player_control(control)
         }
         if button_names & {"pause", "pausar"}:
@@ -1004,7 +1159,7 @@ class SpotifyUIAutomationAdapter:
         for control in self._controls(handle):
             name = _control_name(control)
             control_type = _control_type(control).lower()
-            if control_type == "group":
+            if control_type in {"group", "pane", "custom", "region"}:
                 for pattern in _NOW_PLAYING_PATTERNS:
                     match = pattern.match(name)
                     if match:

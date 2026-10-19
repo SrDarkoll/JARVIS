@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core import jarvis_config, jarvis_state
 from core.media_state import set_last_media_source
@@ -13,6 +13,7 @@ from core.media_state import set_last_media_source
 from modules.spotify import config
 from modules.spotify.api.client import _spotify_has_valid_cached_token
 from modules.spotify.api.playback import (
+    SpotifyAPIPlaybackResult,
     _spotify_add_to_queue_api,
     _spotify_control_api,
     _spotify_current_track_api,
@@ -21,7 +22,9 @@ from modules.spotify.api.playback import (
     _spotify_unlike_track_api,
 )
 from modules.spotify.desktop import (
+    AutomationState,
     DesktopResultStatus,
+    SpotifyCandidate,
     SpotifyDesktopResult,
     SpotifyRequest,
     build_windows_controller,
@@ -143,6 +146,90 @@ class SpotifyServicePlaybackOutcome:
     message: str
     ok: bool
     provider: str = ""
+    diagnostic_code: str = ""
+    verified: bool = False
+    requires_follow_up: bool = False
+    accepted: bool = False
+    status: DesktopResultStatus | None = None
+    choices: tuple[SpotifyCandidate, ...] = ()
+
+
+@dataclass(frozen=True)
+class SpotifyServiceMutationOutcome:
+    message: str
+    status: DesktopResultStatus
+    provider: str = ""
+    diagnostic_code: str = ""
+    verified: bool = False
+    choices: tuple[SpotifyCandidate, ...] = ()
+
+    @property
+    def accepted(self) -> bool:
+        return self.status is DesktopResultStatus.UNVERIFIED
+
+    @property
+    def requires_follow_up(self) -> bool:
+        return self.status is DesktopResultStatus.AMBIGUOUS
+
+
+def _spotify_desktop_effect_accepted(result: SpotifyDesktopResult) -> bool:
+    if result.status is DesktopResultStatus.UNVERIFIED:
+        return True
+    if result.status is not DesktopResultStatus.FAILED or result.message_key not in {
+        "spotify_playback_not_verified", "spotify_control_not_verified",
+    }:
+        return False
+    # Older providers omit stages; these codes are emitted only after sending input.
+    return not result.states or any(
+        state in {AutomationState.PLAYING, AutomationState.VERIFYING} for state in result.states
+    )
+
+
+def _desktop_mutation_outcome(result: SpotifyDesktopResult, message: str) -> SpotifyServiceMutationOutcome:
+    return SpotifyServiceMutationOutcome(
+        message=message,
+        status=DesktopResultStatus.UNVERIFIED if _spotify_desktop_effect_accepted(result) else result.status,
+        provider="desktop",
+        diagnostic_code=result.message_key or f"spotify_desktop_{result.status.value}",
+        verified=result.status is DesktopResultStatus.SUCCESS,
+        choices=result.choices,
+    )
+
+
+def _api_mutation_outcome(result: SpotifyAPIPlaybackResult, operation: str) -> SpotifyServiceMutationOutcome:
+    if result.ok:
+        status, diagnostic = DesktopResultStatus.UNVERIFIED, "accepted"
+    elif result.capability_failure:
+        status, diagnostic = DesktopResultStatus.UNAVAILABLE, "unavailable"
+    else:
+        status, diagnostic = DesktopResultStatus.FAILED, "failed"
+    return SpotifyServiceMutationOutcome(
+        message=result.message, status=status, provider="api",
+        diagnostic_code=f"spotify_api_{operation}_{diagnostic}",
+    )
+
+
+def _mutation_outcome(operation: str, argument: str) -> SpotifyServiceMutationOutcome:
+    api_handler, desktop_handler = {
+        "control": (_spotify_control_api, _spotify_control_desktop_outcome),
+        "queue": (_spotify_add_to_queue_api, _spotify_add_to_queue_desktop_outcome),
+        "like": (_spotify_like_track_api, _spotify_like_desktop_outcome),
+        "unlike": (_spotify_unlike_track_api, _spotify_unlike_desktop_outcome),
+    }[operation]
+    if SPOTIFY_PLAYBACK_MODE == "desktop" or (
+        SPOTIFY_PLAYBACK_MODE == "auto" and (
+            _spotify_api_temporarily_blocked(operation) or not _spotify_has_valid_cached_token()
+        )
+    ):
+        return desktop_handler(argument)
+
+    result = api_handler(argument)
+    if result.ok:
+        _spotify_api_clear_capability_failure(operation)
+    elif SPOTIFY_PLAYBACK_MODE == "auto" and result.capability_failure:
+        _spotify_api_mark_capability_failure(operation)
+        return desktop_handler(argument)
+    return _api_mutation_outcome(result, operation)
 
 
 def _spotify_api_temporarily_blocked(operation: str) -> bool:
@@ -234,6 +321,9 @@ def _spotify_play_desktop_outcome(song: str) -> SpotifyServicePlaybackOutcome:
             ),
             ok=True,
             provider="desktop",
+            diagnostic_code=result.message_key or "spotify_playback_started",
+            verified=True,
+            status=result.status,
         )
     if result.status is DesktopResultStatus.AMBIGUOUS:
         pending_spotify_selections.remember(profile_id, result.choices)
@@ -245,21 +335,33 @@ def _spotify_play_desktop_outcome(song: str) -> SpotifyServicePlaybackOutcome:
             ),
             ok=False,
             provider="desktop",
+            diagnostic_code="spotify_ambiguous_results",
+            requires_follow_up=True,
+            status=result.status,
+            choices=result.choices,
         )
 
     pending_spotify_selections.clear(profile_id)
     messages = {
+        "spotify_client_not_found": _spotify_text(
+            "I could not open the Spotify desktop client. Open Spotify and try again.",
+            "No pude abrir el cliente de Spotify. Abre Spotify y vuelve a intentarlo.",
+        ),
+        "spotify_uia_unavailable": _spotify_text(
+            "The Windows accessibility component needed to control Spotify is unavailable.",
+            "No esta disponible el componente de accesibilidad de Windows necesario para controlar Spotify.",
+        ),
         "spotify_no_results": _spotify_text(
             "I could not find that item in Spotify Desktop.",
             "No encontre ese contenido en Spotify Desktop.",
         ),
         "spotify_focus_lost": _spotify_text(
-            "Spotify lost focus before I could safely complete the search.",
-            "Spotify perdio el foco antes de completar la busqueda de forma segura.",
+            "I could not safely activate Spotify. Bring the Spotify window to the foreground and repeat the command.",
+            "No pude activar Spotify de forma segura. Pon su ventana en primer plano y repite el comando.",
         ),
         "spotify_start_timeout": _spotify_text(
-            "Spotify Desktop did not become ready in time.",
-            "Spotify Desktop no estuvo listo a tiempo.",
+            "I could not find the Spotify window in time. Open Spotify and try again.",
+            "No pude encontrar la ventana de Spotify a tiempo. Abre Spotify y vuelve a intentarlo.",
         ),
         "spotify_playback_not_verified": _spotify_text(
             "Spotify received the command, but I could not verify the requested track.",
@@ -278,16 +380,30 @@ def _spotify_play_desktop_outcome(song: str) -> SpotifyServicePlaybackOutcome:
             "Spotify Desktop todavia esta procesando otro comando.",
         ),
     }
-    return SpotifyServicePlaybackOutcome(
-        messages.get(
-            result.message_key,
-            _spotify_text(
+    accepted = _spotify_desktop_effect_accepted(result)
+    if accepted:
+        message = messages["spotify_playback_not_verified"]
+    elif result.message_key == "spotify_playback_not_verified":
+        message = _spotify_text(
+            "Spotify Desktop could not start the requested track.",
+            "Spotify Desktop no pudo iniciar la cancion solicitada.",
+        )
+    else:
+        message = messages.get(
+            result.message_key, _spotify_text(
                 "Spotify Desktop automation is unavailable.",
                 "La automatizacion de Spotify Desktop no esta disponible.",
             ),
-        ),
+        )
+    return SpotifyServicePlaybackOutcome(
+        message,
         ok=False,
         provider="desktop",
+        diagnostic_code=result.message_key or (
+            "spotify_playback_not_verified" if accepted else "spotify_desktop_unavailable"
+        ),
+        accepted=accepted,
+        status=DesktopResultStatus.UNVERIFIED if accepted else result.status,
     )
 
 
@@ -325,29 +441,23 @@ def _spotify_desktop_control_message(canonical: str, result: SpotifyDesktopResul
             "Envié el control a Spotify Desktop, pero no pude verificar el cambio de estado.",
         )
 
-    # Windows Media Key Fallback when desktop UI automation is unavailable
-    if result.status is DesktopResultStatus.UNAVAILABLE:
-        try:
-            from modules.spotify.desktop.windows import send_media_key_event
-
-            if send_media_key_event(canonical) and canonical in messages:
-                return _spotify_text(
-                    "I sent a global media key, but I could not verify which application handled it.",
-                    "Envie una tecla multimedia global, pero no pude verificar que aplicacion la recibio.",
-                )
-        except Exception:
-            pass
+    if result.status is DesktopResultStatus.AMBIGUOUS:
+        choices = "; ".join(_spotify_track_plain_label(item.title, item.artist) for item in result.choices)
+        return _spotify_text(
+            f"I found several close matches: {choices}. Repeat the command with the title and artist.",
+            f"Encontre varias coincidencias: {choices}. Repite el comando con el titulo y el artista.",
+        )
     if result.message_key == "spotify_focus_lost":
         return _spotify_text(
-            "Spotify lost focus before I could safely complete that action.",
-            "Spotify perdio el foco antes de completar la accion de forma segura.",
+            "I could not safely activate Spotify. Bring the Spotify window to the foreground and repeat the command.",
+            "No pude activar Spotify de forma segura. Pon su ventana en primer plano y repite el comando.",
         )
     if result.message_key == "spotify_action_restricted":
         return _spotify_text(
             "That control is not available in the current Spotify state.",
             "Ese control no esta disponible en el estado actual de Spotify.",
         )
-    if result.message_key == "spotify_control_not_verified":
+    if result.message_key == "spotify_control_not_verified" and _spotify_desktop_effect_accepted(result):
         return _spotify_text(
             "Spotify received the control, but I could not verify the state change.",
             "Spotify recibio el control, pero no pude verificar el cambio de estado.",
@@ -358,19 +468,45 @@ def _spotify_desktop_control_message(canonical: str, result: SpotifyDesktopResul
     )
 
 
-def _spotify_control_desktop(action: str) -> str:
+def _spotify_desktop_control_outcome(canonical: str, result: SpotifyDesktopResult) -> SpotifyServiceMutationOutcome:
+    if result.status is DesktopResultStatus.UNAVAILABLE and canonical in {"pause", "resume", "next", "previous"}:
+        try:
+            from modules.spotify.desktop.windows import send_media_key_event
+
+            if send_media_key_event(canonical):
+                return SpotifyServiceMutationOutcome(
+                    _spotify_text(
+                        "I sent a global media key, but I could not verify which application handled it.",
+                        "Envie una tecla multimedia global, pero no pude verificar que aplicacion la recibio.",
+                    ),
+                    status=DesktopResultStatus.UNVERIFIED,
+                    provider="global_media_key",
+                    diagnostic_code="spotify_global_media_key_unverified",
+                )
+        except Exception:
+            pass
+    return _desktop_mutation_outcome(result, _spotify_desktop_control_message(canonical, result))
+
+
+def _spotify_control_desktop_outcome(action: str) -> SpotifyServiceMutationOutcome:
     canonical = _spotify_desktop_control_action(action)
     if canonical is None:
-        return _spotify_text(
-            f"Action '{action}' not recognized.",
-            f"Accion '{action}' no reconocida.",
+        return SpotifyServiceMutationOutcome(
+            _spotify_text(f"Action '{action}' not recognized.", f"Accion '{action}' no reconocida."),
+            status=DesktopResultStatus.FAILED,
+            provider="desktop",
+            diagnostic_code="spotify_action_not_recognized",
         )
 
     if canonical == "info":
-        return current_track()
+        return _current_track_outcome()
 
     result = _get_desktop_controller().control(canonical)
-    return _spotify_desktop_control_message(canonical, result)
+    return _spotify_desktop_control_outcome(canonical, result)
+
+
+def _spotify_control_desktop(action: str) -> str:
+    return _spotify_control_desktop_outcome(action).message
 
 
 def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
@@ -379,6 +515,9 @@ def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
         return SpotifyServicePlaybackOutcome(
             _spotify_text("Tell me what to play.", "Dime que deseas reproducir."),
             ok=False,
+            diagnostic_code="spotify_query_required",
+            requires_follow_up=True,
+            status=DesktopResultStatus.AMBIGUOUS,
         )
     pending_spotify_selections.clear(jarvis_state.get_active_profile_id())
     if SPOTIFY_PLAYBACK_MODE == "desktop":
@@ -395,13 +534,23 @@ def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
             jarvis_state.get_active_profile_id(),
             "spotify",
         )
-        return SpotifyServicePlaybackOutcome(api_result.message, ok=True, provider="api")
+        return SpotifyServicePlaybackOutcome(
+            api_result.message, ok=True, provider="api", diagnostic_code="spotify_api_playback_accepted",
+            accepted=True, status=DesktopResultStatus.UNVERIFIED,
+        )
     if SPOTIFY_PLAYBACK_MODE == "api":
-        return SpotifyServicePlaybackOutcome(api_result.message, ok=False, provider="api")
+        return SpotifyServicePlaybackOutcome(
+            api_result.message, ok=False, provider="api",
+            diagnostic_code="spotify_api_playback_unavailable" if api_result.capability_failure else "spotify_api_playback_failed",
+            status=DesktopResultStatus.UNAVAILABLE if api_result.capability_failure else DesktopResultStatus.FAILED,
+        )
     if api_result.capability_failure:
         _spotify_api_mark_capability_failure("play")
         return _spotify_play_desktop_outcome(clean_song)
-    return SpotifyServicePlaybackOutcome(api_result.message, ok=False, provider="api")
+    return SpotifyServicePlaybackOutcome(
+        api_result.message, ok=False, provider="api", diagnostic_code="spotify_api_playback_failed",
+        status=DesktopResultStatus.FAILED,
+    )
 
 
 def play(song: str) -> str:
@@ -413,109 +562,109 @@ def _play_spotify_seed(seed: str) -> SpotifyServicePlaybackOutcome:
     return _play_outcome(seed)
 
 
-def play_mix(seed: str) -> str:
+def _mix_outcome(seed: str) -> SpotifyServicePlaybackOutcome:
     """Play a seed and build a dynamic AutoMix around it."""
     clean_seed = str(seed or "").strip()
     if not clean_seed:
-        return _spotify_text(
-            "Tell me an artist, genre, playlist, or song to build the mix.",
-            "Dime un artista, genero, playlist o cancion para construir el mix.",
+        return SpotifyServicePlaybackOutcome(
+            _spotify_text(
+                "Tell me an artist, genre, playlist, or song to build the mix.",
+                "Dime un artista, genero, playlist o cancion para construir el mix.",
+            ),
+            ok=False,
+            diagnostic_code="spotify_seed_required",
+            requires_follow_up=True,
+            status=DesktopResultStatus.AMBIGUOUS,
         )
     outcome = _play_spotify_seed(clean_seed)
     if outcome.ok and outcome.provider == "desktop":
-        return (
-            outcome.message
+        return replace(
+            outcome, message=outcome.message
             + " "
             + _spotify_text(
                 "Spotify Desktop will continue the mix using its own autoplay and recommendations.",
                 "Spotify Desktop continuara el mix con su reproduccion automatica y recomendaciones.",
             )
         )
-    return outcome.message
+    return outcome
+
+
+def play_mix(seed: str) -> str:
+    """Play a seed and build a dynamic AutoMix around it."""
+    return _mix_outcome(seed).message
+
+
+def _control_outcome(action: str) -> SpotifyServiceMutationOutcome:
+    clean_action = str(action or "").strip()
+    if not clean_action:
+        return SpotifyServiceMutationOutcome(
+            _spotify_text(
+                "Tell me which playback action to perform.",
+                "Dime que accion de reproduccion debo realizar.",
+            ),
+            status=DesktopResultStatus.AMBIGUOUS,
+            diagnostic_code="spotify_control_action_required",
+        )
+    if _spotify_desktop_control_action(clean_action) == "info":
+        return _current_track_outcome()
+    return _mutation_outcome("control", clean_action)
 
 
 def control(action: str) -> str:
     """Control Spotify through a cached API session or Spotify Desktop."""
-    clean_action = str(action or "").strip()
-    if not clean_action:
-        return _spotify_text(
-            "Tell me which playback action to perform.",
-            "Dime que accion de reproduccion debo realizar.",
-        )
-    if SPOTIFY_PLAYBACK_MODE == "desktop":
-        return _spotify_control_desktop(clean_action)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_temporarily_blocked("control") or not _spotify_has_valid_cached_token()
-    ):
-        return _spotify_control_desktop(clean_action)
-
-    api_result = _spotify_control_api(clean_action)
-    if api_result.ok:
-        _spotify_api_clear_capability_failure("control")
-        return api_result.message
-    if SPOTIFY_PLAYBACK_MODE == "api":
-        return api_result.message
-    if api_result.capability_failure:
-        _spotify_api_mark_capability_failure("control")
-        return _spotify_control_desktop(clean_action)
-    return api_result.message
+    return _control_outcome(action).message
 
 
-def _spotify_add_to_queue_desktop(cancion: str) -> str:
+def _spotify_add_to_queue_desktop_outcome(cancion: str) -> SpotifyServiceMutationOutcome:
     clean_song = str(cancion or "").strip()
     if not clean_song:
-        return _spotify_text(
-            "Please specify a song to add to the queue.",
-            "Por favor indique una canción para añadir a la cola.",
-        )
+        return _queue_outcome(clean_song)
     result = _get_desktop_controller().queue(_spotify_desktop_request(clean_song))
     if result.status is DesktopResultStatus.SUCCESS:
-        return _spotify_text(
+        message = _spotify_text(
             f"Added to Spotify Desktop queue: {_spotify_track_label(result.title, result.artist)}.",
             f"Añadido a la cola en Spotify Desktop: {_spotify_track_label(result.title, result.artist)}.",
         )
-    if result.status is DesktopResultStatus.UNVERIFIED:
-        return _spotify_text(
+    elif result.status is DesktopResultStatus.UNVERIFIED:
+        message = _spotify_text(
             f"I sent the queue command for {_spotify_track_label(result.title, result.artist)}, but I could not verify that Spotify added it.",
             f"Envié el comando de cola para {_spotify_track_label(result.title, result.artist)}, pero no pude verificar que Spotify lo añadiera.",
         )
-    if result.status is DesktopResultStatus.AMBIGUOUS:
+    elif result.status is DesktopResultStatus.AMBIGUOUS:
         choices = "; ".join(_spotify_track_plain_label(item.title, item.artist) for item in result.choices)
-        return _spotify_text(
+        message = _spotify_text(
             f"I found several close matches: {choices}. Which one should I queue?",
             f"Encontré varias coincidencias: {choices}. ¿Cuál debo añadir a la cola?",
         )
-    return _spotify_text(
-        f"Could not add '{clean_song}' to Spotify Desktop queue.",
-        f"No se pudo añadir '{clean_song}' a la cola en Spotify Desktop.",
-    )
+    else:
+        message = _spotify_text(
+            f"Could not add '{clean_song}' to Spotify Desktop queue.",
+            f"No se pudo añadir '{clean_song}' a la cola en Spotify Desktop.",
+        )
+    return _desktop_mutation_outcome(result, message)
+
+
+def _spotify_add_to_queue_desktop(cancion: str) -> str:
+    return _spotify_add_to_queue_desktop_outcome(cancion).message
+
+
+def _queue_outcome(cancion: str) -> SpotifyServiceMutationOutcome:
+    clean_song = str(cancion or "").strip()
+    if not clean_song:
+        return SpotifyServiceMutationOutcome(
+            _spotify_text(
+                "Please specify a song to add to the queue.",
+                "Por favor indique una canción para añadir a la cola.",
+            ),
+            status=DesktopResultStatus.AMBIGUOUS,
+            diagnostic_code="spotify_queue_query_required",
+        )
+    return _mutation_outcome("queue", clean_song)
 
 
 def add_to_queue(cancion: str) -> str:
     """Add a song to the Spotify playback queue."""
-    clean_song = str(cancion or "").strip()
-    if not clean_song:
-        return _spotify_text(
-            "Please specify a song to add to the queue.",
-            "Por favor indique una canción para añadir a la cola.",
-        )
-    if SPOTIFY_PLAYBACK_MODE == "desktop":
-        return _spotify_add_to_queue_desktop(clean_song)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_temporarily_blocked("queue") or not _spotify_has_valid_cached_token()
-    ):
-        return _spotify_add_to_queue_desktop(clean_song)
-
-    res = _spotify_add_to_queue_api(clean_song)
-    if res.ok:
-        _spotify_api_clear_capability_failure("queue")
-        return res.message
-    if SPOTIFY_PLAYBACK_MODE == "api":
-        return res.message
-    if res.capability_failure:
-        _spotify_api_mark_capability_failure("queue")
-        return _spotify_add_to_queue_desktop(clean_song)
-    return res.message
+    return _queue_outcome(cancion).message
 
 
 def _spotify_is_current_track_reference(cancion: str) -> bool:
@@ -532,116 +681,111 @@ def _spotify_is_current_track_reference(cancion: str) -> bool:
     }
 
 
-def _spotify_library_desktop(cancion: str, action: str) -> str:
+def _spotify_library_desktop_outcome(cancion: str, action: str) -> SpotifyServiceMutationOutcome:
     controller = _get_desktop_controller()
     if _spotify_is_current_track_reference(cancion):
         result = controller.control(action)
         if result.status is DesktopResultStatus.SUCCESS and result.title:
             label = _spotify_track_label(result.title, result.artist)
             if action == "like":
-                return _spotify_text(
+                message = _spotify_text(
                     f"Saved {label} to your Liked Songs on Spotify Desktop.",
                     f"Guardé {label} en tus Me Gusta de Spotify Desktop.",
                 )
-            return _spotify_text(
-                f"Removed {label} from your Liked Songs on Spotify Desktop.",
-                f"Eliminé {label} de tus Me Gusta de Spotify Desktop.",
-            )
-        return _spotify_desktop_control_message(action, result)
+            else:
+                message = _spotify_text(
+                    f"Removed {label} from your Liked Songs on Spotify Desktop.",
+                    f"Eliminé {label} de tus Me Gusta de Spotify Desktop.",
+                )
+            return _desktop_mutation_outcome(result, message)
+        return _spotify_desktop_control_outcome(action, result)
 
     result = controller.library(_spotify_desktop_request(cancion), action)
     label = _spotify_track_label(result.title, result.artist)
     if result.status is DesktopResultStatus.SUCCESS:
         if action == "like":
-            return _spotify_text(
+            message = _spotify_text(
                 f"Saved {label} to your Liked Songs on Spotify Desktop.",
                 f"Guardé {label} en tus Me Gusta de Spotify Desktop.",
             )
-        return _spotify_text(
-            f"Removed {label} from your Liked Songs on Spotify Desktop.",
-            f"Eliminé {label} de tus Me Gusta de Spotify Desktop.",
-        )
-    if result.status is DesktopResultStatus.UNVERIFIED:
+        else:
+            message = _spotify_text(
+                f"Removed {label} from your Liked Songs on Spotify Desktop.",
+                f"Eliminé {label} de tus Me Gusta de Spotify Desktop.",
+            )
+    elif result.status is DesktopResultStatus.UNVERIFIED:
         verb_en = "save" if action == "like" else "remove"
         verb_es = "guardar" if action == "like" else "eliminar"
-        return _spotify_text(
+        message = _spotify_text(
             f"I sent the command to {verb_en} {label}, but I could not verify the library change.",
             f"Envié el comando para {verb_es} {label}, pero no pude verificar el cambio en la biblioteca.",
         )
-    if result.status is DesktopResultStatus.AMBIGUOUS:
+    elif result.status is DesktopResultStatus.AMBIGUOUS:
         choices = "; ".join(_spotify_track_plain_label(item.title, item.artist) for item in result.choices)
-        return _spotify_text(
+        message = _spotify_text(
             f"I found several close matches: {choices}. Repeat the command with the title and artist.",
             f"Encontré varias coincidencias: {choices}. Repite el comando con el título y el artista.",
         )
-    if result.status is DesktopResultStatus.NOT_FOUND:
-        return _spotify_text(
+    elif result.status is DesktopResultStatus.NOT_FOUND:
+        message = _spotify_text(
             "I could not find that track in Spotify Desktop.",
             "No pude encontrar esa canción en Spotify Desktop.",
         )
-    return _spotify_text(
-        "Spotify Desktop could not change that track safely without interrupting playback.",
-        "Spotify Desktop no pudo cambiar esa canción de forma segura sin interrumpir la reproducción.",
-    )
+    else:
+        message = _spotify_text(
+            "Spotify Desktop could not change that track safely without interrupting playback.",
+            "Spotify Desktop no pudo cambiar esa canción de forma segura sin interrumpir la reproducción.",
+        )
+    return _desktop_mutation_outcome(result, message)
+
+
+def _spotify_library_desktop(cancion: str, action: str) -> str:
+    return _spotify_library_desktop_outcome(cancion, action).message
+
+
+def _spotify_like_desktop_outcome(cancion: str = "") -> SpotifyServiceMutationOutcome:
+    return _spotify_library_desktop_outcome(cancion, "like")
 
 
 def _spotify_like_desktop(cancion: str = "") -> str:
-    return _spotify_library_desktop(cancion, "like")
+    return _spotify_like_desktop_outcome(cancion).message
+
+
+def _like_outcome(cancion: str = "") -> SpotifyServiceMutationOutcome:
+    return _mutation_outcome("like", cancion)
 
 
 def like_track(cancion: str = "") -> str:
     """Save the currently playing or specified track to Liked Songs."""
-    if SPOTIFY_PLAYBACK_MODE == "desktop":
-        return _spotify_like_desktop(cancion)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_temporarily_blocked("like") or not _spotify_has_valid_cached_token()
-    ):
-        return _spotify_like_desktop(cancion)
+    return _like_outcome(cancion).message
 
-    res = _spotify_like_track_api(cancion)
-    if res.ok:
-        _spotify_api_clear_capability_failure("like")
-        return res.message
-    if SPOTIFY_PLAYBACK_MODE == "api":
-        return res.message
-    if res.capability_failure:
-        _spotify_api_mark_capability_failure("like")
-        return _spotify_like_desktop(cancion)
-    return res.message
+
+def _spotify_unlike_desktop_outcome(cancion: str = "") -> SpotifyServiceMutationOutcome:
+    return _spotify_library_desktop_outcome(cancion, "unlike")
 
 
 def _spotify_unlike_desktop(cancion: str = "") -> str:
-    return _spotify_library_desktop(cancion, "unlike")
+    return _spotify_unlike_desktop_outcome(cancion).message
+
+
+def _unlike_outcome(cancion: str = "") -> SpotifyServiceMutationOutcome:
+    return _mutation_outcome("unlike", cancion)
 
 
 def unlike_track(cancion: str = "") -> str:
     """Remove the currently playing or specified track from Liked Songs."""
-    if SPOTIFY_PLAYBACK_MODE == "desktop":
-        return _spotify_unlike_desktop(cancion)
-    if SPOTIFY_PLAYBACK_MODE == "auto" and (
-        _spotify_api_temporarily_blocked("unlike") or not _spotify_has_valid_cached_token()
-    ):
-        return _spotify_unlike_desktop(cancion)
-
-    res = _spotify_unlike_track_api(cancion)
-    if res.ok:
-        _spotify_api_clear_capability_failure("unlike")
-        return res.message
-    if SPOTIFY_PLAYBACK_MODE == "api":
-        return res.message
-    if res.capability_failure:
-        _spotify_api_mark_capability_failure("unlike")
-        return _spotify_unlike_desktop(cancion)
-    return res.message
+    return _unlike_outcome(cancion).message
 
 
-def current_track() -> str:
-    """Get information about the currently playing track on Spotify."""
+def _current_track_outcome() -> SpotifyServiceMutationOutcome:
     api_result = None
     if SPOTIFY_PLAYBACK_MODE != "desktop":
         api_result = _spotify_current_track_api()
         if api_result.ok:
-            return api_result.message
+            return SpotifyServiceMutationOutcome(
+                api_result.message, status=DesktopResultStatus.SUCCESS, provider="api",
+                diagnostic_code="spotify_current_track", verified=True,
+            )
 
     result = _get_desktop_controller().current()
     if result.status in {DesktopResultStatus.SUCCESS, DesktopResultStatus.UNVERIFIED} and result.title:
@@ -649,28 +793,47 @@ def current_track() -> str:
         artist_en = f" by {result.artist}" if result.artist else ""
         artist_es = f" de {result.artist}" if result.artist else ""
         if result.playback_state == "playing":
-            return _spotify_text(
+            message = _spotify_text(
                 f"Playing on Spotify Desktop: '{title}'{artist_en}.",
                 f"Reproduciendo en Spotify Desktop: '{title}'{artist_es}.",
             )
-        if result.playback_state == "paused":
-            return _spotify_text(
+        elif result.playback_state == "paused":
+            message = _spotify_text(
                 f"Paused on Spotify Desktop: '{title}'{artist_en}.",
                 f"Pausado en Spotify Desktop: '{title}'{artist_es}.",
             )
-        return _spotify_text(
-            f"Current track on Spotify Desktop: '{title}'{artist_en}; playback state could not be verified.",
-            f"Canción actual en Spotify Desktop: '{title}'{artist_es}; no pude verificar el estado de reproducción.",
+        else:
+            message = _spotify_text(
+                f"Current track on Spotify Desktop: '{title}'{artist_en}; playback state could not be verified.",
+                f"Canción actual en Spotify Desktop: '{title}'{artist_es}; no pude verificar el estado de reproducción.",
+            )
+        return SpotifyServiceMutationOutcome(
+            message, status=DesktopResultStatus.SUCCESS, provider="desktop",
+            diagnostic_code=result.message_key or "spotify_current_track",
+            verified=result.status is DesktopResultStatus.SUCCESS,
         )
     if result.status is DesktopResultStatus.NOT_FOUND:
-        return _spotify_text(
-            "No current track could be identified on Spotify Desktop.",
-            "No pude identificar una canción actual en Spotify Desktop.",
+        return _desktop_mutation_outcome(
+            result, _spotify_text(
+                "No current track could be identified on Spotify Desktop.",
+                "No pude identificar una canción actual en Spotify Desktop.",
+            ),
         )
 
     if SPOTIFY_PLAYBACK_MODE == "api" and api_result is not None:
-        return api_result.message
-    return _spotify_text(
-        "No track is currently playing on Spotify.",
-        "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+        return _api_mutation_outcome(api_result, "current_track")
+    return SpotifyServiceMutationOutcome(
+        _spotify_text(
+            "No track is currently playing on Spotify.",
+            "No hay ninguna canción reproduciéndose actualmente en Spotify.",
+        ),
+        status=DesktopResultStatus.FAILED if result.status is DesktopResultStatus.UNVERIFIED else result.status,
+        provider="desktop",
+        diagnostic_code=result.message_key or "spotify_current_track_unavailable",
+        choices=result.choices,
     )
+
+
+def current_track() -> str:
+    """Get information about the currently playing track on Spotify."""
+    return _current_track_outcome().message

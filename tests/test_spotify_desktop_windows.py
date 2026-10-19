@@ -1,10 +1,17 @@
 import pytest
+from modules.spotify.desktop import windows as spotify_windows
 from modules.spotify.desktop.models import SpotifyCandidate
 from modules.spotify.desktop.windows import (
     SpotifyUIAutomationAdapter,
     SpotifyWindow,
     WindowsSpotifyWindowAdapter,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_spotify_foreground(monkeypatch):
+    monkeypatch.setattr(spotify_windows, "_is_spotify_foreground", lambda _handle: True, raising=False)
+    monkeypatch.setattr(spotify_windows, "_window_bounds", lambda _handle: (0, 0, 1000, 1000))
 
 
 class FakeClock:
@@ -50,6 +57,18 @@ def test_window_discovery_ignores_auxiliary_spotify_windows():
         pid=42,
         title="Spotify Free",
     )
+
+
+def test_minimized_main_window_is_usable_without_launching_spotify_again(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(spotify_windows, "IS_WINDOWS", True)
+    monkeypatch.setattr(spotify_windows.ctypes, "windll", SimpleNamespace(
+        user32=SimpleNamespace(IsIconic=lambda _handle: True),
+    ), raising=False)
+    monkeypatch.setattr(spotify_windows, "_window_bounds", lambda _handle: (-32000, -32000, -31840, -31972))
+
+    assert spotify_windows._is_usable_spotify_window(SpotifyWindow(handle=801, pid=42, title="Spotify"))
 
 
 def test_closed_spotify_is_started_and_polled_until_ready():
@@ -180,6 +199,10 @@ class FakeControl:
 
     def descendants(self):
         return list(self.children)
+
+    def rectangle(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(left=200, top=200, right=300, bottom=240)
 
     def set_edit_text(self, value):
         self.text = value
@@ -580,6 +603,29 @@ def test_like_control_has_no_blind_keyboard_fallback():
     assert "%+b" not in shortcuts
 
 
+def test_context_menu_cannot_bypass_checked_click_fallback():
+    from types import SimpleNamespace
+
+    class UnsafeMenu(FakeControl):
+        clicked = False
+        def invoke(self):
+            raise RuntimeError("unsupported")
+        def rectangle(self):
+            return SimpleNamespace(left=200, top=1100, right=300, bottom=1140)
+        def click_input(self):
+            self.clicked = True
+
+    menu = UnsafeMenu(name="Add to queue", control_type="MenuItem")
+    candidate = SpotifyCandidate("queue-target", "Song", "Artist")
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[menu]), send_shortcut=lambda _value: None,
+    )
+    adapter._elements[candidate.element_id] = FakeControl()
+
+    assert not adapter.queue_candidate(candidate, handle=509)
+    assert not menu.clicked
+
+
 def test_observable_extended_control_states_use_accessible_names():
     controls = [
         FakeControl(name="Disable repeat", control_type="Button"),
@@ -593,3 +639,209 @@ def test_observable_extended_control_states_use_accessible_names():
     assert adapter.repeat_state(509) is True
     assert adapter.saved_state(509) is True
     assert adapter.mute_state(509) is True
+
+
+@pytest.mark.parametrize("name,control_type", [
+    ("Address and search bar", "Edit"),
+    ("Search Google or type a URL", "Edit"),
+    ("", "Edit"),
+    ("", "ComboBox"),
+    ("Search in your library", "Edit"),
+])
+def test_search_readiness_rejects_browser_chrome_and_unrelated_inputs(name, control_type):
+    control = FakeControl(name=name, control_type=control_type)
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[control]))
+
+    assert not adapter.search_available(500)
+
+
+def test_hidden_search_does_not_stop_readiness_polling():
+    search = FakeControl(name="Search", control_type="ComboBox")
+    search.is_visible = lambda: False
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[search]))
+
+    assert not adapter.search_available(500)
+
+
+def test_search_uses_accessibility_name_not_current_query_value():
+    from types import SimpleNamespace
+
+    search = FakeControl(name="Killer Queen Queen", control_type="ComboBox")
+    search.element_info = SimpleNamespace(name="¿Qué quieres reproducir?")
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[search]))
+
+    assert adapter.search_available(500)
+
+
+def test_search_clicks_actual_editable_before_submitting_from_home():
+    class Search(FakeControl):
+        clicked = False
+        def click_input(self):
+            self.clicked = True
+
+    search = Search(name="¿Qué quieres reproducir?", control_type="ComboBox")
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[search]), send_shortcut=lambda _value: None)
+
+    adapter.search(500, "Dreams Fleetwood Mac")
+    assert search.clicked
+
+
+def test_click_fallback_refuses_rectangle_outside_target_window():
+    from types import SimpleNamespace
+
+    class OffWindow(FakeControl):
+        clicked = False
+        def click_input(self):
+            self.clicked = True
+        def rectangle(self):
+            return SimpleNamespace(left=200, top=1100, right=300, bottom=1140)
+
+    play = OffWindow(name="Play Dreams by Fleetwood Mac", control_type="Button")
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
+    candidate = adapter.read_candidates(500)[0]
+
+    assert adapter.activate(candidate)
+    assert play.invoked
+    assert not play.clicked
+
+
+@pytest.mark.parametrize("control_type", ["Pane", "Custom", "Region"])
+def test_now_playing_reads_current_spotify_region_types(control_type):
+    metadata = FakeControl(name="Estás escuchando: Killer Queen de Queen", control_type=control_type)
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[metadata]))
+
+    assert adapter.now_playing(500) == ("Killer Queen", "Queen")
+
+
+def test_invoke_skips_unsupported_com_patterns_without_throwing():
+    from modules.spotify.desktop.windows import _invoke_control
+
+    class UnsupportedInvoke:
+        @property
+        def iface_invoke(self):
+            raise RuntimeError("NoPatternInterfaceError")
+
+        @property
+        def iface_legacy_iaccessible(self):
+            raise RuntimeError("NoPatternInterfaceError")
+
+    assert not _invoke_control(UnsupportedInvoke())
+
+
+def test_selection_alone_is_not_a_successful_playback_activation():
+    from modules.spotify.desktop.windows import _invoke_control
+
+    class Selectable:
+        def select(self):
+            pass
+
+    assert not _invoke_control(Selectable())
+
+
+def test_focus_waits_for_asynchronous_app_activate():
+    clock = FakeClock()
+    window = SpotifyWindow(handle=907, pid=42, title="Spotify")
+    adapter = WindowsSpotifyWindowAdapter(
+        process_ids=lambda: {42}, windows=lambda: [window],
+        focus_window=lambda _handle: False, activate_process_window=lambda _pid: True,
+        foreground_window=lambda: 907 if clock.value >= 0.5 else 100,
+        monotonic=clock.monotonic, sleep=clock.sleep,
+    )
+
+    assert adapter.focus(window)
+    assert clock.value == 0.5
+
+
+def test_focus_reads_actual_window_even_if_activation_return_value_is_false():
+    clock = FakeClock()
+    window = SpotifyWindow(handle=907, pid=42, title="Spotify")
+    adapter = WindowsSpotifyWindowAdapter(
+        process_ids=lambda: {42}, windows=lambda: [window],
+        focus_window=lambda _handle: False, activate_process_window=lambda _pid: False,
+        foreground_window=lambda: 907 if clock.value >= 0.5 else 100,
+        monotonic=clock.monotonic, sleep=clock.sleep,
+    )
+
+    assert adapter.focus(window)
+    assert clock.value == 0.5
+
+
+def test_control_rechecks_focus_after_slow_accessibility_read(monkeypatch):
+    button = FakeControl(name="Pausar", control_type="Button")
+    def root(_handle):
+        monkeypatch.setattr(spotify_windows, "_is_spotify_foreground", lambda _handle: False)
+        return FakeControl(children=[button])
+    shortcuts = []
+    adapter = SpotifyUIAutomationAdapter(root_factory=root, send_shortcut=shortcuts.append)
+
+    assert not adapter.control(500, "pause")
+    assert not button.invoked
+    assert shortcuts == []
+
+
+def test_search_stops_before_typing_if_focus_changes_after_clear(monkeypatch):
+    search = FakeControl(name="Search", control_type="ComboBox")
+    search.set_edit_text = None
+    shortcuts, texts = [], []
+    def send_shortcut(shortcut):
+        shortcuts.append(shortcut)
+        monkeypatch.setattr(spotify_windows, "_is_spotify_foreground", lambda _handle: False)
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[search]),
+        send_shortcut=send_shortcut, send_text=texts.append,
+    )
+
+    with pytest.raises(RuntimeError, match="spotify_focus_lost"):
+        adapter.search(500, "Killer Queen Queen")
+    assert shortcuts == ["^a{BACKSPACE}"]
+    assert texts == []
+
+
+def test_candidate_activation_rechecks_focus_after_scrolling(monkeypatch):
+    play = FakeControl(name="Play Dreams by Fleetwood Mac", control_type="Button")
+    def visibility():
+        monkeypatch.setattr(spotify_windows, "_is_spotify_foreground", lambda _handle: False)
+        return True
+    play.is_visible = visibility
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: FakeControl(children=[play]))
+    candidate = adapter.read_candidates(500)[0]
+
+    assert not adapter.activate(candidate)
+    assert not play.invoked
+
+
+@pytest.mark.parametrize("action,opposite", [("mute", "Unmute"), ("mute", "Desilenciar")])
+def test_control_does_not_invoke_opposite_action_by_substring(action, opposite):
+    button = FakeControl(name=opposite, control_type="Button")
+    adapter = SpotifyUIAutomationAdapter(
+        root_factory=lambda _handle: FakeControl(children=[button]), send_shortcut=lambda _value: None,
+    )
+
+    adapter.control(500, action)
+    assert not button.invoked
+
+
+def test_search_queries_only_editable_types_instead_of_entire_spotify_tree():
+    search = FakeControl(name="Search", control_type="ComboBox")
+    calls = []
+    class TypedRoot:
+        def descendants(self, *, control_type=None):
+            calls.append(control_type)
+            return [search] if control_type == "ComboBox" else []
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: TypedRoot())
+
+    assert adapter.search_available(500)
+    assert calls == ["ComboBox", "Edit"]
+
+
+def test_player_state_queries_only_buttons_without_caching_obsolete_state():
+    calls = []
+    class TypedRoot:
+        def descendants(self, *, control_type=None):
+            calls.append(control_type)
+            return [FakeControl(name="Pausar" if len(calls) == 1 else "Reproducir", control_type="Button")]
+    adapter = SpotifyUIAutomationAdapter(root_factory=lambda _handle: TypedRoot())
+
+    assert adapter.playback_state(500) == "playing"
+    assert adapter.playback_state(500) == "paused"
+    assert calls == ["Button", "Button"]

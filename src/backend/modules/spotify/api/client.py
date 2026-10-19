@@ -358,17 +358,31 @@ def _spotify_classify_error(err: Exception | str) -> str:
     txt = str(err or "")
     normalized = txt.strip().lower()
     result = "unknown"
-    if normalized in {"auth", "network", "no_device", "premium", "quota"}:
+    if normalized in {"auth", "network", "no_device", "premium", "forbidden", "quota"}:
         result = normalized
 
-    if result == "unknown" and err.__class__.__name__ in ("SpotifyException", "HTTPError"):
-        status = getattr(err, "status", None) or getattr(err, "code", None)
+    if result == "unknown":
+        response = getattr(err, "response", None)
+        raw_status = (
+            getattr(err, "http_status", None)
+            or getattr(err, "status", None)
+            or getattr(response, "status_code", None)
+            or getattr(err, "code", None)
+        )
+        try:
+            status = int(raw_status) if raw_status is not None else None
+        except (TypeError, ValueError):
+            status = None
         if status == 401 or ("token" in normalized and "invalid" in normalized):
             result = "auth"
-        elif status == 403 or "premium" in normalized or "restrict" in normalized:
-            result = "premium"
         elif status == 429 or "rate limit" in normalized or "cuota" in normalized:
             result = "quota"
+        elif status == 403:
+            result = "premium" if "premium" in normalized else "forbidden"
+        elif "premium" in normalized:
+            result = "premium"
+        elif "forbidden" in normalized or "restrict" in normalized:
+            result = "forbidden"
 
     if result == "unknown" and any(
         p in normalized
