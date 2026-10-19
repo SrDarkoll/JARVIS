@@ -5,13 +5,22 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time as _uti_time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import requests as http_requests
 from core import jarvis_state
 from core.app_config import get_default_location
+from core.command_pipeline.models import (
+    ActionStep,
+    CommandRequest,
+    ExecutionReceipt,
+    ReceiptStatus,
+    ToolExecutionResult,
+)
+from core.jarvis_config import RUNTIME_PATHS
 from core.service_container import services
 from langchain_core.tools import tool
 from requests.exceptions import RequestException
@@ -25,7 +34,6 @@ from utils.math_expression import (
 
 from tools._common import (
     BASE_DIR,
-    ROOT_DIR,
     _normalizar_profile_id,
     _warn_once,
 )
@@ -570,17 +578,23 @@ def obtener_deportes_espn(
 # ─────────────────────────────────────────
 # Recordatorios
 # ─────────────────────────────────────────
-def agregar_recordatorio(texto: str, minutos: int) -> None:
-    services.add_reminder(texto, minutos)
+def agregar_recordatorio(texto: str, minutos: int):
+    return services.add_reminder(texto, minutos)
 
 
 @tool
-def poner_recordatorio(texto: str, minutos: int) -> str:
+def poner_recordatorio(texto: str, minutos: int) -> ToolExecutionResult:
     """Programa un recordatorio de voz en X minutos.
     SOLO cuando el usuario diga 'recuérdame X en Y minutos/horas'."""
-    agregar_recordatorio(texto, minutos)
-    hora = (datetime.now() + timedelta(minutes=minutos)).strftime("%H:%M")
-    return f"Recordatorio programado: '{texto}' a las {hora}."
+    reminder = agregar_recordatorio(texto, minutos)
+    hora = datetime.fromtimestamp(reminder.due_at).strftime("%H:%M")
+    message = f"Recordatorio programado: '{texto}' a las {hora}."
+    return ToolExecutionResult(
+        result=message,
+        user_message=message,
+        verified=True,
+        diagnostic_code="reminder_persisted",
+    )
 
 
 # ─────────────────────────────────────────
@@ -636,6 +650,7 @@ def frase_motivacional() -> str:
 @tool
 def analizar_pantalla() -> str:
     """Toma una captura de pantalla y analiza el contenido visual (HUD)."""
+    ruta: str | None = None
     try:
         bloqueo = _bloqueo_si_no_autorizado()
         if bloqueo:
@@ -644,10 +659,13 @@ def analizar_pantalla() -> str:
         import pyautogui  # noqa: PLC0415
         from PIL import Image, ImageFilter, ImageStat  # noqa: PLC0415
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        os.makedirs(os.path.join(ROOT_DIR, "media", "screenshots"), exist_ok=True)
-        filename = f"hud_scan_{ts}.png"
-        ruta = os.path.join(ROOT_DIR, "media", "screenshots", filename)
+        os.makedirs(RUNTIME_PATHS.temp, exist_ok=True)
+        descriptor, ruta = tempfile.mkstemp(
+            prefix="jarvis-screen-",
+            suffix=".png",
+            dir=RUNTIME_PATHS.temp,
+        )
+        os.close(descriptor)
 
         screenshot = pyautogui.screenshot()
         screenshot.save(ruta)
@@ -688,16 +706,17 @@ def analizar_pantalla() -> str:
         if not llm_v:
             try:
                 from core.brain.llm_engine import GROQ_VISION_MODEL, _load_chat_openai
-                from core.brain.llm_providers import (
+                from core.llm_providers import (
                     provider_base_url,
                     resolve_gemini_api_key,
+                    resolve_gemini_vision_model,
                     resolve_groq_api_key,
                 )
 
                 ChatOpenAI = _load_chat_openai()
                 gemini_key = resolve_gemini_api_key()
                 if gemini_key:
-                    vision_model = os.getenv("JARVIS_GEMINI_VISION_MODEL", "gemini-2.5-flash")
+                    vision_model = resolve_gemini_vision_model()
                     llm_v = ChatOpenAI(
                         model=vision_model,
                         temperature=0,
@@ -733,7 +752,11 @@ def analizar_pantalla() -> str:
                 res_v = llm_v.invoke([HumanMessage(content=content)])
                 multimodal_res = res_v.content.strip()
             except Exception as ev:
-                multimodal_res = f"Error en visor óptico: {ev}"
+                services.log_event(
+                    "screen_analysis_provider_error",
+                    error_type=type(ev).__name__,
+                )
+                multimodal_res = "Error temporal en el visor óptico."
 
         resumen = (
             f"Análisis HUD completado: [{w}x{h} px]. Luminosidad {nivel_luz}. "
@@ -743,7 +766,22 @@ def analizar_pantalla() -> str:
 
         return resumen
     except Exception as e:
-        return f"Error en los sensores ópticos: {e}"
+        services.log_event(
+            "screen_analysis_error",
+            error_type=type(e).__name__,
+        )
+        return "Error temporal en los sensores ópticos."
+    finally:
+        if ruta:
+            try:
+                os.remove(ruta)
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_error:
+                services.log_event(
+                    "screen_capture_cleanup_error",
+                    error_type=type(cleanup_error).__name__,
+                )
 
 
 # ─────────────────────────────────────────
@@ -767,11 +805,16 @@ def recargar_plugins() -> str:
 # Rutinas
 # ─────────────────────────────────────────
 @tool
-def ejecutar_rutina(nombre: str) -> str:
+def ejecutar_rutina(nombre: str) -> ToolExecutionResult:
     """Ejecuta rutinas predefinidas: trabajo, gaming, buenos dias."""
     n = (nombre or "").strip().lower()
+    english = get_current_language().startswith("en")
     if not n:
-        return "Indique una rutina: trabajo, gaming o buenos días."
+        return ToolExecutionResult(
+            result="", status=ReceiptStatus.UNAVAILABLE, diagnostic_code="routine_name_required",
+            user_message="Choose a routine: work, gaming or good morning." if english else
+            "Indique una rutina: trabajo, gaming o buenos días.",
+        )
 
     alias = {
         "modo trabajo": "trabajo",
@@ -779,6 +822,7 @@ def ejecutar_rutina(nombre: str) -> str:
         "work": "trabajo",
         "modo gaming": "gaming",
         "gaming": "gaming",
+        "good morning": "buenos_dias",
         "jugar": "gaming",
         "buenos dias": "buenos_dias",
         "buenos días": "buenos_dias",
@@ -788,68 +832,93 @@ def ejecutar_rutina(nombre: str) -> str:
     key = alias.get(n, n.replace(" ", "_"))
 
     if key not in {"trabajo", "gaming", "buenos_dias"}:
-        return "Rutina no reconocida. Opciones: trabajo, gaming, buenos días."
-
-    ejecutadas = []
-    errores = []
-    auth_blocked = False
-
-    def _run(tool_name: str, args: dict):
-        nonlocal auth_blocked
-        print(f"    [ROUTINE] Step: {tool_name} args={args}")
-        if not services.invocar_tool:
-            errores.append(f"{tool_name}: Sistema de invocación no available.")
-            return
-
-        try:
-            res = services.invocar_tool(tool_name, args, f"rutina {n}", source="routine")
-            txt = str(res)
-            if "acceso_denegado" in txt.lower():
-                auth_blocked = True
-            if txt.lower().startswith("error") or "no pude" in txt.lower() or "acceso_denegado" in txt.lower():
-                print(f"    [ROUTINE] ERROR in {tool_name}: {txt[:200]}")
-                errores.append(f"{tool_name}: {txt}")
-            else:
-                print(f"    [ROUTINE] OK {tool_name}: {txt[:120]}")
-                ejecutadas.append(f"{tool_name}: {txt}")
-        except Exception as e:
-            print(f"    [ROUTINE] EXCEPTION in {tool_name}: {e}")
-            errores.append(f"{tool_name}: Excepcion: {e}")
-
-    if key == "trabajo":
-        _run("modo_no_molestar", {"activar": True})
-        _run("ajustar_volumen", {"nivel": 30})
-        _run("abrir_aplicacion", {"nombre_app": "vscode"})
-        _run("abrir_aplicacion", {"nombre_app": "chrome"})
-    elif key == "gaming":
-        _run("modo_no_molestar", {"activar": True})
-        _run("ajustar_volumen", {"nivel": 60})
-        _run("abrir_aplicacion", {"nombre_app": "discord"})
-        _run("abrir_aplicacion", {"nombre_app": "steam"})
-    else:  # buenos_dias
-        _run("modo_no_molestar", {"activar": False})
-        _run("ajustar_volumen", {"nivel": 35})
-        desc, temp = _obtener_clima_logic()
-        nc = services.noticias_cache
-        resumen = nc["resumen"] if nc.get("listo") else "Briefing aún generándose."
-        ejecutadas.append(f"clima: {desc}, {temp}°C")
-        ejecutadas.append(f"briefing: {resumen[:180]}")
-
-    if auth_blocked:
-        return (
-            "ACCESO_DENEGADO: Esta rutina requiere autorizacion previa para abrir aplicaciones o ejecutar "
-            "acciones protegidas. Identifiquese por voz para obtener autorizacion."
+        return ToolExecutionResult(
+            result="", status=ReceiptStatus.UNAVAILABLE, diagnostic_code="routine_unknown",
+            user_message="Unknown routine. Choose work, gaming or good morning." if english else
+            "Rutina no reconocida. Opciones: trabajo, gaming, buenos días.",
         )
 
-    if errores and not ejecutadas:
-        return f"I could not complete the routine '{n}'. Errores: {' | '.join(errores[:3])}"
+    executor = services.tool_execution
+    if executor is None:
+        return ToolExecutionResult(
+            result="", status=ReceiptStatus.UNAVAILABLE, diagnostic_code="routine_executor_unavailable",
+            user_message="Routine execution is unavailable. Restart JARVIS and try again." if english else
+            "El ejecutor de rutinas no está disponible. Reinicia JARVIS y vuelve a intentarlo.",
+        )
 
-    msg = f"Rutina '{n}' ejecutada."
-    if ejecutadas:
-        msg += " Acciones: " + " | ".join(ejecutadas[:4])
-    if errores:
-        msg += " | Avisos: " + " | ".join(errores[:2])
-    return msg
+    if key == "trabajo":
+        operations = [
+            ("modo_no_molestar", {"activar": True}),
+            ("ajustar_volumen", {"nivel": 30}),
+            ("abrir_aplicacion", {"nombre_app": "vscode"}),
+            ("abrir_aplicacion", {"nombre_app": "chrome"}),
+        ]
+    elif key == "gaming":
+        operations = [
+            ("modo_no_molestar", {"activar": True}),
+            ("ajustar_volumen", {"nivel": 60}),
+            ("abrir_aplicacion", {"nombre_app": "discord"}),
+            ("abrir_aplicacion", {"nombre_app": "steam"}),
+        ]
+    else:  # buenos_dias
+        operations = [
+            ("modo_no_molestar", {"activar": False}),
+            ("ajustar_volumen", {"nivel": 35}),
+            ("obtener_clima", {"ciudad": get_default_location()}),
+        ]
+
+    request = CommandRequest.create(
+        text=f"rutina {key}", profile_id=jarvis_state.get_active_profile_id(),
+        channel="routine", language=get_current_language(),
+    )
+    steps = [ActionStep(f"routine-{index}", tool_name, arguments)
+             for index, (tool_name, arguments) in enumerate(operations, 1)]
+    receipts: list[ExecutionReceipt] = []
+    completed = {ReceiptStatus.SUCCEEDED, ReceiptStatus.DUPLICATE}
+    for step in steps:
+        receipts.append(executor.execute(request, step))
+        if receipts[-1].status not in completed:
+            break
+
+    pending = steps[len(receipts):]
+    summary = {
+        "routine": key,
+        "receipts": [receipt.to_dict() for receipt in receipts],
+        "pending_steps": [{"tool_name": step.tool_name, "arguments": dict(step.arguments)} for step in pending],
+    }
+    last = receipts[-1]
+    messages = [receipt.user_message for receipt in receipts if receipt.status in completed]
+    if last.status not in completed:
+        has_completed = any(receipt.status in completed for receipt in receipts)
+        status = ReceiptStatus.PARTIAL if has_completed or last.status is ReceiptStatus.PARTIAL else last.status
+        if last.status is ReceiptStatus.ACCEPTED:
+            message = "Routine pending verification." if english else "Rutina pendiente de comprobación."
+        else:
+            message = "Routine incomplete." if english else "Rutina incompleta."
+        if messages:
+            message += (" Completed: " if english else " Completado: ") + " | ".join(messages)
+        message += " " + last.user_message
+        if pending:
+            message += " Remaining steps were not started." if english else " Los pasos restantes no se iniciaron."
+        return ToolExecutionResult(
+            result=summary, user_message=message, status=status,
+            accepted=status is ReceiptStatus.ACCEPTED,
+            diagnostic_code="routine_partial" if status is ReceiptStatus.PARTIAL else
+            (last.diagnostic_code or "routine_incomplete"),
+        )
+
+    message = f"Routine '{n}' executed." if english else f"Rutina '{n}' ejecutada."
+    message += (" Actions: " if english else " Acciones: ") + " | ".join(messages)
+    if key == "buenos_dias":
+        news = services.noticias_cache
+        briefing = str(news.get("resumen") or "")[:180] if news.get("listo") else (
+            "Briefing not available yet." if english else "Briefing aún no disponible."
+        )
+        message += f" | Briefing: {briefing}"
+    return ToolExecutionResult(
+        result=summary, user_message=message,
+        verified=all(receipt.verified for receipt in receipts), diagnostic_code="routine_completed",
+    )
 
 
 # ─────────────────────────────────────────

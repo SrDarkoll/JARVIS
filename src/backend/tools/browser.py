@@ -2,7 +2,6 @@
 
 import os
 import re
-import subprocess
 import threading
 import time as _time
 import webbrowser
@@ -224,8 +223,6 @@ def _abrir_en_navegador_sistema(url: str, require_policy: bool = True) -> bool:
                 )
             return False
     err_open = ""
-    err_startfile = ""
-    err_cmd = ""
     try:
         opened = webbrowser.open(url, new=2)
         if opened:
@@ -234,28 +231,16 @@ def _abrir_en_navegador_sistema(url: str, require_policy: bool = True) -> bool:
         err_open = str(e)
     if _open_url_or_app(url):
         return True
-    try:
-        subprocess.Popen(
-            ["cmd", "/c", "start", "", url],
-            shell=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
-    except Exception as e:
-        err_cmd = str(e)
-        services.log_event(
-            "system_browser_fallback_error",
-            url=(url or "")[:200],
-            webbrowser=err_open[:100],
-            startfile=err_startfile[:100],
-            cmd=err_cmd[:100],
-        )
-        print(
-            "[WARN WEB] Fallo fallback de navegador sistema: "
-            f"webbrowser={err_open or 'n/a'} | startfile={err_startfile or 'n/a'} | cmd={err_cmd or 'n/a'}"
-        )
-        return False
+    services.log_event(
+        "system_browser_fallback_error",
+        url=(url or "")[:200],
+        webbrowser=err_open[:100],
+    )
+    print(
+        "[WARN WEB] Fallo fallback de navegador sistema: "
+        f"webbrowser={err_open or 'rejected'}"
+    )
+    return False
 
 
 # ─────────────────────────────────────────

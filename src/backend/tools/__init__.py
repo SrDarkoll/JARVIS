@@ -57,6 +57,7 @@ _LAZY_EXPORTS = {
     "modo_no_molestar": ("tools.system", "modo_no_molestar"),
     "controlar_pc": ("tools.system", "controlar_pc"),
     "abrir_aplicacion": ("tools.system", "abrir_aplicacion"),
+    "abrir_documento": ("tools.documents", "abrir_documento"),
     "ver_procesos_pesados": ("tools.system", "ver_procesos_pesados"),
     "matar_proceso": ("tools.system", "matar_proceso"),
     "borrar_memoria": ("tools.system", "borrar_memoria"),
@@ -109,6 +110,53 @@ _OPT_IN_SYSTEM_TOOLS = frozenset(
         "ejecutar_comando_terminal",
     }
 )
+_FEATURE_TOOL_GROUPS = {
+    "JARVIS_COMPUTER_USE_ENABLED": frozenset(
+        {
+            "computer_click",
+            "computer_type",
+            "computer_hotkey",
+            "computer_scroll",
+            "computer_inspect_screen",
+            "computer_drag_and_drop",
+        }
+    ),
+    "JARVIS_PROACTIVE_TOOLS_ENABLED": frozenset(
+        {
+            "consultar_estado_proactivo",
+            "ejecutar_accion_proactiva",
+            "predecir_siguiente_accion",
+            "aprender_patron_rutina",
+            "consultar_rutinas_predictivas",
+        }
+    ),
+    "JARVIS_COGNITIVE_MEMORY_ENABLED": frozenset(
+        {
+            "aprender_procedimiento",
+            "consultar_procedimientos",
+            "ejecutar_procedimiento",
+            "recordar_episodio",
+            "guardar_memoria_entrelazada",
+            "consultar_memoria_unificada",
+            "enlazar_conceptos",
+            "sincronizar_boveda_conocimiento",
+            "ejecutar_consolidacion_memoria",
+            "crear_nota_boveda",
+            "buscar_en_boveda",
+            "busqueda_semantica_hibrida",
+            "consultar_memoria_jit",
+        }
+    ),
+    "JARVIS_ACTION_PLANS_ENABLED": frozenset(
+        {
+            "crear_plan_acciones",
+            "ver_plan_acciones",
+            "ejecutar_plan_acciones",
+        }
+    ),
+    "JARVIS_VISION_ENABLED": frozenset({"analizar_pantalla"}),
+    "JARVIS_PLUGINS_ENABLED": frozenset({"recargar_plugins"}),
+}
 __all__ = ["get_base_tools"]
 __all__.extend(_BASE_TOOL_NAMES)
 
@@ -123,14 +171,32 @@ def __getattr__(name: str):
     return value
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _get_base_tools_impl():
-    system_tools_enabled = str(os.getenv("JARVIS_SYSTEM_TOOLS_ENABLED") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    return [__getattr__(name) for name in _BASE_TOOL_NAMES if system_tools_enabled or name not in _OPT_IN_SYSTEM_TOOLS]
+    core_mode = _env_bool("JARVIS_CORE_MODE", True)
+    optional_default = not core_mode
+    system_tools_enabled = _env_bool("JARVIS_SYSTEM_TOOLS_ENABLED", False)
+    disabled_tools = set()
+    for flag, tool_names in _FEATURE_TOOL_GROUPS.items():
+        if not _env_bool(flag, optional_default):
+            disabled_tools.update(tool_names)
+
+    return [
+        __getattr__(name)
+        for name in _BASE_TOOL_NAMES
+        if name not in disabled_tools
+        and (system_tools_enabled or name not in _OPT_IN_SYSTEM_TOOLS)
+    ]
 
 
 def get_base_tools():
