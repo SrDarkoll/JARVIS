@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
 from api.voice_routes import (
     LiveModeSelection,
     build_live_voice_status,
@@ -50,6 +51,26 @@ def test_auto_prefers_ready_gemini():
     assert selection == LiveModeSelection(mode="gemini_live")
 
 
+@pytest.mark.parametrize(
+    ("requested", "mode", "code"),
+    [
+        ("gemini_live", "unavailable", "gemini_live_model_invalid"),
+        ("auto", "hybrid", "gemini_live_model_invalid"),
+        ("hybrid_stream", "hybrid", ""),
+    ],
+)
+def test_invalid_model_respects_explicit_mode_and_auto_fallback(requested, mode, code):
+    selection = select_live_mode(
+        requested_mode=requested,
+        gemini_configured=True,
+        gemini_dependency_available=True,
+        hybrid_available=True,
+        gemini_model_error="gemini_live_model_invalid",
+    )
+
+    assert selection == LiveModeSelection(mode=mode, code=code)
+
+
 def test_hybrid_request_never_contacts_gemini():
     selection = select_live_mode(
         requested_mode="hybrid",
@@ -88,7 +109,36 @@ def test_live_status_separates_configuration_dependency_and_handshake():
     assert status["dependency_available"] is True
     assert status["handshake_state"] == "idle"
     assert status["runtime_ready"] is False
+    assert status["provider_preview"] is False
+    assert status["input_transcription_enabled"] is True
+    assert status["output_transcription_enabled"] is True
+    assert status["context_compression"] == {
+        "enabled": True,
+        "trigger_tokens": 25000,
+        "target_tokens": 8000,
+    }
+    assert status["session_limits"] == {
+        "global": 2,
+        "per_profile": 1,
+    }
+
+
+def test_live_status_reports_invalid_model_without_claiming_native_availability(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_LIVE_MODEL", "gemini-3.5-flash-lite")
+    status = build_live_voice_status(gemini_configured=True, dependency_available=True)
+
+    assert status["gemini_live_available"] is False
+    assert status["state"] == "degraded"
+    assert status["code"] == "gemini_live_model_invalid"
+    assert status["model_configuration_error"] == "gemini_live_model_invalid"
+
+
+def test_live_status_reports_explicit_legacy_model_as_preview(monkeypatch):
+    monkeypatch.setenv("JARVIS_GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+    status = build_live_voice_status(gemini_configured=True, dependency_available=True)
+
     assert status["provider_preview"] is True
+    assert status["model"] == "gemini-3.1-flash-live-preview"
 
 
 def test_live_status_reports_controlled_hybrid_degradation():

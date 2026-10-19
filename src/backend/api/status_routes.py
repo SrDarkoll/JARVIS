@@ -1,7 +1,11 @@
 import asyncio
+import math
 import os
+import sqlite3
 import sys
+import threading
 from pathlib import Path
+from time import monotonic
 
 import psutil
 from core import jarvis_brain, jarvis_state
@@ -19,6 +23,11 @@ from core.jarvis_observability import obs_event, obs_snapshot, obs_tail
 from core.llm_providers import resolve_llm_provider_config
 from core.operator_status import build_operator_status
 from core.runtime_logger import log_warning
+from core.security.browser_profile import (
+    can_access_browser_profile,
+    can_manage_browser_profiles,
+    get_browser_profile_id,
+)
 from core.setup_configuration import (
     SetupAttemptLimiter,
     SetupConfigurationError,
@@ -27,9 +36,13 @@ from core.setup_configuration import (
 from core.setup_wizard import build_setup_status
 from quart import Blueprint, jsonify, request
 from services import security_manager
+from services.notification_policy import notification_policy
 
 status_bp = Blueprint("status", __name__)
 _SETUP_PROVIDER_LIMITER = SetupAttemptLimiter(limit=5, window_seconds=600)
+_wmi_temperature_lock = threading.Lock()
+_wmi_temperature_retry_at = 0.0
+_WMI_TEMPERATURE_RETRY_SECONDS = 300.0
 _SETUP_PROVIDER_ERROR_STATUS = {
     "invalid_provider": 400,
     "invalid_request": 400,
@@ -136,6 +149,63 @@ def _speech_to_text_status() -> dict:
         return fallback
 
 
+def _valid_cpu_temperature(value) -> float | None:
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(temperature) or not -30.0 <= temperature <= 180.0:
+        return None
+    return round(temperature, 1)
+
+
+def _read_cpu_temperature() -> tuple[float | None, str]:
+    global _wmi_temperature_retry_at
+    sensor_reader = getattr(psutil, "sensors_temperatures", None)
+    if callable(sensor_reader):
+        try:
+            sensor_groups = sensor_reader() or {}
+            preferred = ("coretemp", "k10temp", "cpu_thermal", "acpitz")
+            names = [*preferred, *(name for name in sensor_groups if name not in preferred)]
+            for name in names:
+                for sensor in sensor_groups.get(name, ()):
+                    temperature = _valid_cpu_temperature(getattr(sensor, "current", None))
+                    if temperature is not None:
+                        return temperature, f"psutil:{name}"
+        except Exception as exc:
+            log_warning("cpu_temperature_psutil_failed", error_type=type(exc).__name__)
+
+    if sys.platform != "win32":
+        return None, "unavailable"
+
+    with _wmi_temperature_lock:
+        if monotonic() < _wmi_temperature_retry_at:
+            return None, "unavailable"
+        initialized = False
+        try:
+            import wmi  # pyright: ignore[reportMissingImports]
+            from pythoncom import CoInitialize, CoUninitialize  # pyright: ignore[reportMissingImports]
+
+            CoInitialize()
+            initialized = True
+            items = wmi.WMI(namespace="root/wmi").MSAcpi_ThermalZoneTemperature()
+            for item in items or ():
+                raw_kelvin_tenths = getattr(item, "CurrentTemperature", None)
+                if raw_kelvin_tenths is None:
+                    continue
+                temperature = _valid_cpu_temperature((float(raw_kelvin_tenths) / 10.0) - 273.15)
+                if temperature is not None:
+                    _wmi_temperature_retry_at = 0.0
+                    return temperature, "wmi:msacpi"
+        except Exception as exc:
+            log_warning("cpu_temperature_wmi_unavailable", error_type=type(exc).__name__)
+        finally:
+            if initialized:
+                CoUninitialize()
+        _wmi_temperature_retry_at = monotonic() + _WMI_TEMPERATURE_RETRY_SECONDS
+    return None, "unavailable"
+
+
 def _admin_voice_profile_count() -> int:
     try:
         from api import voice_routes
@@ -217,7 +287,8 @@ def _runtime_capabilities(
         ),
         detail=(
             f"preferred={live_voice.get('preferred_mode')}; "
-            "provider_api=preview; session_resumption=disabled"
+            f"provider_api={'preview' if live_voice.get('provider_preview') else 'stable'}; "
+            "session_resumption=disabled"
         ),
     )
 
@@ -259,6 +330,26 @@ def _runtime_capabilities(
             "briefing",
             RUNTIME_FEATURES.briefing_enabled,
             "Enable JARVIS_BRIEFING_ENABLED",
+        ),
+        (
+            "computer_use",
+            RUNTIME_FEATURES.computer_use_enabled,
+            "Enable JARVIS_COMPUTER_USE_ENABLED",
+        ),
+        (
+            "proactive_tools",
+            RUNTIME_FEATURES.proactive_tools_enabled,
+            "Enable JARVIS_PROACTIVE_TOOLS_ENABLED",
+        ),
+        (
+            "cognitive_memory",
+            RUNTIME_FEATURES.cognitive_memory_enabled,
+            "Enable JARVIS_COGNITIVE_MEMORY_ENABLED",
+        ),
+        (
+            "action_plans",
+            RUNTIME_FEATURES.action_plans_enabled,
+            "Enable JARVIS_ACTION_PLANS_ENABLED",
         ),
     ):
         publish(
@@ -368,6 +459,10 @@ def api_status():
                 "monitoring": monitoring["configured"],
                 "monitoring_available": monitoring["available"],
                 "monitoring_running": monitoring["running"],
+                "computer_use": RUNTIME_FEATURES.computer_use_enabled,
+                "proactive_tools": RUNTIME_FEATURES.proactive_tools_enabled,
+                "cognitive_memory": RUNTIME_FEATURES.cognitive_memory_enabled,
+                "action_plans": RUNTIME_FEATURES.action_plans_enabled,
             },
             "speech_to_text": speech_to_text,
             "capabilities": _runtime_capabilities(
@@ -375,6 +470,7 @@ def api_status():
                 speech_to_text=speech_to_text,
             ),
             "profile": jarvis_state.get_active_profile_id(),
+            "notifications": notification_policy.snapshot(get_browser_profile_id()),
             "heartbeat": jarvis_state.heartbeat_state.get("last_pulse", 0),
         }
     )
@@ -448,6 +544,10 @@ def get_news():
     ready = bool(nc.get("ready", nc.get("listo", False)))
     summary = str(nc.get("summary", nc.get("resumen", "")) or "")
     language = nc.get("language") or get_current_language()
+    automatic = str(request.args.get("automatic", "")).strip() == "1"
+    if automatic and not notification_policy.allows_automatic(get_browser_profile_id()):
+        return jsonify({"ready": False, "summary": "", "listo": False, "resumen": "",
+                        "language": language, "deferred": True}), 202
     if not ready:
         return jsonify(
             {
@@ -547,41 +647,57 @@ async def setup_provider():
         return _setup_provider_response({"error": "setup_failed"}, 500)
 
 
+def _reminder_storage_unavailable(operation: str, error: Exception):
+    log_warning("reminder_storage_unavailable", operation=operation, error=type(error).__name__)
+    return jsonify({"ok": False, "error": "reminders_unavailable"}), 503, {"Retry-After": "5"}
+
+
 @status_bp.route("/api/reminders", methods=["GET"])
 def get_reminders():
-    reminders = _services.get_reminders()
-    with reminders_lock:
-        return jsonify(
-            [
-                {
-                    "text": r.get("text", r.get("texto", "")),
-                    "when": r.get("when", r.get("cuando")).strftime("%H:%M"),
-                    "texto": r.get("text", r.get("texto", "")),
-                    "cuando": r.get("when", r.get("cuando")).strftime("%H:%M"),
-                }
-                for r in reminders
-                if r.get("when", r.get("cuando")) is not None
-            ]
+    profile_id = get_browser_profile_id()
+    try:
+        records = _services.reminder_service.list_active(profile_id)
+    except (OSError, sqlite3.Error) as exc:
+        return _reminder_storage_unavailable("list", exc)
+    return jsonify({"reminders": [record.to_dict() for record in records]})
+
+
+@status_bp.route("/api/reminders/claim", methods=["POST"])
+def claim_due_reminders():
+    profile_id = get_browser_profile_id()
+    try:
+        records = _services.reminder_service.claim_due(profile_id, limit=1)
+    except (OSError, sqlite3.Error) as exc:
+        return _reminder_storage_unavailable("claim", exc)
+    return jsonify({"reminders": [record.to_dict() for record in records]})
+
+
+@status_bp.route("/api/reminders/<reminder_id>/ack", methods=["POST"])
+def acknowledge_reminder(reminder_id: str):
+    profile_id = get_browser_profile_id()
+    try:
+        acknowledged = _services.reminder_service.acknowledge(
+            reminder_id,
+            profile_id,
         )
+    except (OSError, sqlite3.Error) as exc:
+        return _reminder_storage_unavailable("acknowledge", exc)
+    if not acknowledged:
+        return jsonify({"ok": False, "error": "reminder_not_claimed"}), 404
+    return jsonify({"ok": True})
+
+
+@status_bp.route("/api/session/profile", methods=["GET"])
+def get_browser_profile():
+    response = jsonify({"profile_id": get_browser_profile_id()})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @status_bp.route("/api/status/full", methods=["GET"])
 def get_status_full():
     cpu_usage, ram = psutil.cpu_percent(interval=None), psutil.virtual_memory().percent
-    temp = 45.0 + (cpu_usage * 0.35)
-    try:
-        import wmi
-        from pythoncom import CoInitialize, CoUninitialize
-
-        CoInitialize()
-        try:
-            items = wmi.WMI(namespace="root/wmi").MSAcpi_ThermalZoneTemperature()
-            if items:
-                temp = (items[0].CurrentTemperature / 10.0) - 273.15
-        finally:
-            CoUninitialize()
-    except Exception:
-        pass
+    temp, temp_source = _read_cpu_temperature()
 
     llm_ok, llm_latency = False, -1
     try:
@@ -593,11 +709,13 @@ def get_status_full():
 
     payload = {
         "status": "online",
+        "notifications": notification_policy.snapshot(get_browser_profile_id()),
         "llm_ok": llm_ok,
         "llm_latency_ms": llm_latency,
         "cpu": cpu_usage,
         "ram": ram,
-        "temp": round(temp, 1),
+        "temp": temp,
+        "temp_source": temp_source,
         "weather": {
             "temp": _services.weather_cache["temp"],
             "desc": _services.weather_cache["desc"],
@@ -652,6 +770,8 @@ def reload_plugins_http():
 @status_bp.route("/api/profiles", methods=["GET"])
 @status_bp.route("/api/perfiles", methods=["GET"])
 def get_profiles():
+    own_profile = get_browser_profile_id()
+    can_manage = can_manage_browser_profiles()
     with memory_lock:
         return jsonify(
             {
@@ -662,6 +782,7 @@ def get_profiles():
                         "facts_len": len((pdata or {}).get("facts", "") or ""),
                     }
                     for pid, pdata in _profile_memory.items()
+                    if can_manage or pid == own_profile
                 },
             }
         )
@@ -707,6 +828,8 @@ def _profile_detail_payload(pid: str) -> tuple[dict, int]:
 @status_bp.route("/api/perfiles/<profile_id>", methods=["GET"])
 def get_profile_detail(profile_id):
     pid = jarvis_state.normalize_profile_id(profile_id)
+    if not can_access_browser_profile(pid):
+        return jsonify({"error": "profile_access_denied"}), 403
     payload, status = _profile_detail_payload(pid)
     return jsonify(payload), status
 
@@ -716,6 +839,8 @@ def get_profile_detail(profile_id):
 async def update_profile_detail(profile_id):
     data = (await request.get_json(silent=True)) or {}
     pid = jarvis_state.normalize_profile_id(profile_id)
+    if not can_access_browser_profile(pid):
+        return jsonify({"error": "profile_access_denied"}), 403
     facts = data.get("facts")
     try:
         from services.memory_manager import memory_manager
@@ -736,6 +861,8 @@ async def update_profile_detail(profile_id):
 @status_bp.route("/api/perfiles/<profile_id>", methods=["DELETE"])
 def clear_profile_detail(profile_id):
     pid = jarvis_state.normalize_profile_id(profile_id)
+    if not can_access_browser_profile(pid):
+        return jsonify({"error": "profile_access_denied"}), 403
     try:
         from services.memory_manager import memory_manager
         from tools.memory import guardar_memoria_async

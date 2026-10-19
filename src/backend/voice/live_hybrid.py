@@ -12,6 +12,7 @@ import logging
 import re
 from typing import Any
 
+import numpy as np
 import soundfile as sf  # type: ignore[reportMissingImports]
 from core.runtime_logger import log_error, log_warning
 
@@ -60,6 +61,17 @@ class HybridLiveStreamer:
             pass
 
     async def _execute_streaming_turn(self, user_text: str) -> None:
+        from utils.jarvis_i18n import language_scope
+
+        from voice.live_context import resolve_live_language
+
+        language = resolve_live_language(user_text, self.session.language)
+        self.session.language = language
+        self.session.orchestrator.language = language
+        with language_scope(language):
+            await self._execute_localized_turn(user_text, language)
+
+    async def _execute_localized_turn(self, user_text: str, language: str) -> None:
         self.session.diagnostics.record_turn_start()
         await self.session.set_state(LiveSessionState.PROCESSING)
         await self.session.emit_json({
@@ -76,13 +88,13 @@ class HybridLiveStreamer:
                 request = CommandRequest.create(
                     text=user_text,
                     channel="voice",
-                    language=self.session.language,
+                    language=language,
                     profile_id=self.session.profile_id,
                 )
                 resp = await asyncio.to_thread(self.orchestrator.process, request)
                 response_text = getattr(resp, "text", "")
             except Exception as e:
-                log_error("hybrid_orchestrator_error", error=str(e))
+                log_error("hybrid_orchestrator_error", error_type=type(e).__name__)
 
         if not response_text:
             try:
@@ -94,7 +106,7 @@ class HybridLiveStreamer:
                 )
                 response_text = str(reply_tuple[0] or "").strip()
             except Exception as exc:
-                log_warning("hybrid_brain_fallback_error", error=str(exc))
+                log_warning("hybrid_brain_fallback_error", error_type=type(exc).__name__)
 
         if not response_text:
             response_text = "Entendido, a su disposición."
@@ -141,7 +153,7 @@ class HybridLiveStreamer:
                 await asyncio.sleep(0.01)
 
     async def _synthesize_to_pcm(self, text: str) -> bytes:
-        """Synthesize text via TTS engine and convert to raw 24kHz/16kHz PCM bytes."""
+        """Synthesize text via TTS engine and convert to mono 24 kHz PCM16."""
         try:
             tts = self.tts_engine
             if not tts:
@@ -158,10 +170,18 @@ class HybridLiveStreamer:
             if not wav_bytes:
                 return b""
 
-            # Extract raw PCM from WAV container
+            # The browser player consumes mono 16-bit PCM at 24 kHz.
             with io.BytesIO(wav_bytes) as bio:
-                data, samplerate = sf.read(bio, dtype="int16")
-                return data.tobytes()
+                data, samplerate = sf.read(bio, dtype="int16", always_2d=True)
+            if not len(data) or not 8000 <= samplerate <= 24000:
+                return b""
+            mono = np.rint(data.astype(np.float64).mean(axis=1))
+            if samplerate != 24000:
+                sample_count = round(len(mono) * 24000 / samplerate)
+                source_positions = np.arange(len(mono), dtype=np.float64)
+                target_positions = np.arange(sample_count, dtype=np.float64) * samplerate / 24000
+                mono = np.interp(target_positions, source_positions, mono)
+            return np.clip(np.rint(mono), -32768, 32767).astype("<i2").tobytes()
         except Exception as e:
-            log_warning("hybrid_tts_synthesis_failed", error=str(e), text=text[:30])
+            log_warning("hybrid_tts_synthesis_failed", error_type=type(e).__name__)
             return b""

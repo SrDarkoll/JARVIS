@@ -50,6 +50,15 @@ DEFAULT_MAX_CONTROL_MESSAGE_BYTES = _positive_env_int(
     2 * 1024 * 1024,
 )
 DEFAULT_MAX_USER_TEXT_CHARS = _positive_env_int("JARVIS_LIVE_USER_TEXT_CHARS", 16_000)
+DEFAULT_MAX_LIVE_SESSIONS = _positive_env_int("JARVIS_LIVE_MAX_SESSIONS", 2)
+DEFAULT_MAX_LIVE_SESSIONS_PER_PROFILE = _positive_env_int(
+    "JARVIS_LIVE_MAX_SESSIONS_PER_PROFILE",
+    1,
+)
+
+
+class LiveSessionCapacityError(RuntimeError):
+    """Stable refusal when opening another provider-backed Live session."""
 
 
 class LiveSessionState(enum.StrEnum):
@@ -125,6 +134,7 @@ class LiveSession:
             profile_id=profile_id,
             emit_json=self.emit_json,
             diagnostics=self.diagnostics,
+            language=language,
         )
 
     async def emit_json(self, data: dict[str, Any]) -> None:
@@ -175,6 +185,9 @@ class LiveSession:
             "configuring",
             "reconnecting",
         }
+        if self.input_paused:
+            while self._drop_oldest_audio_chunk():
+                pass
         await self.emit_json(
             {
                 "type": "provider_state",
@@ -281,15 +294,16 @@ class LiveSession:
     def image_task_done(self, _frame: tuple[str, str]) -> None:
         self._input_image_queue.task_done()
 
-    async def interrupt(self) -> None:
+    async def interrupt(self, *, clear_input_audio: bool = True) -> None:
         """Handle a barge-in event from client or voice activity detector.
 
         Cancels active turn processing, pending tool actions, and audio playback tasks.
         """
         started_at = time.perf_counter()
         async with self._lock:
-            # 1. Cancel active conversational actions in the orchestrator
-            await self.orchestrator.cancel_pending_actions(reason="user_barge_in")
+            self.orchestrator.task_context.revoke_proposals()
+            # Stop obsolete queued work, not external effects already running.
+            await self.orchestrator.cancel_pending_actions(reason="user_barge_in", include_running=False)
 
             # 2. Cancel active turn task if any
             if self._turn_task and not self._turn_task.done():
@@ -313,15 +327,13 @@ class LiveSession:
                     logger.debug("Playback task cancelled with exception: %s", e)
                 self._playback_task = None
 
-            # 4. Preserve tool tracking tasks. Synchronous tools already running
-            # in worker threads cannot be preempted safely; the orchestrator marks
-            # cancellation_requested and keeps tracking their truthful outcome.
+            # Keep tracking synchronous workers; stopping speech cannot undo them.
             self._tool_tasks = {task for task in self._tool_tasks if not task.done()}
 
-            # 5. Clear any unprocessed input queues
-            while not self._input_audio_queue.empty():
-                if not self._drop_oldest_audio_chunk():
-                    break
+            # Native barge-in belongs to the new input turn, not the old output.
+            if clear_input_audio:
+                while self._drop_oldest_audio_chunk():
+                    pass
 
             while not self._input_image_queue.empty():
                 if not self._drop_oldest_image_frame():
@@ -360,13 +372,22 @@ class LiveSession:
         self._tool_tasks = {t for t in self._tool_tasks if not t.done()}
         self._tool_tasks.add(task)
 
+    @property
+    def has_active_tool_work(self) -> bool:
+        return any(not task.done() for task in self._tool_tasks) or self.orchestrator.has_active_workers
+
     def attach_task(self, task: asyncio.Task) -> None:
         """Backwards-compatible alias to attach the active turn task."""
         self.attach_turn_task(task)
 
+    def begin_close(self) -> None:
+        """Revoke new input and contextual execution before awaiting transport shutdown."""
+        self._closed = True
+        self.orchestrator.task_context.invalidate()
+
     async def close(self) -> None:
         """Cleanly terminate the session and all associated tasks."""
-        self._closed = True
+        self.begin_close()
         all_tasks = set(self._transport_tasks) | set(self._tool_tasks)
         if self._turn_task:
             all_tasks.add(self._turn_task)
@@ -394,9 +415,19 @@ class LiveSession:
 class LiveSessionManager:
     """Manages active live voice streaming sessions."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = DEFAULT_MAX_LIVE_SESSIONS,
+        max_sessions_per_profile: int = DEFAULT_MAX_LIVE_SESSIONS_PER_PROFILE,
+    ) -> None:
         self._sessions: dict[str, LiveSession] = {}
         self._lock = asyncio.Lock()
+        self.max_sessions = max(1, int(max_sessions))
+        self.max_sessions_per_profile = max(
+            1,
+            min(int(max_sessions_per_profile), self.max_sessions),
+        )
 
     async def create_session(
         self,
@@ -408,11 +439,29 @@ class LiveSessionManager:
         mode: str = "auto",
     ) -> LiveSession:
         async with self._lock:
+            self._sessions = {
+                known_id: known_session
+                for known_id, known_session in self._sessions.items()
+                if not known_session._closed
+            }
+            normalized_profile = (
+                str(profile_id or "default").strip().lower()[:64]
+                or "default"
+            )
+            profile_sessions = sum(
+                1
+                for known_session in self._sessions.values()
+                if known_session.profile_id == normalized_profile
+            )
+            if profile_sessions >= self.max_sessions_per_profile:
+                raise LiveSessionCapacityError("live_profile_session_limit")
+            if len(self._sessions) >= self.max_sessions:
+                raise LiveSessionCapacityError("live_global_session_limit")
             session = LiveSession(
                 session_id=session_id,
                 send_text=send_text,
                 send_bytes=send_bytes,
-                profile_id=profile_id,
+                profile_id=normalized_profile,
                 language=language,
                 mode=mode,
             )

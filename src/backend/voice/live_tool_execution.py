@@ -10,17 +10,19 @@ def live_action_state(receipt: ExecutionReceipt) -> str:
         return "confirmation_required"
     return {
         ReceiptStatus.SUCCEEDED: "succeeded",
+        ReceiptStatus.ACCEPTED: "accepted",
         ReceiptStatus.DUPLICATE: "duplicate",
         ReceiptStatus.BLOCKED: "blocked",
         ReceiptStatus.UNAVAILABLE: "unavailable",
         ReceiptStatus.FAILED: "failed",
+        ReceiptStatus.PARTIAL: "partial",
     }[receipt.status]
 
 
 def live_tool_response(receipt: ExecutionReceipt) -> dict[str, object]:
     state = live_action_state(receipt)
     return {
-        "ok": state in {"succeeded", "duplicate"},
+        "ok": state in {"succeeded", "accepted", "duplicate"},
         "state": state,
         "message": receipt.user_message[:2000],
         "diagnostic_code": receipt.diagnostic_code,

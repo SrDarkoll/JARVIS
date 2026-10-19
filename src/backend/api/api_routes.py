@@ -3,11 +3,13 @@ APIRoutes: Definition of modular Quart routes.
 Helps reduce the size of jarvis_backend.py by moving state and configuration routes.
 """
 
+import hashlib
 import os
+import uuid
 from datetime import datetime
 
 import psutil
-from core.runtime_logger import log_info
+from core.runtime_logger import log_info, log_warning
 from core.security.api_auth import (
     LOCAL_UI_AUTH_COOKIE,
     configured_api_token,
@@ -20,6 +22,15 @@ api_bp = Blueprint("api", __name__)
 _services = None
 _root_dir = None
 _browser_mode = None
+_tts_engine = None
+_biometrics_enabled = False
+_INSTANCE_ID = str(uuid.uuid4())
+_STARTUP_NONCE = str(os.getenv("JARVIS_STARTUP_NONCE") or "")
+_STARTUP_NONCE_SHA256 = (
+    hashlib.sha256(_STARTUP_NONCE.encode("utf-8")).hexdigest()
+    if _STARTUP_NONCE
+    else ""
+)
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOOPBACK_PEERS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
@@ -35,11 +46,28 @@ def _is_loopback_ui_request() -> bool:
     return host in _LOOPBACK_HOSTS and peer in _LOOPBACK_PEERS
 
 
-def init_api_routes(services, browser_mode, root_dir):
-    global _services, _root_dir, _browser_mode
+def init_api_routes(
+    services,
+    browser_mode,
+    root_dir,
+    *,
+    tts_engine=None,
+    biometrics_enabled: bool = False,
+):
+    global _services, _root_dir, _browser_mode, _tts_engine, _biometrics_enabled
     _services = services
     _root_dir = root_dir
     _browser_mode = browser_mode
+    _tts_engine = tts_engine
+    _biometrics_enabled = bool(biometrics_enabled)
+
+
+def build_config_info(browser_mode, *, tts_engine=None, biometrics_enabled=False) -> dict:
+    return {
+        "browser_mode": browser_mode,
+        "tts_enabled": bool(getattr(tts_engine, "voice", None)),
+        "biometrics_active": bool(biometrics_enabled),
+    }
 
 
 @api_bp.route("/", methods=["GET"])
@@ -59,8 +87,6 @@ async def index():
             )
         return response
     except Exception as e:
-        from core.runtime_logger import log_warning
-
         log_warning("template_render_failed", error=str(e), template="index.html")
         return jsonify(
             {
@@ -94,6 +120,10 @@ def health():
     return jsonify(
         {
             "status": "online",
+            "service": "jarvis",
+            "api_version": 1,
+            "instance_id": _INSTANCE_ID,
+            "startup_nonce_sha256": _STARTUP_NONCE_SHA256,
             "timestamp": datetime.now().isoformat(),
             "cpu": psutil.cpu_percent(),
             "ram": psutil.virtual_memory().percent,
@@ -123,20 +153,20 @@ def config_info():
     if not _browser_mode:
         return jsonify({"error": "Configuration not initialized"}), 500
     return jsonify(
-        {
-            "browser_mode": _browser_mode,
-            "tts_enabled": True,
-            "biometrics_active": True,
-        }
+        build_config_info(
+            _browser_mode,
+            tts_engine=_tts_engine,
+            biometrics_enabled=_biometrics_enabled,
+        )
     )
 
 
 @api_bp.route("/api/memory/graph", methods=["GET"])
 async def memory_graph():
-    from core.jarvis_state import get_active_profile_id
+    from core.security.browser_profile import get_browser_profile_id
     from modules.memory.service import unified_memory
 
-    profile_id = request.args.get("profile_id") or get_active_profile_id()
+    profile_id = get_browser_profile_id()
     try:
         limit = min(100, max(1, int(request.args.get("limit", 50))))
     except ValueError:
@@ -190,5 +220,10 @@ async def memory_graph():
                 "links": links_data,
             }
         )
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        log_warning(
+            "memory_graph_failed",
+            error_type=type(exc).__name__,
+            profile_id=profile_id,
+        )
+        return jsonify({"ok": False, "error": "memory_graph_unavailable"}), 500

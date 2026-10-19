@@ -478,72 +478,12 @@ def _voice_display_name(profile_id: str | None) -> str:
     return _voice_text("Guest", "Invitado")
 
 
-_NAME_INTRO_RE = re.compile(
-    r"\b(?:my\s+name\s+is|i\s+am|i'm|call\s+me|mi\s+nombre\s+es|me\s+llamo|yo\s+soy|soy)\s+[A-Za-zÃ¡Ã©Ã­Ã³ÃºÃ±Ã¼ÃÃ‰ÃÃ“ÃšÃ‘Ãœ]{2,}",
-    re.IGNORECASE,
-)
-
-
 def _es_presentacion_nombre_voz(texto: str) -> bool:
-    return bool(_NAME_INTRO_RE.search(_norm_hint(texto)))
+    return _intent_es_presentacion_nombre_voz(texto)
 
 
 def _es_pregunta_simple_voz(texto: str) -> bool:
-    normalized = _norm_hint(texto)
-    if not normalized or _es_presentacion_nombre_voz(normalized):
-        return False
-
-    lower = normalized.lower()
-    if "?" in normalized or "Â¿" in normalized:
-        return True
-
-    question_prefixes = (
-        "cÃ³mo ",
-        "como ",
-        "quÃ© ",
-        "que ",
-        "quiÃ©n ",
-        "quien ",
-        "cuÃ¡l ",
-        "cual ",
-        "dÃ³nde ",
-        "donde ",
-        "cuÃ¡ndo ",
-        "cuando ",
-        "por quÃ© ",
-        "porque ",
-        "what ",
-        "what's ",
-        "whats ",
-        "how ",
-        "who ",
-        "where ",
-        "when ",
-        "can ",
-        "could ",
-        "would ",
-        "do ",
-        "does ",
-    )
-    if lower.startswith(question_prefixes):
-        return True
-
-    info_markers = (
-        "clima",
-        "tiempo",
-        "temperatura",
-        "weather",
-        "temperature",
-        "forecast",
-        "hora",
-        "fecha",
-        "time",
-        "date",
-        "noticias",
-        "news",
-        "spotify",
-    )
-    return any(marker in lower for marker in info_markers)
+    return _intent_es_pregunta_simple_voz(texto)
 
 
 def _transcribir_dudoso(
@@ -557,9 +497,8 @@ def _transcribir_dudoso(
     wm = whisper_model
     hint = _norm_hint(transcript_hint)
     hint_conf = _norm_conf(transcript_confidence)
-    hint_tokens = re.findall(r"[A-Za-z0-9Ã¡Ã©Ã­Ã³ÃºÃ±Ã¼ÃÃ‰ÃÃ“ÃšÃ‘Ãœ]+", hint)
+    hint_tokens = re.findall(r"\w+", hint, flags=re.UNICODE)
     has_clear_hint = bool(hint and len(hint_tokens) >= 3)
-    es_dudoso = "?" in hint or "Â¿" in hint or len(hint_tokens) < 3
     es_dudoso = _hint_necesita_whisper(hint, hint_conf)
     if route_mode == "fast_info" and hint:
         if has_clear_hint:
@@ -654,135 +593,7 @@ def _to_float_safe(value, default=0.0):
 
 
 def _clasificar_peticion_voz(texto: str) -> dict:
-    normalized = _norm_hint(texto)
-    lower = normalized.lower()
-    tokens = re.findall(r"\w+", lower, flags=re.UNICODE)
-    token_count = len(tokens)
-
-    self_identity = any(
-        phrase in lower
-        for phrase in [
-            "quien soy",
-            "quiÃ©n soy",
-            "soy yo",
-            "me reconoces",
-            "me reconociste",
-            "who am i",
-            "do you recognize me",
-        ]
-    )
-    assistant_identity = any(
-        phrase in lower
-        for phrase in [
-            "quien eres",
-            "quiÃ©n eres",
-            "como te llamas",
-            "cÃ³mo te llamas",
-            "who are you",
-            "what is your name",
-            "what's your name",
-        ]
-    )
-    secure_action = any(
-        phrase in lower
-        for phrase in [
-            "abre ",
-            "abrir ",
-            "cierra ",
-            "cerrar ",
-            "apaga ",
-            "reinicia ",
-            "bloquea ",
-            "desbloquea ",
-            "instala ",
-            "desinstala ",
-            "ejecuta ",
-            "manda ",
-            "manda un mensaje",
-            "envia ",
-            "envÃ­a ",
-            "whatsapp",
-            "telegram",
-            "reproduce ",
-            "pon ",
-            "toca ",
-            "play ",
-            "pause ",
-            "resume ",
-            "skip ",
-            "next ",
-        ]
-    )
-    looks_like_question = (
-        "?" in normalized
-        or any(
-            lower.startswith(prefix)
-            for prefix in (
-                "que ",
-                "quÃ© ",
-                "como ",
-                "cÃ³mo ",
-                "quien ",
-                "quiÃ©n ",
-                "cual ",
-                "cuÃ¡l ",
-                "donde ",
-                "dÃ³nde ",
-                "cuando ",
-                "cuÃ¡ndo ",
-                "a cuanto ",
-                "a cuÃ¡nto ",
-                "what ",
-                "what's ",
-                "whats ",
-                "how ",
-                "who ",
-                "where ",
-                "when ",
-                "can ",
-                "could ",
-                "would ",
-                "do ",
-                "does ",
-                "is ",
-                "are ",
-            )
-        )
-        or any(
-            phrase in lower
-            for phrase in [
-                "clima",
-                "tiempo",
-                "temperatura",
-                "weather",
-                "temperature",
-                "forecast",
-                "hora",
-                "fecha",
-                "time",
-                "date",
-                "dia es hoy",
-                "dÃ­a es hoy",
-                "cuanto cuesta",
-                "cuÃ¡nto cuesta",
-                "a como esta",
-                "a cÃ³mo estÃ¡",
-                "precio de",
-                "sabes",
-                "noticias",
-            ]
-        )
-    )
-
-    if self_identity:
-        return {"mode": "identity_query", "reason": "self_identity", "normalized": normalized}
-    if secure_action:
-        return {"mode": "secure", "reason": "secure_action", "normalized": normalized}
-    if assistant_identity:
-        return {"mode": "fast_info", "reason": "assistant_identity", "normalized": normalized}
-    if looks_like_question and token_count <= 12:
-        return {"mode": "fast_info", "reason": "short_question", "normalized": normalized}
-    return {"mode": "secure", "reason": "default", "normalized": normalized}
+    return _intent_clasificar_peticion_voz(texto)
 
 
 def _resolver_perfil_rapido(client_profile_id_norm: str, owner_session_active: bool) -> tuple[str, str]:
@@ -1135,7 +946,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             {
                 "response": _voice_text(
                     "Voice sample captured. Now tell me your name to register your profile.",
-                    "Muestra de voz capturada. Ahora dÃ­game su nombre para registrar su perfil.",
+                    "Muestra de voz capturada. Ahora dígame su nombre para registrar su perfil.",
                 ),
                 "nueva_voz": True,
                 "profile_id": None,
@@ -1231,7 +1042,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     voice_debug["route_mode"] = route_actual.get("mode") or voice_debug.get("route_mode") or ""
     voice_debug["route_reason"] = route_actual.get("reason") or voice_debug.get("route_reason") or ""
 
-    # Detectar cancelaciÃ³n
+    # Detectar cancelación
     texto_lower = texto.strip().lower()
     CANCELAR_REGISTRO_KEYWORDS = [
         "cancelar registro",
@@ -1241,11 +1052,11 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         "no quiero registrarme",
         "no me registres",
         "no quiero",
-        "olvÃ­dalo",
+        "olvídalo",
         "olvidalo",
-        "olvÃ­dalo ya",
+        "olvídalo ya",
         "no es necesario",
-        "dÃ©jalo",
+        "déjalo",
         "dejalo",
         "basta",
         "no soy",
@@ -1256,13 +1067,13 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
     if pending and any(kw in texto_lower for kw in CANCELAR_REGISTRO_KEYWORDS):
         _cancel_pending(ip)
         _revocar_autorizacion(_brain.DEFAULT_PROFILE_ID)
-        print(f"[AUTH] Registration cancelled by voice command: '{texto[:60]}'")
+        print("[AUTH] Registration cancelled by voice command")
         _set_voice_identity("registration_cancelled", similarity_value=0.0)
         return _voice_response(
             {
                 "response": _voice_text(
                     "Registration cancelled. How else can I help?",
-                    "Registro cancelado. Â¿En quÃ© mÃ¡s puedo ayudarle?",
+                    "Registro cancelado. ¿En qué más puedo ayudarle?",
                 ),
                 "should_listen": True,
                 "identity_source": "registration_cancelled",
@@ -1284,10 +1095,10 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             "guest_self_introduction",
         )
 
-    # BiometrÃ­a es el Ãºnico mecanismo de autorizaciÃ³n
+    # Biometría es el único mecanismo de autorización
     pass
 
-    # ConfirmaciÃ³n soft match
+    # Confirmación soft match
     if esperando_confirmacion:
         soft_match_pid = pending.get("soft_match_pid")
         soft_match_nombre = pending.get("soft_match_nombre")
@@ -1295,7 +1106,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
         texto_lower = texto.strip().lower()
         confirmado = any(
             w in texto_lower
-            for w in ["sÃ­", "si", "yes", "soy yo", "claro", "exacto", "correcto", "afirmativo", "ese soy", "esa soy"]
+            for w in ["sí", "si", "yes", "soy yo", "claro", "exacto", "correcto", "afirmativo", "ese soy", "esa soy"]
         )
         if confirmado and soft_match_pid:
             _pop_pending(ip)
@@ -1339,7 +1150,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             _set_voice_identity("soft_match_rejected", similarity_value=soft_sim)
             return _voice_response(
                 {
-                    "response": _voice_text("Understood. What is your name?", "Entendido. Â¿CÃ³mo te llamas?"),
+                    "response": _voice_text("Understood. What is your name?", "Entendido. ¿Cómo te llamas?"),
                     "nueva_voz": True,
                     "profile_id": None,
                     "identity_source": "soft_match_rejected",
@@ -1347,7 +1158,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                 }
             )
 
-    # Registro pendiente â€” guardar nombre
+    # Registro pendiente — guardar nombre
     if esperando_nombre:
         pending_audio = pending.get("audio")
         if not pending_audio:
@@ -1367,7 +1178,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                 {
                     "response": _voice_text(
                         "The audio arrived incomplete. Repeat the question to start registration again.",
-                        "El audio llegÃ³ incompleto. Repite la pregunta para iniciar registro de nuevo.",
+                        "El audio llegó incompleto. Repite la pregunta para iniciar registro de nuevo.",
                     ),
                     "should_listen": False,
                     "nueva_voz": False,
@@ -1386,19 +1197,19 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                 }
             )
         pregunta_keywords = [
-            "cÃ³mo",
+            "cómo",
             "como",
-            "quÃ©",
+            "qué",
             "que",
-            "quiÃ©n",
+            "quién",
             "quien",
-            "cuÃ¡l",
+            "cuál",
             "cual",
-            "dÃ³nde",
+            "dónde",
             "donde",
-            "cuÃ¡ndo",
+            "cuándo",
             "cuando",
-            "por quÃ©",
+            "por qué",
             "porque",
             "puedes",
             "puede",
@@ -1408,7 +1219,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             "tiene",
             "hay",
             "es",
-            "estÃ¡",
+            "está",
             "esta",
             "son",
             "what",
@@ -1544,7 +1355,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
             }
         )
 
-    # Fallback de sesiÃ³n
+    # Fallback de sesión
     if not esperando_nombre and not conversion_exitosa and owner_session_active:
         reply, sl = _brain.procesar_mensaje(texto, profile_id=_brain.DEFAULT_PROFILE_ID)
         _set_voice_identity(
@@ -1632,7 +1443,7 @@ def _process_voice_sync(audio_bytes: bytes, voice_request: dict):
                     "response": _voice_text(
                         "I cannot confirm who you are with enough confidence yet. "
                         "Tell me your name and I will register this voice as a guest profile.",
-                        "TodavÃ­a no puedo confirmar quiÃ©n eres con suficiente seguridad. Dime tu nombre y registrarÃ© esta voz como perfil invitado.",
+                        "Todavía no puedo confirmar quién eres con suficiente seguridad. Dime tu nombre y registraré esta voz como perfil invitado.",
                     ),
                     "profile_id": None,
                     "nueva_voz": bool(conversion_exitosa),

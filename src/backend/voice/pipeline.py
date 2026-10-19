@@ -314,7 +314,7 @@ def transcribir_audio(
         )
         texto = normalizar_transcript_hint(reconstruir_transcripcion_por_pausas(list(segments_iter)))
         if texto:
-            print(f"[VOICE ID] Whisper transcribed: '{texto[:80]}'")
+            print(f"[VOICE ID] Whisper transcription completed ({len(texto)} chars)")
             return texto
         return raw_hint
     except Exception as e:

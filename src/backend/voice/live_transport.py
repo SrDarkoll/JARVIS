@@ -97,6 +97,60 @@ class LiveTransportController:
         return self.reconnect_attempts
 
 
+class LiveResponseWatchdog:
+    """Bound provider inactivity, not user speech, idle listening or tool execution."""
+
+    def __init__(self, *, timeout_seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self.timeout_seconds = max(0.01, float(timeout_seconds))
+        self._clock = clock
+        self.reset()
+
+    def reset(self) -> None:
+        self.speech_active = False
+        self.awaiting_response = False
+        self._busy_tools = False
+        self._last_progress = self._clock()
+
+    def speech_started(self) -> None:
+        self.speech_active = True
+        self.awaiting_response = False
+        self._last_progress = self._clock()
+
+    def speech_ended(self) -> None:
+        self.speech_active = False
+        self._last_progress = self._clock()
+
+    def input_received(self) -> None:
+        self.awaiting_response = True
+        self._last_progress = self._clock()
+
+    def output_received(self) -> None:
+        self.awaiting_response = True
+        self._last_progress = self._clock()
+
+    def generation_complete(self) -> None:
+        self.awaiting_response = False
+        self._busy_tools = False
+
+    def waiting_for_input(self) -> None:
+        self.awaiting_response = False
+        self._busy_tools = False
+
+    def expired(self, *, busy_tools: bool = False) -> bool:
+        if busy_tools:
+            self._busy_tools = True
+            self._last_progress = self._clock()
+            return False
+        if self._busy_tools:
+            self._busy_tools = False
+            self._last_progress = self._clock()
+            return False
+        return (
+            self.awaiting_response and not self.speech_active
+            and self._clock() - self._last_progress >= self.timeout_seconds
+        )
+
+
 async def await_setup_complete(
     socket,
     *,
@@ -145,10 +199,8 @@ async def supervise_transport_tasks(
     active = [task for task in tasks if task is not None]
     if not active:
         raise LiveTransportError("gemini_live_connect_failed")
-    done: set[asyncio.Task] = set()
-    pending: set[asyncio.Task] = set()
     try:
-        done, pending = await asyncio.wait(
+        done, _ = await asyncio.wait(
             active,
             return_when=asyncio.FIRST_COMPLETED,
         )
@@ -163,13 +215,14 @@ async def supervise_transport_tasks(
                 raise LiveTransportError("gemini_live_connect_failed") from None
         raise LiveTransportError("gemini_live_connect_failed")
     finally:
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        for task in active:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*active, return_exceptions=True)
 
 
 __all__ = [
+    "LiveResponseWatchdog",
     "LiveTransportController",
     "LiveTransportError",
     "LiveTransportState",

@@ -160,12 +160,346 @@ def test_gemini_setup_uses_compression_without_session_resumption(monkeypatch):
         await streamer._send_setup()
 
         setup = sent[0]["setup"]
-        assert setup["model"] == "models/gemini-3.1-flash-live-preview"
+        assert setup["model"] == "models/gemini-3.8-live"
         assert setup["generationConfig"]["responseModalities"] == ["AUDIO"]
-        assert setup["contextWindowCompression"] == {"slidingWindow": {}}
+        assert setup["inputAudioTranscription"] == {}
+        assert setup["outputAudioTranscription"] == {}
+        assert setup["contextWindowCompression"] == {
+            "triggerTokens": 25000,
+            "slidingWindow": {"targetTokens": 8000},
+        }
         assert "sessionResumption" not in setup
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("model", ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-4.0-live-preview"])
+def test_setup_preserves_requested_model_and_blocking_tool_execution(monkeypatch, model):
+    async def run():
+        sent = []
+
+        class Socket:
+            async def send(self, payload):
+                sent.append(json.loads(payload))
+
+        config = resolve_live_voice_config({"JARVIS_GEMINI_LIVE_MODEL": model})
+        session = LiveSession(
+            session_id="model-compatibility",
+            send_text=lambda _text: None,
+            send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key", config=config)
+        streamer._ws = Socket()
+        declaration = {"name": "obtener_clima", "parameters": {"type": "object", "properties": {}}}
+        monkeypatch.setattr(streamer, "_get_function_declarations", lambda: [declaration])
+
+        await streamer._send_setup()
+
+        setup = sent[0]["setup"]
+        assert setup["model"] == f"models/{model}"
+        assert setup["tools"][0]["functionDeclarations"][0]["behavior"] == "BLOCKING"
+        assert "thinkingConfig" not in setup["generationConfig"]
+        assert "proactivity" not in setup
+        assert "enableAffectiveDialog" not in setup
+        assert "behavior" not in declaration
+
+    asyncio.run(run())
+
+
+def test_invalid_live_model_never_opens_provider_transport():
+    async def run():
+        events = []
+
+        async def send_text(payload):
+            events.append(json.loads(payload))
+
+        def connect(_uri):
+            pytest.fail("Invalid model configuration must not contact the provider")
+
+        session = LiveSession(
+            session_id="invalid-model",
+            send_text=send_text,
+            send_bytes=lambda _data: None,
+        )
+        config = resolve_live_voice_config({"JARVIS_GEMINI_LIVE_MODEL": "gemini-3.5-flash-lite"})
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key", config=config, connect_factory=connect)
+
+        await streamer.start()
+
+        assert streamer.is_available() is False
+        assert events[-1]["code"] == "gemini_live_model_invalid"
+
+    asyncio.run(run())
+
+
+def test_gemini_setup_can_disable_transcription_cost(monkeypatch):
+    async def run():
+        sent: list[dict] = []
+
+        class Socket:
+            async def send(self, payload):
+                sent.append(json.loads(payload))
+
+        config = resolve_live_voice_config(
+            {
+                "JARVIS_LIVE_INPUT_TRANSCRIPTION_ENABLED": "false",
+                "JARVIS_LIVE_OUTPUT_TRANSCRIPTION_ENABLED": "false",
+            }
+        )
+        session = LiveSession(
+            session_id="setup-no-transcription",
+            send_text=lambda _text: None,
+            send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(
+            session=session,
+            api_key="fake-key",
+            config=config,
+        )
+        streamer._ws = Socket()
+        monkeypatch.setattr(streamer, "_get_function_declarations", lambda: [])
+
+        await streamer._send_setup()
+
+        setup = sent[0]["setup"]
+        assert "inputAudioTranscription" not in setup
+        assert "outputAudioTranscription" not in setup
+
+    asyncio.run(run())
+
+
+def test_downstream_transcriptions_are_merged_emitted_and_persisted(monkeypatch):
+    async def run():
+        emitted: list[dict] = []
+        persisted: list[tuple[str, str]] = []
+
+        async def send_text(payload):
+            emitted.append(json.loads(payload))
+
+        session = LiveSession(
+            session_id="transcript-contract",
+            send_text=send_text,
+            send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+        streamer._running = True
+        monkeypatch.setattr(
+            streamer,
+            "_persist_live_transcript",
+            lambda role, text: persisted.append((role, text)),
+            raising=False,
+        )
+
+        await streamer._handle_downstream_message(
+            {
+                "serverContent": {
+                    "interimInputTranscription": {"text": "Hola Jar"},
+                }
+            }
+        )
+        await streamer._handle_downstream_message(
+            {
+                "serverContent": {
+                    "inputTranscription": {"text": "Hola Jarvis"},
+                }
+            }
+        )
+        await streamer._handle_downstream_message(
+            {
+                "serverContent": {
+                    "outputTranscription": {"text": "Hola"},
+                }
+            }
+        )
+        await streamer._handle_downstream_message(
+            {
+                "serverContent": {
+                    "outputTranscription": {"text": "Administrador"},
+                }
+            }
+        )
+        await streamer._handle_downstream_message(
+            {"serverContent": {"turnComplete": True}}
+        )
+
+        transcripts = [event for event in emitted if event.get("type") == "transcript"]
+        assert transcripts == [
+            {
+                "type": "transcript",
+                "role": "user",
+                "text": "Hola Jar",
+                "is_final": False,
+                "source": "gemini_live",
+            },
+            {
+                "type": "transcript",
+                "role": "user",
+                "text": "Hola Jarvis",
+                "is_final": True,
+                "source": "gemini_live",
+            },
+            {
+                "type": "transcript",
+                "role": "assistant",
+                "text": "Hola",
+                "is_final": False,
+                "source": "gemini_live",
+            },
+            {
+                "type": "transcript",
+                "role": "assistant",
+                "text": "Hola Administrador",
+                "is_final": False,
+                "source": "gemini_live",
+            },
+            {
+                "type": "transcript",
+                "role": "assistant",
+                "text": "Hola Administrador",
+                "is_final": True,
+                "source": "gemini_live",
+            },
+        ]
+        assert persisted == [
+            ("user", "Hola Jarvis"),
+            ("assistant", "Hola Administrador"),
+        ]
+        await session.close()
+
+    asyncio.run(run())
+
+
+def test_provider_barge_in_preserves_new_user_audio():
+    async def run():
+        session = LiveSession(
+            session_id="native-barge-in", send_text=lambda _text: None, send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+        await session.handle_audio_chunk(b"new-phrase-start")
+        await session.handle_audio_chunk(b"new-phrase-end")
+
+        await streamer._handle_downstream_message({"serverContent": {"interrupted": True}})
+
+        assert session._input_audio_queue.qsize() == 2
+        assert await session.next_audio_chunk() == b"new-phrase-start"
+        session.audio_task_done(b"new-phrase-start")
+        assert await session.next_audio_chunk() == b"new-phrase-end"
+        session.audio_task_done(b"new-phrase-end")
+        assert session.input_audio_bytes == 0
+        await session.close()
+
+    asyncio.run(run())
+
+
+def test_tool_response_includes_provider_call_identity():
+    async def run():
+        sent: list[dict] = []
+
+        class Socket:
+            async def send(self, payload):
+                sent.append(json.loads(payload))
+
+        session = LiveSession(
+            session_id="tool-response-contract",
+            send_text=lambda _text: None,
+            send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+        streamer._running = True
+        streamer._ws = Socket()
+        streamer._tool_call_names["call-1"] = "obtener_clima"
+
+        await streamer._send_tool_response("call-1", "Soleado")
+
+        response = sent[0]["toolResponse"]["functionResponses"][0]
+        assert response == {
+            "id": "call-1",
+            "name": "obtener_clima",
+            "response": {"result": "Soleado"},
+        }
+        await session.close()
+
+    asyncio.run(run())
+
+
+def test_provider_tool_cancellation_targets_only_matching_call():
+    async def run():
+        emitted: list[dict] = []
+
+        async def send_text(payload):
+            emitted.append(json.loads(payload))
+
+        session = LiveSession(
+            session_id="tool-cancel-contract",
+            send_text=send_text,
+            send_bytes=lambda _data: None,
+        )
+        streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+        plan = session.orchestrator.enqueue_batch(
+            [
+                {"id": "keep", "name": "obtener_clima", "args": {}},
+                {"id": "cancel", "name": "ajustar_volumen", "args": {}},
+            ]
+        )
+
+        await streamer._handle_downstream_message(
+            {"toolCallCancellation": {"ids": ["cancel"]}}
+        )
+
+        assert plan.actions[0].state.value == "pending"
+        assert plan.actions[1].state.value == "cancelled"
+        cancellation = next(
+            event for event in emitted if event.get("type") == "action_cancelled"
+        )
+        assert cancellation["call_ids"] == ["cancel"]
+        assert cancellation["actions"][0]["call_id"] == "cancel"
+        await session.close()
+
+    asyncio.run(run())
+
+
+def test_live_tool_declarations_exclude_critical_and_experimental_surface():
+    from core.security.tool_policy import get_tool_policy
+
+    session = LiveSession(
+        session_id="tool-surface-contract",
+        send_text=lambda _text: None,
+        send_bytes=lambda _data: None,
+    )
+    streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+
+    names = {declaration["name"] for declaration in streamer._get_function_declarations()}
+
+    assert "reproducir_en_spotify" in names
+    assert "poner_recordatorio" in names
+    assert "obtener_clima" in names
+    assert "computer_click" not in names
+    assert "borrar_memoria" not in names
+    assert "analizar_pantalla" not in names
+    assert "gestionar_tarea_actual" in names
+    assert get_tool_policy("gestionar_tarea_actual").risk_level == "unclassified"
+    assert all(
+        get_tool_policy(name).risk_level in {"public", "elevated"}
+        for name in names - {"gestionar_tarea_actual"}
+    )
+
+
+def test_incomplete_transcript_state_can_be_cleared_before_reconnect():
+    session = LiveSession(
+        session_id="transcript-reset-contract",
+        send_text=lambda _text: None,
+        send_bytes=lambda _data: None,
+    )
+    streamer = GeminiLiveStreamer(session=session, api_key="fake-key")
+    streamer._current_user_text = "old user"
+    streamer._current_turn_text = "partial old answer"
+    streamer._model_turn_text = "partial model fallback"
+
+    streamer._reset_turn_transcripts()
+
+    assert streamer._current_user_text == ""
+    assert streamer._current_turn_text == ""
+    assert streamer._model_turn_text == ""
 
 
 def test_streamer_emits_ready_only_after_provider_setup_complete():

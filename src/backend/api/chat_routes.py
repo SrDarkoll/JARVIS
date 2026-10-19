@@ -9,6 +9,7 @@ from core.errors import (
     LLMUnavailableError,
 )
 from core.jarvis_observability import obs_event
+from core.security.browser_profile import get_browser_profile_id
 from quart import Blueprint, Response, jsonify, request
 
 chat_bp = Blueprint("chat", __name__)
@@ -117,8 +118,8 @@ async def api_chat():
         limited = _rate_limit_response(ip, "chat")
         if limited:
             return limited
-        print(f"\n[LORD] {user_input}")
-        profile_id = (data.get("profile_id") or "web_default").strip()
+        print(f"\n[CHAT] Request received ({len(user_input)} chars)")
+        profile_id = get_browser_profile_id()
         obs_event(
             "api_chat_in",
             user_input=user_input[:220],
@@ -137,7 +138,7 @@ async def api_chat():
             ip=ip,
             profile_id=profile_id,
         )
-        return jsonify({"response": reply, "should_listen": should_listen})
+        return jsonify({"response": reply, "should_listen": should_listen, "profile_id": profile_id})
     except LLMUnavailableError:
         obs_event(
             "api_chat_unconfigured",
@@ -168,7 +169,7 @@ async def api_chat_stream():
     limited = _rate_limit_response(ip, "chat_stream")
     if limited:
         return limited
-    profile_id = (data.get("profile_id") or "web_default").strip()
+    profile_id = get_browser_profile_id()
     obs_event(
         "api_chat_stream_in",
         user_input=user_input[:220],
