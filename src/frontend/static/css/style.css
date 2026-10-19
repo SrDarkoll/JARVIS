@@ -342,6 +342,14 @@ body::before {
     font-family: var(--font-header);
     font-size: 0.65rem;
     letter-spacing: 0.08em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+}
+
+.header-action-icon {
+    flex: 0 0 auto;
 }
 
 .stark-logo {
@@ -1020,25 +1028,30 @@ body::before {
 
 /* --- ONBOARDING PROGRESIVO --- */
 .onboarding-rail {
-    order: -1;
-    width: min(88%, 760px);
+    width: min(calc(100% - 32px), 760px);
+    max-height: calc(100svh - 32px);
+    margin: auto;
     padding: clamp(14px, 2vw, 22px);
     background:
         linear-gradient(105deg, rgba(0, 242, 255, 0.08), transparent 45%),
-        rgba(2, 12, 24, 0.94);
-    border-top: 1px solid rgba(0, 242, 255, 0.62);
-    border-bottom: 1px solid rgba(0, 242, 255, 0.26);
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+        rgb(2, 12, 24);
+    border: 1px solid rgba(0, 242, 255, 0.62);
     color: var(--text-main);
-    position: relative;
+    position: fixed;
+    inset: 0;
     z-index: 20;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.onboarding-rail::backdrop {
+    background: rgba(0, 4, 10, 0.84);
 }
 
 .onboarding-header,
 .onboarding-actions,
 .onboarding-language-row,
-.provider-option,
-.onboarding-consent {
+.provider-option {
     display: flex;
     align-items: center;
 }
@@ -1049,27 +1062,15 @@ body::before {
     margin-bottom: 12px;
 }
 
-.onboarding-header > div {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-}
-
-.onboarding-kicker,
 .onboarding-progress {
     font-family: var(--font-header);
     letter-spacing: 0.11em;
     text-transform: uppercase;
 }
 
-.onboarding-kicker {
-    color: var(--primary);
-    font-size: 0.64rem;
-}
-
 .onboarding-progress {
-    color: var(--text-dim);
-    font-size: 0.58rem;
+    color: var(--primary);
+    font-size: 0.68rem;
 }
 
 .onboarding-link-action {
@@ -1102,7 +1103,9 @@ body::before {
 }
 
 .onboarding-lead,
-.onboarding-privacy {
+.onboarding-privacy,
+.onboarding-time,
+.onboarding-storage-notice {
     max-width: 68ch;
     line-height: 1.45;
 }
@@ -1115,6 +1118,19 @@ body::before {
 .onboarding-privacy {
     color: var(--text-dim);
     font-size: 0.84rem;
+}
+
+.onboarding-time {
+    color: var(--success);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.onboarding-storage-notice {
+    padding: 10px 12px;
+    background: rgba(0, 242, 255, 0.07);
+    color: var(--text-main);
+    font-size: 0.82rem;
 }
 
 .onboarding-language-row {
@@ -1168,8 +1184,7 @@ body::before {
     background: rgba(0, 242, 255, 0.1);
 }
 
-.provider-option input,
-.onboarding-consent input {
+.provider-option input {
     width: 20px;
     height: 20px;
     accent-color: var(--primary);
@@ -1230,17 +1245,14 @@ body::before {
     box-shadow: inset 0 0 12px rgba(0, 242, 255, 0.12);
 }
 
-.onboarding-consent {
-    min-height: 44px;
-    gap: 10px;
-    color: var(--text-main);
-    cursor: pointer;
-}
-
 .onboarding-actions {
     justify-content: space-between;
     gap: 10px;
-    margin-top: 2px;
+    position: sticky;
+    bottom: -1px;
+    margin: 2px -2px -2px;
+    padding: 12px 2px 2px;
+    background: linear-gradient(180deg, transparent, rgb(2, 12, 24) 32%);
 }
 
 .onboarding-actions-end {
@@ -1256,6 +1268,37 @@ body::before {
     font-size: 0.7rem;
     font-weight: 600;
     letter-spacing: 0.06em;
+}
+
+.onboarding-command-form {
+    display: grid;
+    gap: 6px;
+}
+
+.onboarding-command-form > label {
+    color: var(--text-main);
+    font-weight: 700;
+}
+
+.onboarding-command-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+}
+
+#onboarding-command-input {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid rgba(0, 242, 255, 0.42);
+    background: rgba(0, 5, 12, 0.86);
+    color: var(--text-main);
+    font: 500 0.92rem var(--font-body);
+    cursor: text;
+}
+
+#onboarding-command-input:focus {
+    border-color: var(--primary);
 }
 
 .onboarding-button {
@@ -1304,11 +1347,6 @@ body::before {
 
 .onboarding-message[role="alert"] {
     color: #ff9999;
-}
-
-#app.onboarding-active .core-container {
-    width: clamp(120px, min(17vw, 20vh), 190px);
-    height: clamp(120px, min(17vw, 20vh), 190px);
 }
 
 /* --- CONVERSACION SEGMENTADA --- */
@@ -1732,6 +1770,7 @@ body::before {
 @media (max-width: 1200px) {
     body {
         overflow-y: auto;
+        overflow-x: hidden;
         height: auto;
         min-height: 100svh;
     }
@@ -1807,11 +1846,25 @@ body::before {
 
     .system-status {
         margin-top: 0;
-        flex: 1;
+        flex: 0 0 auto;
+        min-width: 0;
         gap: 6px;
     }
 
     .system-status > .hud-font {
+        display: none;
+    }
+
+    .system-status > .status-indicator {
+        display: none;
+    }
+
+    .header-action {
+        width: 44px;
+        padding: 8px;
+    }
+
+    .header-action > span {
         display: none;
     }
 
@@ -1863,19 +1916,14 @@ body::before {
     }
 
     .onboarding-rail {
-        width: 100%;
+        width: calc(100% - 24px);
+        max-height: calc(100svh - 24px);
         padding: 14px 12px;
     }
 
     .onboarding-header,
-    .onboarding-header > div,
     .onboarding-language-row {
         align-items: flex-start;
-    }
-
-    .onboarding-header > div {
-        flex-direction: column;
-        gap: 3px;
     }
 
     .onboarding-language-row {
@@ -1903,6 +1951,10 @@ body::before {
     .onboarding-button {
         flex: 1;
         min-width: 0;
+    }
+
+    .onboarding-command-row {
+        grid-template-columns: 1fr;
     }
 
     .command-center-wrap {

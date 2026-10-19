@@ -15,11 +15,13 @@ const LIVE_ERROR_CODES = new Set([
     'gemini_live_dependency_missing',
     'gemini_live_connect_failed',
     'gemini_live_setup_timeout',
+    'gemini_live_turn_timeout',
     'gemini_live_setup_rejected',
     'gemini_live_reconnect_exhausted',
     'gemini_live_protocol_error',
     'live_audio_capture_unsupported',
     'live_audio_transport_degraded',
+    'live_text_not_delivered',
     'live_voice_unavailable',
 ]);
 
@@ -42,14 +44,18 @@ export function liveVoiceErrorView(error, translate) {
         code,
         key,
         message: typeof translate === 'function' ? translate(key) : key,
-        terminal: code !== 'live_audio_transport_degraded',
+        terminal: !['live_audio_transport_degraded', 'live_text_not_delivered'].includes(code),
     };
 }
 
+export function shouldCommitLiveTranscript(data) {
+    return data?.is_final === true;
+}
+
 export class AudioBufferQueuePlayer {
-    constructor(sampleRate = 24000, maxQueuedMs = 2000) {
+    constructor(sampleRate = 24000, maxQueuedMs = 15000) {
         this.sampleRate = sampleRate;
-        this.maxQueuedMs = Math.max(250, Number(maxQueuedMs) || 2000);
+        this.maxQueuedMs = Math.max(250, Math.min(30000, Number(maxQueuedMs) || 15000));
         this.audioCtx = null;
         this.nextPlayTime = 0;
         this.activeSources = [];
@@ -123,9 +129,8 @@ export class AudioBufferQueuePlayer {
 
         source.onended = () => {
             const index = this.activeSources.indexOf(source);
-            if (index !== -1) {
-                this.activeSources.splice(index, 1);
-            }
+            if (index === -1) return;
+            this.activeSources.splice(index, 1);
             if (this.activeSources.length === 0) {
                 if (this._stopCheckTimer) clearTimeout(this._stopCheckTimer);
                 this._stopCheckTimer = setTimeout(() => {
@@ -213,7 +218,7 @@ export class LiveVoiceClient {
         this.ws = null;
         this.player = options.player || new AudioBufferQueuePlayer(
             24000,
-            options.maxPlaybackQueueMs ?? 2000
+            options.maxPlaybackQueueMs ?? 15000
         );
         this.bargeInDetector = new BargeInDetector();
         this.capture = options.capture || new LivePcmCapture({
@@ -228,6 +233,9 @@ export class LiveVoiceClient {
         this.isSocketOpen = false;
         this.isProviderReady = false;
         this.activeMode = '';
+        this.serverInputTranscriptionEnabled = false;
+        this.serverOutputTranscriptionEnabled = false;
+        this.browserTranscriptionRequired = true;
         this.isStreaming = false;
         this.connectTimeoutMs = Math.max(100, Number(options.connectTimeoutMs ?? 10000));
         this.readyTimeoutMs = Math.max(100, Number(options.readyTimeoutMs ?? 12000));
@@ -419,6 +427,11 @@ export class LiveVoiceClient {
         }
     }
 
+    _publishState(state) {
+        const actualState = state === 'listening' && this.player.isPlaying ? 'speaking' : state;
+        this.onStateChange?.(actualState);
+    }
+
     handleWsMessage(event) {
         if (event.data instanceof ArrayBuffer) {
             this.player.enqueuePcmChunk(event.data);
@@ -433,16 +446,29 @@ export class LiveVoiceClient {
                     this.isProviderReady = true;
                     this.audioSendPaused = false;
                     this.activeMode = data.mode || '';
+                    this.serverInputTranscriptionEnabled = (
+                        data.input_transcription_enabled === true
+                    );
+                    this.serverOutputTranscriptionEnabled = (
+                        data.output_transcription_enabled === true
+                    );
+                    this.browserTranscriptionRequired = (
+                        typeof data.browser_transcription_required === 'boolean'
+                            ? data.browser_transcription_required
+                            : this.activeMode !== 'gemini_live'
+                                || !this.serverInputTranscriptionEnabled
+                    );
                     this._readyResolve?.(true);
                     this.onSessionReady?.(data);
                     break;
                 case 'provider_state':
                     this.audioSendPaused = Boolean(data.input_paused);
+                    if (this.audioSendPaused) this.player.interrupt();
                     if (data.active_mode) this.activeMode = data.active_mode;
-                    this.onStateChange?.(data.state);
+                    this._publishState(data.state);
                     break;
                 case 'state_change':
-                    this.onStateChange?.(data.state);
+                    this._publishState(data.state);
                     break;
                 case 'tool_executing':
                 case 'tool_call':
@@ -459,11 +485,16 @@ export class LiveVoiceClient {
                     break;
                 case 'session_reconnecting':
                     this.audioSendPaused = true;
+                    this.player.interrupt();
+                    this._publishState('reconnecting');
                     this.onReconnecting?.(data);
                     break;
                 case 'live_fallback_active':
                     this.activeMode = data.mode || 'hybrid_stream';
                     this.audioSendPaused = false;
+                    this.serverInputTranscriptionEnabled = false;
+                    this.browserTranscriptionRequired = true;
+                    if (this.isStreaming) this._startBrowserRecognition();
                     this.onSessionReady?.(data);
                     break;
                 case 'transcript':
@@ -473,8 +504,11 @@ export class LiveVoiceClient {
                     this.player.interrupt();
                     this.onInterrupted?.(data);
                     break;
+                case 'generation_complete':
+                    this._publishState('listening');
+                    break;
                 case 'turn_complete':
-                    this.onStateChange?.('listening');
+                    this._publishState('listening');
                     if (data.diagnostics) {
                         this.onDiagnostics?.(data.diagnostics);
                     }
@@ -497,6 +531,44 @@ export class LiveVoiceClient {
         this.onInterrupted?.({ source: 'local_barge_in' });
     }
 
+    _startBrowserRecognition() {
+        if (this.rec || !this.isStreaming) return false;
+        if (
+            this.activeMode === 'gemini_live'
+            && this.serverInputTranscriptionEnabled
+        ) {
+            return false;
+        }
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRec) return false;
+        try {
+            this.rec = new SpeechRec();
+            this.rec.continuous = true;
+            this.rec.interimResults = false;
+            this.rec.lang = this.language === 'en' ? 'en-US' : 'es-MX';
+            this.rec.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        const userTranscript = event.results[i][0].transcript.trim();
+                        if (userTranscript) this.sendUserTranscript(userTranscript);
+                    }
+                }
+            };
+            this.rec.onerror = () => {};
+            this.rec.onend = () => {
+                if (this.isStreaming && this.rec) {
+                    try { this.rec.start(); } catch (error) {}
+                }
+            };
+            try { this.rec.start(); } catch (error) {}
+            return true;
+        } catch (error) {
+            this.rec = null;
+            console.debug('[LIVE_VOICE] Browser speech recognition init:', error);
+            return false;
+        }
+    }
+
     async startStreaming() {
         if (this.isStreaming) return;
         try {
@@ -515,36 +587,9 @@ export class LiveVoiceClient {
             this.isStreaming = true;
             this.onStateChange?.('listening');
 
-            // Optional parallel browser speech recognition for local user transcription
-            const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (SpeechRec) {
-                try {
-                    this.rec = new SpeechRec();
-                    this.rec.continuous = true;
-                    this.rec.interimResults = false;
-                    this.rec.lang = this.language === 'en' ? 'en-US' : 'es-MX';
-                    this.rec.onresult = (event) => {
-                        for (let i = event.resultIndex; i < event.results.length; ++i) {
-                            if (event.results[i].isFinal) {
-                                const userTranscript = event.results[i][0].transcript.trim();
-                                if (userTranscript) {
-                                    this.sendUserTranscript(userTranscript);
-                                    this.onTranscript?.({ role: 'user', text: userTranscript, is_final: true });
-                                }
-                            }
-                        }
-                    };
-                    this.rec.onerror = () => {};
-                    this.rec.onend = () => {
-                        if (this.isStreaming && this.rec) {
-                            try { this.rec.start(); } catch (e) {}
-                        }
-                    };
-                    try { this.rec.start(); } catch (e) {}
-                } catch (e) {
-                    console.debug('[LIVE_VOICE] Browser speech recognition init:', e);
-                }
-            }
+            // Gemini transcripts are authoritative. Browser recognition is only
+            // retained for hybrid mode or when provider transcription is disabled.
+            this._startBrowserRecognition();
         } catch (error) {
             await this.disconnect();
             throw error;
@@ -556,7 +601,7 @@ export class LiveVoiceClient {
     }
 
     sendUserText(text) {
-        this._sendJson({ type: 'user_text', text });
+        return this._sendJson({ type: 'user_text', text });
     }
 
     async startScreenShare() {

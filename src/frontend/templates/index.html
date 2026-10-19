@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.4.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.5.0">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -58,10 +58,16 @@
                 <button id="diagnostics-toggle" class="header-action" type="button" aria-expanded="false"
                     aria-controls="diagnostics-left diagnostics-right" data-i18n-aria-label="diagnostics_open"
                     aria-label="Abrir diagnóstico">
+                    <svg class="header-action-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <path fill="currentColor" d="M4 5h10v2H4V5Zm0 6h16v2H4v-2Zm0 6h7v2H4v-2Zm13-13h3v4h-3V4Zm-3 12h6v4h-6v-4Z" />
+                    </svg>
                     <span data-i18n="diagnostics_label">DIAGNÓSTICO</span>
                 </button>
                 <button id="cinema-toggle" class="header-action cinema-action" type="button"
                     data-i18n-aria-label="cinema_toggle" aria-label="Pantalla completa" title="Modo Cinema / Pantalla completa">
+                    <svg class="header-action-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <path fill="currentColor" d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" />
+                    </svg>
                     <span id="cinema-toggle-text" data-i18n="cinema_label">CINEMA</span>
                 </button>
             </div>
@@ -130,10 +136,12 @@
                         <button id="refresh-memory-graph" class="mini-hud-btn" type="button" aria-label="Actualizar grafo" title="Actualizar red neuronal">&#8635;</button>
                     </div>
                     <div class="memory-graph-container">
-                        <canvas id="memory-graph-canvas" class="memory-canvas"></canvas>
-                        <div id="memory-graph-info" class="memory-node-preview">
+                        <canvas id="memory-graph-canvas" class="memory-canvas" aria-hidden="true"></canvas>
+                        <div id="memory-graph-info" class="memory-node-preview" aria-live="polite">
                             <span class="memory-count-label" id="memory-node-count">Cargando sinapsis...</span>
                         </div>
+                        <ul id="memory-graph-list" class="sr-only" aria-label="Memorias de la red cognitiva"
+                            data-i18n-aria-label="memory_graph_list_label"></ul>
                     </div>
                 </div>
             </div>
@@ -162,14 +170,11 @@
                     <div class="decor-line"></div>
                 </div>
 
-                <section id="onboarding-rail" class="onboarding-rail hidden" aria-label="Configuración inicial"
-                    data-i18n-aria-label="onboarding_label">
+                <dialog id="onboarding-rail" class="onboarding-rail hidden" aria-modal="true"
+                    aria-label="Configuración inicial" data-i18n-aria-label="onboarding_label">
                     <header class="onboarding-header">
-                        <div>
-                            <span class="onboarding-kicker" data-i18n="onboarding_kicker">INICIO SEGURO</span>
-                            <span id="onboarding-progress" class="onboarding-progress" aria-live="polite"
-                                data-i18n="onboarding_progress_welcome">Paso 1 de 3</span>
-                        </div>
+                        <span id="onboarding-progress" class="onboarding-progress" aria-live="polite"
+                            data-i18n="onboarding_progress_welcome">Paso 1 de 3</span>
                         <button id="onboarding-skip" class="onboarding-link-action" type="button"
                             data-i18n="onboarding_skip">Omitir por ahora</button>
                     </header>
@@ -178,6 +183,7 @@
                         <h2 id="onboarding-title-welcome" class="onboarding-title" tabindex="-1"
                             data-i18n="onboarding_welcome_title">JARVIS, local por defecto</h2>
                         <p class="onboarding-lead" data-i18n="onboarding_welcome_copy">Empieza con texto y configura solo lo necesario para una primera respuesta real.</p>
+                        <p class="onboarding-time" data-i18n="onboarding_time">Tiempo estimado: menos de 2 minutos.</p>
                         <p class="onboarding-privacy" data-i18n="onboarding_privacy_copy">La configuración se guarda en este equipo. Tus solicitudes de IA se envían al proveedor que elijas; el micrófono y la pantalla siguen desactivados hasta que tú los actives.</p>
                         <div class="onboarding-language-row">
                             <label for="onboarding-language" data-i18n="onboarding_language_label">Idioma de JARVIS</label>
@@ -216,13 +222,11 @@
                         <div class="onboarding-field">
                             <label for="onboarding-api-key" data-i18n="onboarding_key_label">Clave de API</label>
                             <input id="onboarding-api-key" type="password" autocomplete="off" spellcheck="false"
-                                minlength="16" maxlength="512" aria-describedby="onboarding-key-help">
+                                minlength="16" maxlength="512" aria-invalid="false"
+                                aria-describedby="onboarding-key-help onboarding-error">
                             <p id="onboarding-key-help" data-i18n="onboarding_key_help">Se enviará una vez al backend local para validarla y nunca se mostrará de nuevo.</p>
                         </div>
-                        <label class="onboarding-consent">
-                            <input id="onboarding-save-local" type="checkbox">
-                            <span data-i18n="onboarding_save_local">Guardar esta clave en este equipo</span>
-                        </label>
+                        <p class="onboarding-storage-notice" data-i18n="onboarding_save_local">Para mantener tu sesión después de cerrar JARVIS, la clave se guarda en el archivo local de configuración de este equipo.</p>
                         <div id="onboarding-error" class="onboarding-message hidden" role="alert"></div>
                         <div id="onboarding-provider-status" class="onboarding-message" aria-live="polite"></div>
                         <div class="onboarding-actions">
@@ -239,6 +243,16 @@
                         <p class="onboarding-lead" data-i18n="onboarding_command_copy">Usaremos el compositor normal. Edita la sugerencia si quieres y envíala cuando estés listo.</p>
                         <button id="onboarding-use-suggestion" class="onboarding-suggestion" type="button"
                             data-i18n="onboarding_command_suggestion">Explica qué puedes hacer sin acceder a cuentas externas.</button>
+                        <form id="onboarding-command-form" class="onboarding-command-form">
+                            <label for="onboarding-command-input" data-i18n="onboarding_command_label">Primer comando</label>
+                            <div class="onboarding-command-row">
+                                <input id="onboarding-command-input" type="text" maxlength="4000" autocomplete="off"
+                                    data-i18n-placeholder="command_placeholder"
+                                    placeholder="Escribe un comando para JARVIS...">
+                                <button id="onboarding-command-submit" class="onboarding-button primary" type="submit"
+                                    data-i18n="command_send">Enviar</button>
+                            </div>
+                        </form>
                         <div id="onboarding-command-status" class="onboarding-message" aria-live="polite"
                             data-i18n="onboarding_command_waiting">El onboarding terminará solo después de una respuesta correcta.</div>
                         <div class="onboarding-actions">
@@ -256,7 +270,7 @@
                                 data-i18n="onboarding_finish">Continuar a JARVIS</button>
                         </div>
                     </section>
-                </section>
+                </dialog>
 
                 <section id="conversation-panel" class="conversation-panel tech-glass" aria-live="polite">
                     <div class="conversation-header">
@@ -345,7 +359,7 @@
             <div class="command-center-wrap">
                 <div id="hud-media-player" class="hud-media-player hidden" aria-label="Reproductor multimedia">
                     <div class="media-art-wrap">
-                        <img id="media-player-art" class="media-art" src="" alt="Portada" style="display:none;">
+                        <img id="media-player-art" class="media-art" alt="Portada" style="display:none;">
                         <span id="media-default-icon" class="media-default-icon">♪</span>
                     </div>
                     <div class="media-details">
@@ -419,7 +433,7 @@
         </footer>
     </main>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.4.0"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.5.0"></script>
 </body>
 
 </html>

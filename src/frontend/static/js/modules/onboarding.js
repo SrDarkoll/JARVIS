@@ -109,7 +109,6 @@ export function buildProviderPayload(provider, apiKey, saveLocal) {
     const name = String(provider || '').trim().toLowerCase();
     const secret = String(apiKey || '').trim();
     if (!ALLOWED_PROVIDERS.has(name)) throw new Error('invalid_provider');
-    if (saveLocal !== true) throw new Error('invalid_request');
     if (
         secret.length < MIN_KEY_LENGTH
         || secret.length > MAX_KEY_LENGTH
@@ -118,10 +117,11 @@ export function buildProviderPayload(provider, apiKey, saveLocal) {
     ) {
         throw new Error('invalid_key_format');
     }
+    if (saveLocal !== true) throw new Error('invalid_request');
     return { provider: name, api_key: secret, save_local: true };
 }
 
 export function firstCommandCompletes(outcome) {
     const normalized = String(outcome || '').trim().toLowerCase();
-    return normalized === 'succeeded' || normalized === 'duplicate';
+    return normalized === 'responded' || normalized === 'verified';
 }
