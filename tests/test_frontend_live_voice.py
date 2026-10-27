@@ -49,6 +49,23 @@ if (client.sendUserText('Iamramidev') !== true || calls !== 1) process.exit(3);
 
 
 @pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_live_voice_ticket_url_never_contains_device_token_or_profile_override():
+    _run_node_live_voice_assertions(
+        """
+const url = new URL(liveVoice.buildLiveVoiceSocketUrl(
+    { protocol: 'https:', host: 'jarvis.tail123.ts.net' },
+    { language: 'es', profileId: 'telegram_user', mode: 'gemini_live', websocketTicket: 'one-use-ticket' }
+));
+if (url.protocol !== 'wss:') process.exit(1);
+if (url.searchParams.get('ws_ticket') !== 'one-use-ticket') process.exit(2);
+if (url.searchParams.has('profile_id')) process.exit(3);
+if (url.searchParams.has('device_token')) process.exit(4);
+if (url.searchParams.get('lang') !== 'es') process.exit(5);
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
 def test_barge_in_detector_triggers_only_when_assistant_speaking():
     _run_node_live_voice_assertions(
         """

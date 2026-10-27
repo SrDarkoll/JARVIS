@@ -15,6 +15,23 @@ ROOT_DIR = Path(__file__).resolve().parent
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
+def _desktop_bind() -> tuple[str, int]:
+    """Resolve the desktop URL from the same .env the backend uses."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT_DIR / ".env")
+    except (ImportError, OSError):
+        pass
+    raw_host = str(os.getenv("JARVIS_HOST", "localhost") or "localhost").strip() or "localhost"
+    try:
+        port = int(str(os.getenv("JARVIS_PORT", "5002") or "5002").strip())
+    except (TypeError, ValueError):
+        port = 5002
+    ui_host = "localhost" if raw_host in {"0.0.0.0", "::", "127.0.0.1", "localhost"} or ":" in raw_host else raw_host
+    return ui_host, port
+
+
 def _skip_venv_reexec() -> bool:
     return os.getenv("JARVIS_SKIP_VENV_REEXEC", "").strip().lower() in _TRUE_VALUES
 
@@ -135,7 +152,8 @@ def start_app():
         try:
             from core.desktop_session import load_desktop_session
 
-            desktop_session = load_desktop_session(port=5002)
+            ui_host, ui_port = _desktop_bind()
+            desktop_session = load_desktop_session(port=ui_port)
             url = desktop_session.origin
             webview_storage_dir = desktop_session.webview_storage_dir
             register_temporary_storage(
@@ -146,7 +164,8 @@ def start_app():
                 "[SYSTEM] Persistent desktop session unavailable; "
                 "using temporary storage."
             )
-            url = "http://localhost:5002"
+            ui_host, ui_port = _desktop_bind()
+            url = f"http://{ui_host}:{ui_port}"
             cleanup_dir = tempfile.mkdtemp(prefix="jarvis-desktop-emergency-")
             register_temporary_storage(cleanup_dir)
             try:

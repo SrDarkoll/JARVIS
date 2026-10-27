@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#05080c">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="J.A.R.V.I.S. Mobile: chat y voz privados a través de tu VPN.">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>J.A.R.V.I.S. Móvil</title>
+    <link rel="manifest" href="/mobile-manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
+    <link rel="apple-touch-icon" href="/media/favicon.svg">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/mobile.css') }}?v=1.0.0">
+</head>
+<body>
+    <a class="skip-link" href="#message-input">Saltar al mensaje</a>
+
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">J.A.R.V.I.S.</span>
+            <span class="brand-sub" data-i18n="brand_mobile">Móvil</span>
+        </div>
+        <div id="connection" class="connection" data-state="offline" role="status" aria-live="polite">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span id="connection-text" data-i18n="offline">Sin conexión</span>
+        </div>
+        <button id="install-button" class="ghost-button hidden" type="button" data-i18n="install">Instalar</button>
+    </header>
+
+    <main id="pairing-view" class="view pairing-view">
+        <section class="pairing-card" aria-labelledby="pairing-title">
+            <div class="eyebrow">PRIVATE LINK</div>
+            <h1 id="pairing-title" data-i18n="pairing_title">Vincular este dispositivo</h1>
+            <p class="muted" data-i18n="pairing_intro">Escanea el QR del panel de escritorio o introduce el PIN de un solo uso.</p>
+
+            <form id="pair-form" class="pair-form" autocomplete="off">
+                <label for="pair-pin" data-i18n="pin_label">PIN de emparejamiento</label>
+                <input
+                    id="pair-pin"
+                    name="pin"
+                    type="text"
+                    inputmode="text"
+                    autocapitalize="characters"
+                    autocomplete="one-time-code"
+                    spellcheck="false"
+                    maxlength="6"
+                    pattern="[23456789A-HJ-NP-Za-hj-np-z]{6}"
+                    placeholder="ABC123"
+                    required
+                >
+                <label for="device-name" data-i18n="name_label">Nombre del dispositivo</label>
+                <input id="device-name" name="device_name" type="text" maxlength="64" value="JARVIS Mobile">
+                <button id="pair-button" class="primary-button" type="submit" data-i18n="pair_button">Vincular dispositivo</button>
+            </form>
+
+            <p class="hint" data-i18n="pairing_hint">El PIN caduca en 10 minutos y solo se puede usar una vez.</p>
+            <p id="pair-status" class="pair-status" role="status" aria-live="polite"></p>
+
+            <details class="privacy-note">
+                <summary>Privacidad</summary>
+                <p data-i18n="voice_hint">La voz usa una sesión Live temporal y no envía audio al historial.</p>
+                <p>El token de este dispositivo solo permite las rutas de sincronización de su perfil. Nunca se entrega el token maestro.</p>
+            </details>
+        </section>
+    </main>
+
+    <main id="app-view" class="view app-view hidden">
+        <section id="conversation" class="conversation" role="log" aria-live="polite" aria-label="Conversación">
+            <div id="empty-state" class="empty-state" data-i18n="empty_conversation">Aún no hay mensajes. Escribe o habla para empezar.</div>
+        </section>
+
+        <form id="composer" class="composer">
+            <label class="sr-only" for="message-input" data-i18n="message_placeholder">Escribe un comando…</label>
+            <textarea
+                id="message-input"
+                name="message"
+                rows="1"
+                maxlength="4000"
+                placeholder="Escribe un comando…"
+                data-i18n-placeholder="message_placeholder"
+                enterkeyhint="send"
+            ></textarea>
+            <div class="composer-actions">
+                <button id="voice-button" class="voice-button" type="button" aria-pressed="false" data-i18n="voice">Voz</button>
+                <button id="send-button" class="primary-button send-button" type="submit" data-i18n="send">Enviar</button>
+            </div>
+        </form>
+
+        <footer class="device-bar">
+            <span id="device-label" class="device-label">Dispositivo: JARVIS Mobile</span>
+            <button id="revoke-button" class="danger-button" type="button" data-i18n="revoke">Desvincular</button>
+        </footer>
+    </main>
+
+    <noscript>
+        <p class="noscript">J.A.R.V.I.S. Mobile necesita JavaScript para emparejarse y sincronizar.</p>
+    </noscript>
+
+    <script type="module" src="{{ url_for('static', filename='js/mobile.js') }}?v=1.0.0"></script>
+</body>
+</html>

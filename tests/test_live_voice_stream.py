@@ -536,17 +536,23 @@ def test_live_voice_websocket_security_origin_and_token(monkeypatch):
         with pytest.raises(WebsocketResponseError) as invalid_token_error:
             async with client.websocket(
                 "/api/voice/stream",
-                query_string={"lang": "es", "mode": "hybrid", "token": "wrong-token"},
-                headers={"Origin": "http://127.0.0.1:5002"},
+                query_string={"lang": "es", "mode": "hybrid"},
+                headers={
+                    "Origin": "http://127.0.0.1:5002",
+                    "X-JARVIS-API-TOKEN": "wrong-token",
+                },
             ):
                 pass
         assert invalid_token_error.value.response.status_code == 401
 
-        # Connection with valid token in query param should succeed
+        # Long-lived tokens are sent in the header, never in the WebSocket URL.
         async with client.websocket(
             "/api/voice/stream",
-            query_string={"lang": "es", "mode": "hybrid", "token": "super-secret-token"},
-            headers={"Origin": "http://127.0.0.1:5002"},
+            query_string={"lang": "es", "mode": "hybrid"},
+            headers={
+                "Origin": "http://127.0.0.1:5002",
+                "X-JARVIS-API-TOKEN": "super-secret-token",
+            },
         ) as ws:
             msg = await ws.receive()
             data = json.loads(msg)

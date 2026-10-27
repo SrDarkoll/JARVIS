@@ -174,8 +174,8 @@ def test_live_same_frame_followup_executes_after_transcript_buffers_are_reset(mo
                 "operation": "retry", "action_ref": parent.context_ref,
             }}]},
         })
-        for _attempt in range(100):
-            if replies:
+        for _attempt in range(300):
+            if len(calls) >= 2 and replies:
                 break
             await asyncio.sleep(0.01)
         assert calls == ["Killer Queen", "Killer Queen"]

@@ -1,8 +1,16 @@
-const CACHE_NAME = 'jarvis-v6';
+const CACHE_NAME = 'jarvis-v7';
 const ASSETS = [
     '/',
-    '/static/css/style.css?v=1.5.0',
-    '/static/js/main.js?v=1.5.0',
+    '/mobile',
+    '/mobile-manifest.json',
+    '/static/css/style.css?v=1.5.1',
+    '/static/css/mobile.css?v=1.0.0',
+    '/static/js/main.js?v=1.5.1',
+    '/static/js/mobile.js?v=1.0.0',
+    '/static/js/modules/device-sync.js',
+    '/static/js/modules/mobile-pairing.js',
+    '/static/js/modules/live-voice.js',
+    '/static/js/modules/live-pcm-capture.js',
     '/media/favicon.svg'
 ];
 

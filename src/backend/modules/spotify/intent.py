@@ -40,4 +40,6 @@ def mutation_tool_for_control(action: str) -> str:
     from modules.spotify.service import _spotify_desktop_control_action
 
     canonical = _spotify_desktop_control_action(action)
+    if not canonical:
+        return ""
     return {"like": "dar_like_spotify", "unlike": "quitar_like_spotify"}.get(canonical, "")

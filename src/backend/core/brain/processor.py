@@ -24,6 +24,7 @@ from core.command_pipeline.deterministic import DeterministicPlanner
 from core.command_pipeline.groq_planner import GroqPlanner
 from core.command_pipeline.models import (
     ActionPlan,
+    CommandOutcome,
     CommandRequest,
     CommandResponse,
     PlanSource,
@@ -265,7 +266,7 @@ def _resolve_pending_auth_confirmation(
     tokens = set(normalized.split())
     is_cancellation = (
         normalized in cancellation
-        or bool(tokens & {"cancela", "cancelar", "abortar", "aborta", "detener", "rechazar"})
+        or bool(tokens & {"no", "nunca", "cancela", "cancelar", "abortar", "aborta", "detener", "rechazar"})
         or normalized == "no"
         or normalized.startswith(("no ", "cancela", "cancelar", "abortar", "no quiero", "no lo hagas"))
     )
@@ -917,6 +918,7 @@ def _build_command_request(
     *,
     profile_id: str,
     channel: str,
+    request_id: str | None = None,
 ) -> CommandRequest:
     pid = jarvis_state.normalize_profile_id(
         profile_id,
@@ -927,6 +929,7 @@ def _build_command_request(
         profile_id=pid,
         channel=channel,
         language=get_current_language(),
+        request_id=request_id,
         metadata={
             "default_location": get_default_location(),
             "spotify_pending_choices": pending_spotify_selections.snapshot(pid),
@@ -999,6 +1002,10 @@ def process_command(
         profile_id=request.profile_id,
         channel=request.channel,
     )
+    pending_response = _resolve_pending_confirmation_for_request(request)
+    if pending_response is not None:
+        _record_pipeline_response(request, pending_response)
+        return pending_response
     with jarvis_state.active_profile(request.profile_id):
         response = _get_command_orchestrator().process(
             request,
@@ -1008,11 +1015,38 @@ def process_command(
     return response
 
 
+def _resolve_pending_confirmation_for_request(request: CommandRequest) -> CommandResponse | None:
+    """Resume a pending critical action from the default command pipeline."""
+    pending = history_manager._extraer_accion_pendiente_auth(request.profile_id, pop=False)
+    if pending is None:
+        return None
+    reply, should_listen = _resolve_pending_auth_confirmation(
+        request.text,
+        request.profile_id,
+    )
+    if reply is None:
+        return None
+    normalized = str(reply or "").strip().casefold()
+    if normalized.startswith(("access_denied", "acceso_denegado")):
+        outcome = CommandOutcome.BLOCKED
+    elif normalized.startswith(("error", "no pude", "no fue posible")):
+        outcome = CommandOutcome.FAILED
+    else:
+        outcome = CommandOutcome.EXECUTED
+    return CommandResponse(
+        request_id=request.request_id,
+        text=str(reply),
+        should_listen=bool(should_listen),
+        outcome=outcome,
+    )
+
+
 def procesar_mensaje(
     user_input: str,
     profile_id: str = DEFAULT_PROFILE_ID,
     *,
     count_inbound: bool = True,
+    request_id: str | None = None,
 ) -> tuple[str, bool]:
     if _legacy_pipeline_enabled():
         return _procesar_mensaje_legacy(
@@ -1027,6 +1061,7 @@ def procesar_mensaje(
         user_input,
         profile_id=profile_id,
         channel="brain",
+        request_id=request_id,
     )
     response = process_command(request)
     return response.text, response.should_listen

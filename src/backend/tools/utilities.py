@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time as _uti_time
 from datetime import datetime
+from pathlib import Path
 
 import requests as http_requests
 from core import jarvis_state
@@ -600,6 +601,47 @@ def poner_recordatorio(texto: str, minutos: int) -> ToolExecutionResult:
 # ─────────────────────────────────────────
 # Archivos
 # ─────────────────────────────────────────
+def _read_roots() -> tuple[Path, ...]:
+    """Roots where leer_archivo may read; explicit config replaces the Desktop default."""
+    raw = str(os.getenv("JARVIS_DOCUMENT_ROOTS") or "").strip()
+    if raw:
+        names = [item.strip() for item in raw.split(os.pathsep) if item.strip()]
+    else:
+        configured = str(os.getenv("JARVIS_DESKTOP_HOME") or "").strip()
+        home = Path(os.getenv("USERPROFILE") or Path.home())
+        names = [configured] if configured else [str(home / "Desktop"), str(home / "Escritorio")]
+    roots: list[Path] = []
+    for name in names[:8]:
+        try:
+            root = Path(name).expanduser().resolve(strict=False)
+        except OSError:
+            continue
+        if root.is_dir() and root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _resolve_read_path(nombre_archivo: str) -> Path | None:
+    requested = Path(str(nombre_archivo or "").strip()).expanduser()
+    if not str(requested):
+        return None
+    names = [requested]
+    if not requested.suffix:
+        names.append(Path(f"{requested}.txt"))
+    for root in _read_roots():
+        for candidate_name in names:
+            candidate = candidate_name if candidate_name.is_absolute() else root / candidate_name
+            try:
+                resolved = candidate.resolve(strict=False)
+            except OSError:
+                continue
+            if not (resolved == root or root in resolved.parents):
+                continue
+            if resolved.is_file():
+                return resolved
+    return None
+
+
 @tool
 def leer_archivo(nombre_archivo: str) -> str:
     """Lee un archivo de texto del escritorio o ruta indicada y devuelve su contenido.
@@ -608,19 +650,13 @@ def leer_archivo(nombre_archivo: str) -> str:
         bloqueo = _bloqueo_si_no_autorizado()
         if bloqueo:
             return bloqueo
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        rutas_candidatas = [
-            nombre_archivo,
-            os.path.join(desktop, nombre_archivo),
-            os.path.join(desktop, nombre_archivo + ".txt"),
-        ]
-        for ruta in rutas_candidatas:
-            if os.path.exists(ruta):
-                with open(ruta, encoding="utf-8", errors="ignore") as f:
-                    contenido = f.read(3000)
-                print(f"  [FILE] Read: {ruta}")
-                return f"Contenido de '{nombre_archivo}':\n{contenido}"
-        return f"No encontré el archivo '{nombre_archivo}' en el escritorio."
+        ruta = _resolve_read_path(nombre_archivo)
+        if ruta is None:
+            return f"No encontré el archivo '{nombre_archivo}' en las ubicaciones permitidas."
+        with open(ruta, encoding="utf-8", errors="ignore") as f:
+            contenido = f.read(3000)
+        print("  [FILE] Read an allowed local file.")
+        return f"Contenido de '{nombre_archivo}':\n{contenido}"
     except Exception as e:
         return f"Error leyendo archivo: {e}"
 

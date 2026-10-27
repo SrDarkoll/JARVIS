@@ -67,10 +67,22 @@ $runtimeDirectories = @(
 )
 $runtimePaths = @($runtimeFiles + $runtimeDirectories)
 $requiredRuntimeFiles = @(
+    "src/backend/api/device_sync_routes.py",
+    "src/backend/api/sync_routes.py",
+    "src/backend/core/device_sync/__init__.py",
+    "src/backend/core/device_sync/auth.py",
+    "src/backend/core/device_sync/sync_hub.py",
+    "src/backend/core/device_sync/sync_models.py",
     "src/backend/core/security/browser_profile.py",
     "src/backend/services/reminder_service.py",
     "src/backend/services/notification_policy.py",
-    "src/frontend/static/js/modules/reminders.js"
+    "src/frontend/static/css/mobile.css",
+    "src/frontend/static/js/mobile.js",
+    "src/frontend/static/js/modules/device-sync.js",
+    "src/frontend/static/js/modules/mobile-pairing.js",
+    "src/frontend/static/js/modules/reminders.js",
+    "src/frontend/static/mobile-manifest.json",
+    "src/frontend/templates/mobile.html"
 )
 $requiredDistributionFiles = @(
     "third_party\licenses\Apache-2.0.txt",

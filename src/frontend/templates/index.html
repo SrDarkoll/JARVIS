@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self';">
     <title>J.A.R.V.I.S. | HUD Central</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.5.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.5.1">
     <link rel="icon" type="image/svg+xml" href="/media/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0a">
@@ -272,6 +272,39 @@
                     </section>
                 </dialog>
 
+                <dialog id="mobile-pair-dialog" class="onboarding-rail hidden" aria-modal="true"
+                    aria-labelledby="mobile-pair-title">
+                    <header class="onboarding-header">
+                        <span class="onboarding-progress" data-i18n="btn_pair_mobile">VINCULAR MÓVIL</span>
+                        <button id="mobile-pair-close" class="onboarding-link-action" type="button"
+                            data-i18n="mobile_pair_close">Cerrar</button>
+                    </header>
+                    <section class="onboarding-stage">
+                        <h2 id="mobile-pair-title" class="onboarding-title" tabindex="-1"
+                            data-i18n="mobile_pair_title">Vincular un móvil</h2>
+                        <p class="onboarding-lead" data-i18n="mobile_pair_copy">Genera un PIN de un solo uso y escanéalo desde el teléfono. Requiere el host HTTPS privado configurado.</p>
+
+                        <div id="mobile-pair-qr-wrap" class="mobile-pair-qr-wrap hidden">
+                            <img id="mobile-pair-qr" alt="" width="220" height="220">
+                            <div class="mobile-pair-pin">
+                                <span data-i18n="mobile_pair_pin_label">PIN</span>
+                                <strong id="mobile-pair-pin"></strong>
+                            </div>
+                        </div>
+                        <p id="mobile-pair-status" class="onboarding-message" role="status" aria-live="polite"></p>
+
+                        <div class="onboarding-actions">
+                            <button id="mobile-pair-refresh" class="onboarding-button secondary" type="button"
+                                data-i18n="mobile_pair_refresh">Generar nuevo PIN</button>
+                            <button id="mobile-pair-close-bottom" class="onboarding-button primary" type="button"
+                                data-i18n="mobile_pair_close">Cerrar</button>
+                        </div>
+
+                        <h3 class="mobile-pair-devices-title" data-i18n="mobile_pair_devices">Dispositivos vinculados</h3>
+                        <ul id="mobile-device-list" class="mobile-device-list"></ul>
+                    </section>
+                </dialog>
+
                 <section id="conversation-panel" class="conversation-panel tech-glass" aria-live="polite">
                     <div class="conversation-header">
                         <span class="conversation-title" data-i18n="conversation_panel_title">CONVERSACIÓN</span>
@@ -334,6 +367,8 @@
                                 data-i18n="onboarding_complete_setup">Completar configuración</button>
                             <button id="replay-onboarding-action" class="tech-btn full-width" type="button"
                                 data-i18n="onboarding_replay">Repetir configuración inicial</button>
+                            <button id="mobile-pair-action" class="tech-btn full-width" type="button"
+                                data-i18n="btn_pair_mobile">VINCULAR MÓVIL</button>
                             <button class="quick-action tech-btn" data-action="reload_plugins" data-i18n="btn_reload_plugins">RECARGAR PLUGINS</button>
                             <button class="quick-action tech-btn" data-action="security_strict_toggle" data-i18n="btn_toggle_strict">CAMBIAR MODO ESTRICTO</button>
                             <button class="quick-action tech-btn" data-action="proactive_toggle" data-i18n="btn_toggle_proactive">CAMBIAR MODO PROACTIVO</button>
@@ -433,7 +468,7 @@
         </footer>
     </main>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.5.0"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=1.5.1"></script>
 </body>
 
 </html>

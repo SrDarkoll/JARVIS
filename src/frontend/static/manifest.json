@@ -1,16 +1,40 @@
 {
-  "name": "J.A.R.V.I.S.",
+  "id": "jarvis-pwa-hud",
+  "name": "J.A.R.V.I.S. | HUD Central",
   "short_name": "JARVIS",
-  "start_url": "/",
+  "description": "Asistente Personal de Inteligencia Artificial y HUD de Control de Escritorio",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
-  "orientation": "portrait-primary",
+  "orientation": "any",
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "/media/favicon.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Comando de Voz",
+      "short_name": "Voz",
+      "description": "Iniciar comando de voz con JARVIS",
+      "url": "/?action=voice",
+      "icons": [{ "src": "/media/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Métricas del Sistema",
+      "short_name": "Métricas",
+      "description": "Ver diagnóstico y estado del sistema",
+      "url": "/?tab=metrics",
+      "icons": [{ "src": "/media/favicon.svg", "sizes": "any" }]
     }
   ]
 }

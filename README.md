@@ -58,6 +58,7 @@ J.A.R.V.I.S. can instead use **Gemini Live native bidirectional audio**, keeping
 - 🔄 **Privacy-first continuity** — Provider context uses a compressed 25k→8k sliding window. Native session resumption remains disabled; reconnects rebuild bounded context from local profile memory.
 - 👑 **`Charon` by default** — Gemini Live uses the calm `Charon` voice profile by default, with other supported voices configurable in `.env`.
 - 🧠 **Persistent memory** — Conversation context and useful facts can survive between sessions.
+- 📱 **Private mobile PWA** — Pair a phone with a one-use QR over Tailscale Serve, then chat, review synchronized history, and use Live voice without exposing JARVIS to the public Internet.
 - 👤 **Optional speaker identification** — SpeechBrain ECAPA biometrics can identify registered speakers when explicitly enabled.
 
 ### Voice Paths
@@ -207,6 +208,7 @@ J.A.R.V.I.S. can touch real desktop applications, so tools are not treated as eq
 - **Privileged tools are opt-in** — Arbitrary terminal execution and text-file creation are excluded from the normal tool catalog unless `JARVIS_SYSTEM_TOOLS_ENABLED=true`.
 - **File writes are constrained** — Allowed write roots can be limited with `JARVIS_FILE_WRITE_ROOTS`.
 - **Optional API token** — When configured, `JARVIS_API_TOKEN` is required by protected HTTP/WebSocket routes. The loopback UI receives a derived HttpOnly cookie; explicit remote clients send the token and use configured CORS origins.
+- **Private remote access** — Mobile/PWA access stays on loopback and uses a user-managed private HTTPS proxy such as Tailscale Serve, never Funnel or port forwarding. Set `JARVIS_REMOTE_BASE_URL` and `JARVIS_API_TOKEN`; remote mode fails closed and paired devices use scoped tokens.
 - **Voice biometrics are off by default** — Speaker identification must be explicitly enabled.
 - **Server-selected browser profiles** — A signed HttpOnly session keeps chat, Live voice, memory graphs, and reminder delivery in the same conversation namespace. Request profile fields do not switch identity; successful backend voice identification can. Browser history still starts in `web_default`. Session identity resets on backend restart. Profiles are not independent user accounts: application access remains protected by the local-origin/API-token policy, and a shared trusted OS/browser account has owner access.
 - **Public-IP geolocation is off by default** — It must be explicitly enabled if desired.

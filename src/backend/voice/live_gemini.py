@@ -7,9 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
+import io
 import json
 import logging
 import os
+import re
+import unicodedata
+import wave
 from typing import Any
 
 from core.jarvis_config import LiveVoiceConfig, resolve_live_voice_config
@@ -73,6 +78,33 @@ LIVE_VOICE_TOOL_ALLOWLIST = frozenset(
 )
 MAX_FUNCTION_CALLS_PER_MESSAGE = 8
 MAX_FUNCTION_CALL_ARGS_CHARS = 16_000
+FINAL_TRANSCRIPT_TIMEOUT_SECONDS = 2.5
+MAX_TURN_AUDIO_BYTES = 512_000
+MAX_PREROLL_AUDIO_CHUNKS = 12
+MAX_PREROLL_AUDIO_BYTES = 64_000
+LOCAL_TRANSCRIPT_VERIFY_TIMEOUT_SECONDS = 3.0
+LOCAL_TRANSCRIPT_MIN_SIMILARITY = 0.78
+
+
+def _normalize_transcript_words(text: str) -> list[str]:
+    normalized = "".join(
+        char for char in unicodedata.normalize("NFKD", str(text or "").casefold())
+        if not unicodedata.combining(char)
+    )
+    return re.findall(r"[a-z0-9]+", normalized)
+
+
+def _pcm16_wav_bytes(pcm: bytes) -> bytes:
+    """Wrap bounded mono, little-endian 16 kHz PCM in an in-memory WAV header."""
+    if not pcm or len(pcm) % 2:
+        return b""
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16_000)
+        wav_file.writeframes(pcm)
+    return output.getvalue()
 
 
 def _merge_transcript_text(current: str, incoming: str) -> str:
@@ -102,6 +134,7 @@ class GeminiLiveStreamer:
         voice_name: str | None = None,
         config: LiveVoiceConfig | None = None,
         connect_factory=None,
+        local_transcriber=None,
     ) -> None:
         self.session = session
         self.api_key = api_key or resolve_gemini_api_key()
@@ -123,6 +156,8 @@ class GeminiLiveStreamer:
             "Reproducir AHORA, añadir a la COLA y guardar/quitar de FAVORITOS son operaciones distintas: "
             "nunca sustituyas reproducir por agregar_a_cola_spotify. Usa cola o favoritos sólo si se solicitan. "
             "No conviertas 'es que', 'solo quiero hablar' ni ruido/voz de fondo en comandos. "
+            "Si una herramienta devuelve live_transcript_disagreement o live_transcript_not_final, no reintentes: "
+            "pide confirmar solamente la frase o el título dudoso y espera una nueva orden del usuario. "
             "Respeta las negaciones. Si la intención es ambigua, pregunta antes de actuar. "
             "Cuando sí se solicite una acción, llama a su herramienta y confirma sólo lo que su resultado verifique. "
             "Mantén tus respuestas habladas breves, naturales y directas para voz. No uses Markdown ni expongas tus pensamientos internos."
@@ -133,6 +168,7 @@ class GeminiLiveStreamer:
         self._model_turn_text = ""
         self._current_user_text = ""
         self._user_text_ready = asyncio.Event()
+        self._user_transcript_finalized = asyncio.Event()
         self._turn_generation = 0
         self._task_input_turn: int | None = None
         self._output_turn_generation: int | None = None
@@ -140,6 +176,16 @@ class GeminiLiveStreamer:
         self._assistant_finalized = False
         self._typed_input_pending = False
         self._input_send_lock = asyncio.Lock()
+        self._local_transcriber = local_transcriber
+        self._local_verification_task: asyncio.Task | None = None
+        self._transcript_conflict_generation: int | None = None
+        self._transcript_conflict_options: tuple[str, ...] = ()
+        self._recent_audio_chunks: list[bytes] = []
+        self._turn_audio = bytearray()
+        self._capture_turn_audio = False
+        self._turn_audio_truncated = False
+        self._deferred_turn_reset = False
+        self._deferred_reset_task: asyncio.Task | None = None
         self.response_watchdog = LiveResponseWatchdog(timeout_seconds=self.config.response_timeout_seconds)
         self._tool_call_names: dict[str, str] = {}
         self._declared_tool_names: set[str] = set()
@@ -160,23 +206,53 @@ class GeminiLiveStreamer:
         self._task_input_turn = None
         self._turn_generation += 1
         self._user_text_ready.clear()
+        self._user_transcript_finalized.clear()
         self._output_turn_generation = None
         self._output_active = False
         self._assistant_finalized = False
         self._typed_input_pending = False
+        self._recent_audio_chunks.clear()
+        self._turn_audio.clear()
+        self._capture_turn_audio = False
+        self._turn_audio_truncated = False
+        self._transcript_conflict_generation = None
+        self._transcript_conflict_options = ()
+        self._deferred_turn_reset = False
         self.response_watchdog.reset()
 
-    def accept_user_transcript(self, text: str) -> None:
+    def _schedule_deferred_turn_reset(self) -> None:
+        """Do not clear a same-frame tool turn before its tool task snapshots it."""
+        if not self._deferred_turn_reset:
+            return
+        if self._deferred_reset_task is not None and not self._deferred_reset_task.done():
+            return
+        self._deferred_reset_task = asyncio.create_task(self._finish_deferred_turn_reset())
+
+    async def _finish_deferred_turn_reset(self) -> None:
+        try:
+            for _attempt in range(200):
+                if not self.session.has_active_tool_work:
+                    break
+                await asyncio.sleep(0.01)
+            if self._deferred_turn_reset and not self.session.has_active_tool_work:
+                self._reset_turn_transcripts()
+        finally:
+            self._deferred_reset_task = None
+
+    def accept_user_transcript(self, text: str, *, is_final: bool = True) -> None:
         self._current_user_text = _merge_transcript_text(
             self._current_user_text, text,
         )[:self.session.max_user_text_chars]
         if self._current_user_text:
-            self.session.language = resolve_live_language(self._current_user_text, self.session.language)
-            self.session.orchestrator.language = self.session.language
+            if is_final:
+                self.session.language = resolve_live_language(self._current_user_text, self.session.language)
+                self.session.orchestrator.language = self.session.language
             if self._task_input_turn is None:
                 self._task_input_turn = self.session.orchestrator.task_context.begin_turn()
             self.session.orchestrator.task_context.update_turn_text(self._task_input_turn, self._current_user_text)
             self._user_text_ready.set()
+            if is_final:
+                self._user_transcript_finalized.set()
             self.session.diagnostics.record_turn_start()
             self.response_watchdog.input_received()
 
@@ -592,6 +668,7 @@ class GeminiLiveStreamer:
             try:
                 chunk = await self.session.next_audio_chunk()
                 try:
+                    self._remember_live_audio(chunk)
                     b64_data = base64.b64encode(chunk).decode("utf-8")
                     media_msg = {
                         "realtimeInput": {
@@ -609,6 +686,136 @@ class GeminiLiveStreamer:
                 raise
             except Exception:
                 raise LiveTransportError("gemini_live_connect_failed") from None
+
+    def _remember_live_audio(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        audio_chunk = bytes(chunk)
+        if len(audio_chunk) <= MAX_PREROLL_AUDIO_BYTES:
+            self._recent_audio_chunks.append(audio_chunk)
+        else:
+            self._recent_audio_chunks.clear()
+        while (
+            len(self._recent_audio_chunks) > MAX_PREROLL_AUDIO_CHUNKS
+            or sum(map(len, self._recent_audio_chunks)) > MAX_PREROLL_AUDIO_BYTES
+        ):
+            del self._recent_audio_chunks[0]
+        if not self._capture_turn_audio or self._turn_audio_truncated:
+            return
+        if len(self._turn_audio) + len(chunk) > MAX_TURN_AUDIO_BYTES:
+            self._turn_audio_truncated = True
+            self._turn_audio.clear()
+            return
+        self._turn_audio.extend(chunk)
+
+    def _discard_turn_audio(self, generation: int) -> None:
+        if generation != self._turn_generation:
+            return
+        self._turn_audio.clear()
+        self._capture_turn_audio = False
+        self._turn_audio_truncated = False
+
+    def _local_transcript_verifier_ready(self) -> bool:
+        if self._local_transcriber is None:
+            return False
+        snapshot = getattr(self._local_transcriber, "snapshot", None)
+        if not callable(snapshot):
+            return False
+        try:
+            state = snapshot()
+        except Exception:
+            return False
+        if not isinstance(state, dict):
+            return False
+        return bool(state.get("enabled")) and state.get("state") == "loaded"
+
+    async def _compare_with_local_transcript(
+        self, transcript: str, pcm: bytes, *, tool_name: str,
+    ) -> tuple[str, ...] | None:
+        """Use only a warm local Whisper model; never make a second provider request."""
+        transcriber = self._local_transcriber
+        if transcriber is None:
+            return None
+        if (not self._local_transcript_verifier_ready() or len(pcm) < 9_600
+                or len(pcm) > MAX_TURN_AUDIO_BYTES):
+            return None
+        wav_data = _pcm16_wav_bytes(pcm)
+        if not wav_data:
+            return None
+        language = "en" if self.session.language.startswith("en") else "es"
+        if self._local_verification_task is not None and not self._local_verification_task.done():
+            return None
+        task = asyncio.create_task(asyncio.to_thread(transcriber.transcribe, wav_data, language))
+        self._local_verification_task = task
+        try:
+            alternative = await asyncio.wait_for(
+                asyncio.shield(task), timeout=LOCAL_TRANSCRIPT_VERIFY_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            if task.done():
+                self._local_verification_task = None
+                if not task.cancelled():
+                    task.exception()
+            else:
+                task.add_done_callback(self._collect_local_verification)
+            log_warning("live_local_transcript_check_skipped", reason=type(exc).__name__)
+            return None
+        finally:
+            if task.done():
+                self._local_verification_task = None
+        from core.brain.router import _extract_music_request, _extract_spotify_mix_request
+
+        extract = _extract_spotify_mix_request if tool_name == "reproducir_mix_spotify" else _extract_music_request
+        primary_title = extract(transcript)
+        alternate = " ".join(str(alternative or "").split())
+        alternate_title = extract(alternate)
+        primary_words = _normalize_transcript_words(primary_title)
+        alternate_words = _normalize_transcript_words(alternate_title)
+        if not primary_words or not alternate_words:
+            log_warning("live_transcript_disagreement", comparison="music_request_unparsed")
+            return ()
+        similarity = difflib.SequenceMatcher(
+            a=primary_words, b=alternate_words, autojunk=False,
+        ).ratio()
+        if similarity >= LOCAL_TRANSCRIPT_MIN_SIMILARITY:
+            return None
+        log_warning("live_transcript_disagreement", similarity=round(similarity, 2))
+        return (primary_title[:240], alternate_title[:240])
+
+    def _collect_local_verification(self, task: asyncio.Task) -> None:
+        if self._local_verification_task is task:
+            self._local_verification_task = None
+        if not task.cancelled():
+            task.exception()
+
+    async def _send_transcript_conflict(self, call_id: str) -> None:
+        options = self._transcript_conflict_options
+        if len(options) >= 2 and self.session.language.startswith("es"):
+            message = (
+                f"Gemini entendió «{options[0]}» y el reconocimiento local «{options[1]}». "
+                "Pregunta cuál título quiso reproducir y espera una nueva orden explícita."
+            )
+        elif len(options) >= 2:
+            message = (
+                f"Gemini heard ‘{options[0]}’ and local recognition heard ‘{options[1]}’. "
+                "Ask which title the user wanted and wait for a new explicit play request."
+            )
+        elif self.session.language.startswith("es"):
+            message = (
+                "No pude validar el título con suficiente claridad. Pide que repita el nombre de la canción "
+                "y espera una nueva orden antes de reproducir."
+            )
+        else:
+            message = (
+                "I could not independently verify the title clearly. Ask the user to repeat the song name "
+                "and wait for a new instruction before playing it."
+            )
+        logger.info("gemini_live_context_rejected code=live_transcript_disagreement")
+        await self._send_tool_response(call_id, json.dumps({
+            "ok": False, "state": "needs_clarification",
+            "diagnostic_code": "live_transcript_disagreement",
+            "message": message, "verified": False,
+        }, ensure_ascii=False))
 
     async def _response_watchdog_loop(self) -> None:
         while self._running and self._ws:
@@ -686,16 +893,48 @@ class GeminiLiveStreamer:
         """Execute a planned batch of actions sequentially through the LiveActionOrchestrator."""
         if not self._running or self.session._closed:
             return
-        original_text = self._current_user_text if user_text is None else user_text
         generation = self._turn_generation if turn_generation is None else turn_generation
         music_tools = {"reproducir_en_spotify", "reproducir_mix_spotify"}
-        if not original_text:
+        if not self._user_transcript_finalized.is_set():
             try:
-                await asyncio.wait_for(self._user_text_ready.wait(), timeout=1.5)
+                await asyncio.wait_for(
+                    self._user_transcript_finalized.wait(),
+                    timeout=FINAL_TRANSCRIPT_TIMEOUT_SECONDS,
+                )
             except TimeoutError:
-                pass
-            if generation == self._turn_generation:
-                original_text = self._current_user_text
+                self._discard_turn_audio(generation)
+                for call in function_calls:
+                    await self._send_tool_response(call["id"], json.dumps({
+                        "ok": False,
+                        "state": "needs_clarification",
+                        "diagnostic_code": "live_transcript_not_final",
+                        "message": (
+                            "No pude confirmar la transcripción completa. No ejecuté la acción; "
+                            "di el comando otra vez, por favor."
+                            if self.session.language.startswith("es")
+                            else "I could not confirm the final transcript. I did not execute the action; please say the command again."
+                        ),
+                        "verified": False,
+                    }))
+                return
+
+        if generation != self._turn_generation or not self._user_transcript_finalized.is_set():
+            for call in function_calls:
+                await self._send_tool_response(call["id"], json.dumps({
+                    "ok": False,
+                    "state": "cancelled",
+                    "diagnostic_code": "live_transcript_turn_superseded",
+                    "message": (
+                        "La voz cambió de turno; no ejecuté la acción anterior."
+                        if self.session.language.startswith("es")
+                        else "The voice turn changed; I did not execute the previous action."
+                    ),
+                    "verified": False,
+                }))
+            return
+        original_text = (user_text or self._current_user_text).strip()
+        transcript_conflict = self._transcript_conflict_generation == generation
+        input_turn = task_turn_id if task_turn_id is not None else self._task_input_turn
 
         if not self._running or self.session._closed:
             return
@@ -704,11 +943,17 @@ class GeminiLiveStreamer:
 
         context = self.session.orchestrator.task_context
         contextual_calls = [call for call in function_calls if call.get("name") == CONTEXT_TOOL_NAME]
-        input_turn = task_turn_id if task_turn_id is not None else self._task_input_turn
+        if task_turn_id is not None and task_turn_id != input_turn:
+            self._discard_turn_audio(generation)
+            logger.info("gemini_live_context_rejected code=context_input_unavailable")
+            for call in function_calls:
+                await self._send_tool_response(call["id"], context_error_response("context_input_unavailable", self.session.language))
+            return
         if input_turn is None and original_text:
             input_turn = context.begin_turn(original_text)
             self._task_input_turn = input_turn
-        if not original_text or input_turn != context.current_turn:
+        if not original_text or input_turn is None or input_turn != context.current_turn:
+            self._discard_turn_audio(generation)
             logger.info("gemini_live_context_rejected code=context_input_unavailable")
             for call in function_calls:
                 await self._send_tool_response(call["id"], context_error_response("context_input_unavailable", self.session.language))
@@ -720,6 +965,15 @@ class GeminiLiveStreamer:
                         raise ContextResolutionError("context_ambiguous")
                     proposal = parse_context_proposal(call["args"])
                     await self.session.set_state(LiveSessionState.PROCESSING)
+                    if generation != self._turn_generation or not self._user_transcript_finalized.is_set():
+                        self._discard_turn_audio(generation)
+                        await self._send_tool_response(call["id"], json.dumps({
+                            "ok": False,
+                            "state": "cancelled",
+                            "diagnostic_code": "live_transcript_turn_superseded",
+                            "verified": False,
+                        }))
+                        continue
                     await self.session.orchestrator.execute_contextual_call(
                         call["id"], **proposal, turn_id=input_turn, user_text=original_text,
                         allowed_tools=self._declared_tool_names - {CONTEXT_TOOL_NAME},
@@ -729,12 +983,17 @@ class GeminiLiveStreamer:
                 except ContextResolutionError as error:
                     logger.info("gemini_live_context_rejected code=%s", error)
                     await self._send_tool_response(call["id"], context_error_response(str(error), self.session.language))
+            self._discard_turn_audio(generation)
             return
 
         from core.brain.tool_manager import _tool_permitida_por_contexto
 
         grounded_calls = []
         for call in function_calls:
+            if call.get("name") in music_tools and transcript_conflict:
+                self._transcript_conflict_generation = generation
+                await self._send_transcript_conflict(call["id"])
+                continue
             if call.get("name") in music_tools and (
                 not _tool_permitida_por_contexto(call["name"], original_text, "gemini_live")
             ):
@@ -757,6 +1016,49 @@ class GeminiLiveStreamer:
             else:
                 grounded_calls.append(call)
         if not grounded_calls:
+            self._discard_turn_audio(generation)
+            return
+
+        if any(call.get("name") in music_tools for call in grounded_calls):
+            local_conflict = None
+            if not transcript_conflict and not self._turn_audio_truncated:
+                music_tool = next(call["name"] for call in grounded_calls if call.get("name") in music_tools)
+                local_conflict = await self._compare_with_local_transcript(
+                    original_text, bytes(self._turn_audio), tool_name=music_tool,
+                )
+            if generation != self._turn_generation:
+                for call in grounded_calls:
+                    await self._send_tool_response(call["id"], json.dumps({
+                        "ok": False, "state": "cancelled",
+                        "diagnostic_code": "live_transcript_turn_superseded", "verified": False,
+                    }))
+                return
+            self._discard_turn_audio(generation)
+            if local_conflict is not None:
+                transcript_conflict = True
+                self._transcript_conflict_generation = generation
+                self._transcript_conflict_options = local_conflict
+                safe_calls = []
+                for call in grounded_calls:
+                    if call.get("name") in music_tools:
+                        await self._send_transcript_conflict(call["id"])
+                    else:
+                        safe_calls.append(call)
+                grounded_calls = safe_calls
+                if not grounded_calls:
+                    return
+        else:
+            self._discard_turn_audio(generation)
+
+        if generation != self._turn_generation or not self._user_transcript_finalized.is_set():
+            self._discard_turn_audio(generation)
+            for call in grounded_calls:
+                await self._send_tool_response(call["id"], json.dumps({
+                    "ok": False,
+                    "state": "cancelled",
+                    "diagnostic_code": "live_transcript_turn_superseded",
+                    "verified": False,
+                }))
             return
         try:
             plan = self.session.orchestrator.enqueue_batch(
@@ -840,12 +1142,19 @@ class GeminiLiveStreamer:
                 self._typed_input_pending = False
                 self._current_user_text = ""
                 self._user_text_ready.clear()
+                self._user_transcript_finalized.clear()
                 self._turn_generation += 1
                 self.session.orchestrator.task_context.revoke_proposals()
                 self._task_input_turn = None
+                self._turn_audio = bytearray(b"".join(self._recent_audio_chunks))
+                self._turn_audio_truncated = False
+                self._capture_turn_audio = True
+                self._transcript_conflict_generation = None
+                self._transcript_conflict_options = ()
                 self.response_watchdog.speech_started()
                 self.session.diagnostics.record_turn_start()
             elif activity_type == "ACTIVITY_END":
+                self._capture_turn_audio = False
                 self.response_watchdog.speech_ended()
 
         cancellation = data.get("toolCallCancellation")
@@ -882,15 +1191,21 @@ class GeminiLiveStreamer:
             typed_pending = self._typed_input_pending
             keep_input = speech_active or typed_pending
             current_input = self._current_user_text if keep_input else ""
+            current_input_final = self._user_transcript_finalized.is_set() if keep_input else False
             current_task_turn = self._task_input_turn if keep_input else None
+            current_audio = bytes(self._turn_audio) if keep_input else b""
+            current_audio_truncated = self._turn_audio_truncated if keep_input else False
             self._reset_turn_transcripts()
             self._typed_input_pending = typed_pending
             if keep_input:
                 self._task_input_turn = current_task_turn
+                self._turn_audio.extend(current_audio)
+                self._turn_audio_truncated = current_audio_truncated
+                self._capture_turn_audio = speech_active
                 if speech_active:
                     self.response_watchdog.speech_started()
                 if current_input:
-                    self.accept_user_transcript(current_input)
+                    self.accept_user_transcript(current_input, is_final=current_input_final)
             await self.session.interrupt(clear_input_audio=False)
         # Transcription can arrive in the same envelope as a function call.
         # Capture it before scheduling work and snapshot it across async turns.
@@ -898,13 +1213,15 @@ class GeminiLiveStreamer:
         if isinstance(input_transcription, dict) and not self._typed_input_pending:
             text = " ".join(str(input_transcription.get("text") or "").split())
             if text:
-                self.accept_user_transcript(text)
+                is_final = input_transcription.get("finished", True) is not False
+                self.accept_user_transcript(text, is_final=is_final)
                 await self.session.emit_json({
                     "type": "transcript", "role": "user", "text": self._current_user_text,
-                    "is_final": input_transcription.get("finished", True) is not False,
+                    "is_final": is_final,
                     "source": "gemini_live",
                 })
-                self._persist_live_transcript("user", text)
+                if is_final:
+                    self._persist_live_transcript("user", self._current_user_text)
         if interrupted:
             return
         if not tool_call and server_content:
@@ -966,6 +1283,9 @@ class GeminiLiveStreamer:
                     )
                 )
                 self.session.attach_tool_task(orchestrator_task)
+                orchestrator_task.add_done_callback(
+                    lambda _task: self._schedule_deferred_turn_reset()
+                )
 
         if not server_content:
             return
@@ -1072,7 +1392,12 @@ class GeminiLiveStreamer:
                 # A terminal event from interrupted output is not the new text's reply.
                 return
             await self._finalize_assistant_transcript()
-            if self._output_turn_generation in {None, self._turn_generation}:
+            if self.session.has_active_tool_work:
+                # The tool task must read its final transcript before the next turn
+                # clears it. Reset once the task has finished.
+                self._deferred_turn_reset = True
+                self._schedule_deferred_turn_reset()
+            elif self._output_turn_generation in {None, self._turn_generation}:
                 self._reset_turn_transcripts()
 
             last_turn = self.session.diagnostics.record_turn_complete()

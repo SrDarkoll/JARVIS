@@ -310,6 +310,40 @@ class _ToolReportedFailure(RuntimeError):
     pass
 
 
+def _confirmation_detail(tool_name: str, args: dict) -> str:
+    """Render a bounded, redacted action summary for explicit confirmation."""
+    safe_args: dict[str, Any] = {}
+    try:
+        from core.unified_log import redact_data
+
+        redacted = redact_data(args or {})
+        if isinstance(redacted, dict):
+            safe_args = redacted
+    except Exception:
+        safe_args = {}
+    parts = []
+    for key, value in list(safe_args.items())[:4]:
+        text = " ".join(str(value or "").split())
+        if len(text) > 120:
+            text = text[:117].rstrip() + "..."
+        parts.append(f"{key}={text}")
+    detail = ", ".join(parts)
+    return f"{tool_name}({detail})" if detail else tool_name
+
+
+def _confirmation_message(tool_name: str, args: dict, language: str) -> str:
+    detail = _confirmation_detail(tool_name, args)
+    if str(language or "").lower().startswith("es"):
+        return (
+            f"Confirmación requerida para {detail}. "
+            "Responde 'sí' para ejecutar o 'no' para cancelar."
+        )
+    return (
+        f"Confirmation required for {detail}. "
+        "Reply 'yes' to execute or 'no' to cancel."
+    )
+
+
 def _blocked_error(reason: str) -> ControlledToolBlockedError:
     public_reason = str(reason or "").strip()
     normalized_reason = public_reason.lower()
@@ -427,6 +461,12 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
             if not allowed:
                 outcome = "blocked"
                 blocked_error = _blocked_error(reason)
+                if isinstance(blocked_error, ToolConfirmationRequiredError):
+                    blocked_error.public_message = _confirmation_message(
+                        policy_tool_name,
+                        args,
+                        request.language,
+                    )
                 result_preview = blocked_error.diagnostic_code
                 elapsed = (_time.perf_counter() - started) * 1000.0
                 obs_tool(

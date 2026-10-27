@@ -27,6 +27,7 @@ import {
     isSuccessfulCommandOutcome,
 } from './modules/command-center.js';
 import { reminderNotificationText } from './modules/reminders.js';
+import { initMobilePairing } from './modules/mobile-pairing.js';
 import {
     STORAGE_KEY as ONBOARDING_STORAGE_KEY,
     ONBOARDING_STAGES,
@@ -89,6 +90,16 @@ document.addEventListener('DOMContentLoaded', () => {
         onboardingFinish: document.getElementById('onboarding-finish'),
         completeSetupAction: document.getElementById('complete-setup-action'),
         replayOnboardingAction: document.getElementById('replay-onboarding-action'),
+        mobilePairDialog: document.getElementById('mobile-pair-dialog'),
+        mobilePairAction: document.getElementById('mobile-pair-action'),
+        mobilePairClose: document.getElementById('mobile-pair-close'),
+        mobilePairCloseBottom: document.getElementById('mobile-pair-close-bottom'),
+        mobilePairRefresh: document.getElementById('mobile-pair-refresh'),
+        mobilePairQr: document.getElementById('mobile-pair-qr'),
+        mobilePairQrWrap: document.getElementById('mobile-pair-qr-wrap'),
+        mobilePairPin: document.getElementById('mobile-pair-pin'),
+        mobilePairStatus: document.getElementById('mobile-pair-status'),
+        mobileDeviceList: document.getElementById('mobile-device-list'),
         onboardingProviders: document.querySelectorAll('input[name="onboarding-provider"]'),
         diagnosticsToggle: document.getElementById('diagnostics-toggle'),
         diagnosticsPanels: document.querySelectorAll('.side-panel'),
@@ -135,6 +146,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const reactor = new ArcReactor('arc-canvas');
     const widgets = new WidgetManager(dom.widgetContainer);
     ui.reactor = reactor;
+    initMobilePairing({
+        dialog: dom.mobilePairDialog,
+        openButton: dom.mobilePairAction,
+        closeButtons: [dom.mobilePairClose, dom.mobilePairCloseBottom],
+        refreshButton: dom.mobilePairRefresh,
+        qrImage: dom.mobilePairQr,
+        qrWrap: dom.mobilePairQrWrap,
+        pinValue: dom.mobilePairPin,
+        status: dom.mobilePairStatus,
+        deviceList: dom.mobileDeviceList,
+    });
 
     // --- CONSTANTES ---
     const WAKE_WORD = 'jarvis';
@@ -1543,7 +1565,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         liveVoiceClient.onInterrupted = (data) => {
             if (generation !== liveVoiceGeneration) return;
-            ui.addLogEntry(t('mode_live_interrupted'));
+            if (data?.source === 'local_barge_in') {
+                const duration = Math.max(0, Number(data.duration_ms) || 0);
+                ui.addLogEntry(`> LIVE: interrupción local confirmada (${duration} ms de voz).`);
+            } else {
+                ui.addLogEntry(`${t('mode_live_interrupted')} (confirmada por el servidor)`);
+            }
             if (reactor && reactor.triggerPulse) reactor.triggerPulse(1.0);
         };
 

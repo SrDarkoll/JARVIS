@@ -608,7 +608,7 @@ class LiveActionOrchestrator:
                 write_log(
                     "LIVE_ACTION_CANCELLATION_REQUESTED",
                     f"Cancellation requested for {len(cancelled)} action(s) due to {reason}",
-                    cancelled_actions=[a.to_dict() for a in cancelled],
+                    cancelled_action_ids=[a.action_id for a in cancelled],
                     profile_id=self.profile_id,
                 )
                 for plan in changed_plans:
@@ -698,7 +698,8 @@ class LiveActionOrchestrator:
                     "LIVE_ACTION_START",
                     f"Executing {action.name}",
                     action_id=action.action_id,
-                    args=action.args,
+                    argument_names=sorted(str(name)[:64] for name in action.args),
+                    argument_chars=len(str(action.args)),
                     call_id=action.call_id,
                     profile_id=self.profile_id,
                 )
@@ -760,7 +761,7 @@ class LiveActionOrchestrator:
                         f"Completed {action.name}",
                         action_id=action.action_id,
                         duration_ms=dur_ms,
-                        result=tool_result,
+                        result_chars=len(str(tool_result or "")),
                         state=action.state.value,
                         profile_id=self.profile_id,
                     )

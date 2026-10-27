@@ -10,6 +10,22 @@ import {
     isValidPcm16Chunk,
 } from './live-pcm-capture.js';
 
+export function buildLiveVoiceSocketUrl(location, {
+    language = 'es',
+    profileId = 'default',
+    mode = 'auto',
+    websocketTicket = '',
+} = {}) {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const params = new URLSearchParams({
+        lang: String(language || 'es'),
+        mode: String(mode || 'auto'),
+    });
+    if (websocketTicket) params.set('ws_ticket', String(websocketTicket));
+    else params.set('profile_id', String(profileId || 'default'));
+    return `${protocol}//${location.host}/api/voice/stream?${params.toString()}`;
+}
+
 const LIVE_ERROR_CODES = new Set([
     'gemini_live_unconfigured',
     'gemini_live_dependency_missing',
@@ -173,22 +189,41 @@ export class AudioBufferQueuePlayer {
 export class BargeInDetector {
     constructor(options = {}) {
         this.speechThreshold = options.speechThreshold ?? 0.025;
+        this.minSpeechMs = options.minSpeechMs == null ? null : Math.max(40, Number(options.minSpeechMs) || 120);
+        this.minVoicedRatio = Math.max(0.5, Math.min(1, Number(options.minVoicedRatio) || 0.75));
+        this.sampleRate = Math.max(8000, Number(options.sampleRate) || 48000);
         this.minConsecutiveFrames = options.minConsecutiveFrames ?? 3;
         this.consecutiveFrames = 0;
+        this.windowSamples = 0;
+        this.voicedSamples = 0;
         this.onBargeIn = null;
         this.isAssistantSpeaking = false;
+    }
+
+    setSampleRate(sampleRate) {
+        const value = Number(sampleRate);
+        if (Number.isFinite(value) && value >= 8000 && value <= 192000) {
+            this.sampleRate = value;
+        }
+        this._resetWindow();
+    }
+
+    _resetWindow() {
+        this.consecutiveFrames = 0;
+        this.windowSamples = 0;
+        this.voicedSamples = 0;
     }
 
     setAssistantSpeaking(speaking) {
         this.isAssistantSpeaking = Boolean(speaking);
         if (!speaking) {
-            this.consecutiveFrames = 0;
+            this._resetWindow();
         }
     }
 
     processAudioFrame(samples) {
         if (!this.isAssistantSpeaking || !samples || samples.length === 0) {
-            this.consecutiveFrames = 0;
+            this._resetWindow();
             return;
         }
 
@@ -197,6 +232,20 @@ export class BargeInDetector {
             sumSq += samples[i] * samples[i];
         }
         const rms = Math.sqrt(sumSq / samples.length);
+
+        if (this.minSpeechMs != null) {
+            this.windowSamples += samples.length;
+            if (rms >= this.speechThreshold) this.voicedSamples += samples.length;
+            if (this.windowSamples < this.sampleRate * (this.minSpeechMs / 1000)) return;
+
+            const voicedRatio = this.voicedSamples / this.windowSamples;
+            const durationMs = Math.round((this.windowSamples / this.sampleRate) * 1000);
+            this._resetWindow();
+            if (voicedRatio >= this.minVoicedRatio) {
+                this.onBargeIn?.({ source: 'local_barge_in', duration_ms: durationMs });
+            }
+            return;
+        }
 
         if (rms >= this.speechThreshold) {
             this.consecutiveFrames += 1;
@@ -215,12 +264,15 @@ export class LiveVoiceClient {
         this.language = options.language || 'es';
         this.profileId = options.profileId || 'default';
         this.mode = options.mode || 'auto';
+        this.websocketTicketProvider = typeof options.websocketTicketProvider === 'function'
+            ? options.websocketTicketProvider
+            : null;
         this.ws = null;
         this.player = options.player || new AudioBufferQueuePlayer(
             24000,
             options.maxPlaybackQueueMs ?? 15000
         );
-        this.bargeInDetector = new BargeInDetector();
+        this.bargeInDetector = new BargeInDetector({ minSpeechMs: 120 });
         this.capture = options.capture || new LivePcmCapture({
             windowRef: globalThis.window,
             targetRate: 16000,
@@ -277,8 +329,8 @@ export class LiveVoiceClient {
             this.onStateChange?.(speaking ? 'speaking' : 'listening');
         };
 
-        this.bargeInDetector.onBargeIn = () => {
-            this.handleLocalBargeIn();
+        this.bargeInDetector.onBargeIn = evidence => {
+            this.handleLocalBargeIn(evidence);
         };
     }
 
@@ -286,11 +338,20 @@ export class LiveVoiceClient {
         if (this.isConnected && this.ws?.readyState === WebSocket.OPEN) return true;
         if (this._connectPromise) return this._connectPromise;
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host;
-        const url = `${protocol}//${host}/api/voice/stream?lang=${encodeURIComponent(this.language)}&profile_id=${encodeURIComponent(this.profileId)}&mode=${encodeURIComponent(this.mode)}`;
+        const connectionPromise = (async () => {
+            let websocketTicket = '';
+            if (this.websocketTicketProvider) {
+                websocketTicket = await this.websocketTicketProvider();
+                if (!websocketTicket) throw new Error('live_websocket_ticket_unavailable');
+            }
+            const url = buildLiveVoiceSocketUrl(window.location, {
+                language: this.language,
+                profileId: this.profileId,
+                mode: this.mode,
+                websocketTicket,
+            });
 
-        const connectionPromise = new Promise((resolve, reject) => {
+            return new Promise((resolve, reject) => {
             let settled = false;
             let timeoutId = null;
 
@@ -361,7 +422,8 @@ export class LiveVoiceClient {
             } catch (e) {
                 rejectConnection(e);
             }
-        });
+            });
+        })();
 
         this._connectPromise = connectionPromise;
         try {
@@ -525,10 +587,10 @@ export class LiveVoiceClient {
         }
     }
 
-    handleLocalBargeIn() {
+    handleLocalBargeIn(evidence = {}) {
         this.player.interrupt();
-        this._sendJson({ type: 'interrupt' }, { force: true });
-        this.onInterrupted?.({ source: 'local_barge_in' });
+        this._sendJson({ type: 'interrupt', source: 'local_barge_in' }, { force: true });
+        this.onInterrupted?.({ source: 'local_barge_in', ...evidence });
     }
 
     _startBrowserRecognition() {
@@ -573,6 +635,7 @@ export class LiveVoiceClient {
         if (this.isStreaming) return;
         try {
             await this.capture.prime();
+            this.bargeInDetector.setSampleRate(this.capture.audioContext?.sampleRate);
             if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
                 await this.connect();
             }

@@ -10,6 +10,7 @@ import io
 import os
 import tempfile
 import threading
+import time
 
 import requests as http_requests
 from core.jarvis_config import TELEGRAM_CHAT_ID, TELEGRAM_ENABLED, TELEGRAM_TOKEN
@@ -88,8 +89,21 @@ class TelegramManager:
             self._obs_event("telegram_msg_in", text=user_input[:200])
 
         try:
+            from core.device_sync import SyncEventType, sync_hub
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "user", "content": user_input, "origin_device": "Telegram", "timestamp": time.time()},
+                origin_device_id="telegram",
+                profile_id="telegram_user",
+            )
             # The brain is synchronous, we run it in a thread to not block the bot loop
             reply, _ = await asyncio.to_thread(self._brain.procesar_mensaje, user_input, profile_id="telegram_user")
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "assistant", "content": reply, "origin_device": "Telegram", "timestamp": time.time()},
+                origin_device_id="telegram",
+                profile_id="telegram_user",
+            )
             await update.message.reply_text(reply)
         except Exception as exc:
             log_error("telegram_text_handler_failed", error=type(exc).__name__)
@@ -137,7 +151,20 @@ class TelegramManager:
                 )
                 return
 
+            from core.device_sync import SyncEventType, sync_hub
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "user", "content": text, "origin_device": "Telegram Voice", "timestamp": time.time()},
+                origin_device_id="telegram",
+                profile_id="telegram_user",
+            )
             reply, _ = await asyncio.to_thread(self._brain.procesar_mensaje, text, profile_id="telegram_user")
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "assistant", "content": reply, "origin_device": "Telegram", "timestamp": time.time()},
+                origin_device_id="telegram",
+                profile_id="telegram_user",
+            )
             await update.message.reply_text(f"📝 {text}\n\n{reply}")
         except Exception as exc:
             log_error("telegram_voice_handler_failed", error=type(exc).__name__)

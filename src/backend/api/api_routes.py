@@ -96,6 +96,18 @@ async def index():
         )
 
 
+@api_bp.route("/mobile", methods=["GET"])
+async def mobile_app():
+    """Serve the minimal PWA shell; private data still requires device auth."""
+    if not _mobile_shell_available():
+        return jsonify({"status": "error", "code": "mobile_shell_unavailable"}), 503
+    return await render_template("mobile.html")
+
+
+def _mobile_shell_available() -> bool:
+    return os.path.isfile(os.path.join(_root_dir or "", "src", "frontend", "templates", "mobile.html"))
+
+
 @api_bp.route("/media/<path:filename>", methods=["GET"])
 async def media_files(filename: str):
     return await send_from_directory(os.path.join(_root_dir, "media"), filename)
@@ -104,6 +116,17 @@ async def media_files(filename: str):
 @api_bp.route("/manifest.json", methods=["GET"])
 async def manifest_json():
     return await send_from_directory(os.path.join(_root_dir, "src", "frontend", "static"), "manifest.json")
+
+
+@api_bp.route("/mobile-manifest.json", methods=["GET"])
+async def mobile_manifest_json():
+    manifest_path = os.path.join(_root_dir or "", "src", "frontend", "static", "mobile-manifest.json")
+    if not os.path.isfile(manifest_path):
+        return jsonify({"status": "error", "code": "mobile_shell_unavailable"}), 503
+    return await send_from_directory(
+        os.path.join(_root_dir or "", "src", "frontend", "static"),
+        "mobile-manifest.json",
+    )
 
 
 @api_bp.route("/sw.js", methods=["GET"])

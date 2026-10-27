@@ -93,7 +93,7 @@ def test_live_action_captures_original_text_and_session_language(monkeypatch):
         session = LiveSession("language-action", lambda _text: None, lambda _data: None, language="es")
         streamer = GeminiLiveStreamer(session, api_key="fake")
         streamer._running = True
-        streamer._current_user_text = "pon Killer Queen de Queen"
+        streamer.accept_user_transcript("pon Killer Queen de Queen")
         await streamer._execute_orchestrated_plan([{"name": "reproducir_en_spotify", "args": {"cancion": "Killer Queen"}, "id": "call-1"}])
         await session.close()
     asyncio.run(run())
@@ -211,6 +211,7 @@ def test_same_frame_turn_complete_does_not_lose_captured_tool_request(monkeypatc
 
 def test_hybrid_fallback_keeps_configured_language_until_explicit_preference(monkeypatch):
     from types import SimpleNamespace
+
     from utils.jarvis_i18n import get_current_language
     from voice.live_hybrid import HybridLiveStreamer
     captured = {}

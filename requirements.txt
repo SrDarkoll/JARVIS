@@ -18,6 +18,7 @@ faster-whisper>=1.0
 numpy>=1.26
 soundfile>=0.12
 piper-tts==1.6.0
+qrcode>=8.2,<9
 
 typing_extensions>=4.8; python_version < "3.11"
 

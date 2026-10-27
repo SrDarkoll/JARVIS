@@ -203,7 +203,7 @@ def test_admin_voice_registration_requires_token_off_loopback(monkeypatch):
     )
     assert r.status_code == 401
     data = r.get_json() or {}
-    assert data.get("error") == "Token required for critical routes."
+    assert data.get("error") == "Invalid or missing token."
 
 
 def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
@@ -308,7 +308,7 @@ def test_interactive_route_rejects_remote_client_without_origin_or_token(monkeyp
     )
 
     assert response.status_code == 401
-    assert (response.get_json() or {}).get("error") == "Token required for protected routes."
+    assert (response.get_json() or {}).get("error") == "Invalid or missing token."
 
 
 def test_interactive_route_requires_configured_token_from_trusted_origin(monkeypatch):
@@ -396,7 +396,7 @@ def test_local_index_bootstrap_cookie_authenticates_protected_http_route(monkeyp
     assert protected_response.status_code == 400
 
 
-def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
+def test_interactive_route_allows_valid_token_from_non_browser_client(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
 
     monkeypatch.setenv("JARVIS_API_TOKEN", "test-token")
@@ -406,7 +406,6 @@ def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
         "/api/chat",
         json={},
         headers={
-            "Origin": "https://remote.example",
             "X-JARVIS-API-TOKEN": "test-token",
         },
         environ_base={"REMOTE_ADDR": "192.168.1.20"},

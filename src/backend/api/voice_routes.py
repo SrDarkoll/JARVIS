@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from core.jarvis_config import resolve_live_voice_config
 from core.runtime_logger import log_warning
 from core.security.browser_profile import bind_browser_profile_id, get_browser_profile_id
-from quart import Blueprint, jsonify, request
+from quart import Blueprint, g, jsonify, request
 from voice.live_session import (
     DEFAULT_MAX_AUDIO_CHUNK_BYTES,
     DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
@@ -459,9 +459,11 @@ async def live_voice_stream():
     from voice.live_transport import LiveTransportError
 
     session_id = str(uuid.uuid4())
+    device = getattr(g, "jarvis_device_session", None)
+    active_profile = device.profile_id if device else get_browser_profile_id()
     profile_id, language = resolve_live_session_context(
-        requested_profile=websocket.args.get("profile_id", "default"),
-        active_profile=get_browser_profile_id(),
+        requested_profile=device.profile_id if device else websocket.args.get("profile_id", "default"),
+        active_profile=active_profile,
         requested_language=websocket.args.get("lang", "es"),
     )
     requested_mode = websocket.args.get("mode", "auto")
@@ -536,7 +538,13 @@ async def live_voice_stream():
             )
 
     if selection.mode == "gemini_live":
-        gemini_streamer = GeminiLiveStreamer(session=session, api_key=gemini_key, config=live_config)
+        local_transcriber = getattr(_transcription_service, "local", None)
+        gemini_streamer = GeminiLiveStreamer(
+            session=session,
+            api_key=gemini_key,
+            config=live_config,
+            local_transcriber=local_transcriber,
+        )
         streamer_task = asyncio.create_task(gemini_streamer.start())
     elif selection.mode == "hybrid":
         await _activate_hybrid(selection.code)

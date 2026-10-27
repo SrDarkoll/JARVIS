@@ -42,6 +42,7 @@ from urllib.parse import urlparse
 
 from api.api_routes import api_bp, init_api_routes
 from api.chat_routes import ChatRoutesConfig, chat_bp, init_chat_routes
+from api.device_sync_routes import sync_bp
 from api.language_routes import init_language_routes, language_bp
 from api.security_routes import SecurityRoutesConfig, init_security_routes, security_bp
 from api.status_routes import StatusRoutesConfig, init_status_routes, status_bp
@@ -54,6 +55,12 @@ from api.voice_routes import (
 )
 from core import core_tools, jarvis_brain, jarvis_config
 from core.app_config import get_app_config, init_app_config
+from core.device_sync import sync_hub
+from core.device_sync.auth import (
+    device_token_http_path_allowed,
+    is_remote_proxy_request,
+    protected_http_request_allowed,
+)
 from core.jarvis_config import (
     MODEL_PATH,
     OBS_DIR,
@@ -82,6 +89,7 @@ from core.service_container import services
 from engines.tts_engine import TTSEngine
 from quart import (
     Quart,
+    g,
     jsonify,
     request,
     websocket,
@@ -473,6 +481,20 @@ with PROACTIVE_LOCK:
     PROACTIVE_STATE["cooldown_seconds"] = _app_cfg.toggles.proactive_cooldown
 
 _cors_origins = list(get_app_config().cors_origins)
+_remote_base_raw = str(os.getenv("JARVIS_REMOTE_BASE_URL", "") or "").strip().rstrip("/")
+if _remote_base_raw.startswith("https://"):
+    _remote_parsed = urlparse(_remote_base_raw)
+    if _remote_parsed.hostname:
+        _remote_origin = f"https://{_remote_parsed.hostname.lower()}"
+        if _remote_parsed.port:
+            _remote_origin += f":{_remote_parsed.port}"
+        if _remote_origin not in _cors_origins:
+            _cors_origins.append(_remote_origin)
+if _remote_base_raw and not configured_api_token():
+    log_warning(
+        "remote_access_without_api_token",
+        detail="Set JARVIS_API_TOKEN before exposing the private HTTPS proxy.",
+    )
 
 from quart_cors import cors
 
@@ -493,6 +515,7 @@ app.register_blueprint(security_bp)
 app.register_blueprint(voice_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(language_bp)
+app.register_blueprint(sync_bp)
 
 _LOOPBACK_NAMES = {"localhost"}
 _CRITICAL_API_PATHS = {
@@ -514,6 +537,9 @@ _CRITICAL_API_PATHS = {
     "/api/security/policy",
     "/api/setup/provider",
     "/api/setup/status",
+    "/api/sync/devices",
+    "/api/sync/devices/revoke",
+    "/api/sync/pair/init",
     "/api/tts/pronunciation",
     "/api/tts/pronunciation/reset",
     "/api/tts/pronunciacion",
@@ -531,8 +557,14 @@ _ORIGIN_PROTECTED_API_PATHS = {
     "/api/voice",
     "/api/voice/live/status",
     "/api/voice/stream",
+    "/api/sync/dispatch",
+    "/api/sync/events",
+    "/api/sync/history",
+    "/api/sync/snapshot",
+    "/api/sync/ws",
+    "/api/sync/ws-ticket",
 }
-_PUBLIC_API_PATHS = {"/api/health"}
+_PUBLIC_API_PATHS = {"/api/health", "/api/sync/pair/claim"}
 
 
 def _is_loopback(addr: str | None) -> bool:
@@ -568,6 +600,9 @@ def _normalize_origin(value: str | None) -> str:
 
 def _is_trusted_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
     allowed = {origin for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins()) if origin}
+    remote_origin = _normalize_origin(os.getenv("JARVIS_REMOTE_BASE_URL"))
+    if remote_origin:
+        allowed.add(remote_origin)
     origin = _normalize_origin(origin_header)
     if origin:
         return origin in allowed
@@ -579,6 +614,43 @@ def _is_trusted_origin_header(origin_header: str | None, referer_header: str | N
 
 def _is_trusted_browser_origin() -> bool:
     return _is_trusted_origin_header(request.headers.get("Origin"), request.headers.get("Referer"))
+
+
+def _is_local_browser_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
+    """True only for an explicit loopback Origin/Referer, never for a missing one."""
+    raw = str(origin_header or referer_header or "").strip()
+    if not raw:
+        return False
+    parsed = urlparse(raw)
+    host = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if not parsed.scheme or not host:
+        return False
+    if host in _LOOPBACK_NAMES:
+        return _is_trusted_origin_header(origin_header, referer_header)
+    try:
+        return ipaddress.ip_address(host).is_loopback and _is_trusted_origin_header(origin_header, referer_header)
+    except ValueError:
+        return False
+
+
+def _remote_base_configured() -> bool:
+    return bool(str(os.getenv("JARVIS_REMOTE_BASE_URL", "") or "").strip())
+
+
+def _is_remote_proxy_request() -> bool:
+    return is_remote_proxy_request(
+        request.headers,
+        request.host,
+        os.getenv("JARVIS_REMOTE_BASE_URL", ""),
+    )
+
+
+def _is_remote_websocket_proxy_request() -> bool:
+    return is_remote_proxy_request(
+        websocket.headers,
+        websocket.headers.get("Host", ""),
+        os.getenv("JARVIS_REMOTE_BASE_URL", ""),
+    )
 
 
 def _is_critical_api_path(path: str) -> bool:
@@ -603,13 +675,25 @@ def _has_valid_api_token() -> bool:
     return is_valid_raw_api_token(supplied) or is_valid_local_ui_cookie(local_cookie)
 
 
+def _has_valid_device_token_for_api_path() -> bool:
+    if not device_token_http_path_allowed(request.path):
+        return False
+    device = sync_hub.validate_device_token(request.headers.get("X-JARVIS-DEVICE-TOKEN"))
+    if device is None:
+        return False
+    g.jarvis_device_session = device
+    return True
+
+
 def _has_valid_websocket_token() -> bool:
-    supplied = (
-        websocket.headers.get("X-JARVIS-API-TOKEN")
-        or websocket.args.get("token")
-        or websocket.args.get("api_token")
-        or ""
+    device = sync_hub.consume_websocket_ticket(
+        websocket.args.get("ws_ticket"),
+        path=websocket.path,
     )
+    if device is not None:
+        g.jarvis_device_session = device
+        return True
+    supplied = websocket.headers.get("X-JARVIS-API-TOKEN")
     local_cookie = websocket.cookies.get(LOCAL_UI_AUTH_COOKIE)
     return is_valid_raw_api_token(supplied) or is_valid_local_ui_cookie(local_cookie)
 
@@ -630,25 +714,31 @@ async def _require_token_for_critical_routes():
     if not is_protected:
         return None
 
-    token_configured = bool(configured_api_token())
-    token_valid = _has_valid_api_token()
-    if token_configured:
-        if token_valid:
-            return None
-        obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
-        return jsonify({"error": "Invalid or missing token."}), 401
-
     if not _is_trusted_browser_origin():
         obs_event("api_origin_denied", path=request.path, ip=request.remote_addr)
         message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for API route."
         return jsonify({"error": message}), 403
 
-    if _is_loopback(request.remote_addr):
+    token_configured = bool(configured_api_token())
+    allowed = protected_http_request_allowed(
+        request.path,
+        token_configured=token_configured,
+        master_token_valid=is_valid_raw_api_token(request.headers.get("X-JARVIS-API-TOKEN")),
+        local_cookie_valid=is_valid_local_ui_cookie(request.cookies.get(LOCAL_UI_AUTH_COOKIE)),
+        device_token_valid=_has_valid_device_token_for_api_path(),
+        local_loopback=_is_loopback(request.remote_addr),
+        remote_proxy=_is_remote_proxy_request(),
+        remote_base_configured=_remote_base_configured(),
+        local_browser_origin=_is_local_browser_origin_header(
+            request.headers.get("Origin"),
+            request.headers.get("Referer"),
+        ),
+    )
+    if allowed:
         return None
 
-    obs_event("api_token_required", path=request.path, ip=request.remote_addr)
-    message = "Token required for critical routes." if is_critical else "Token required for protected routes."
-    return jsonify({"error": message}), 401
+    obs_event("api_token_denied", path=request.path, ip=request.remote_addr)
+    return jsonify({"error": "Invalid or missing token."}), 401
 
 
 @app.before_websocket
@@ -664,33 +754,34 @@ async def _require_token_for_websocket_routes():
         websocket.headers.get("Origin"),
         websocket.headers.get("Referer"),
     )
-    token_valid = _has_valid_websocket_token()
-    token_configured = bool(configured_api_token())
-
-    if token_configured:
-        if token_valid:
-            return None
-        obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
-        return _websocket_auth_error("Invalid or missing token.", 401)
-
     if not origin_trusted:
         obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
         message = "Untrusted origin for critical route." if is_critical else "Untrusted origin for WebSocket route."
         return _websocket_auth_error(message, 403)
 
-    if _is_loopback(websocket.remote_addr):
+    if _has_valid_websocket_token():
         return None
 
-    obs_event("ws_token_required", path=path, ip=websocket.remote_addr)
-    message = "Token required for critical routes." if is_critical else "Token required for protected routes."
-    return _websocket_auth_error(message, 401)
+    if configured_api_token() or _is_remote_websocket_proxy_request() or not _is_loopback(websocket.remote_addr):
+        obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
+        return _websocket_auth_error("Invalid or missing token.", 401)
+    if _remote_base_configured() and not _is_local_browser_origin_header(
+        websocket.headers.get("Origin"),
+        websocket.headers.get("Referer"),
+    ):
+        obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
+        return _websocket_auth_error("Invalid or missing token.", 401)
+    return None
 
 
 @app.before_request
 async def _initialize_browser_profile():
     if request.method == "OPTIONS" or request.path.startswith("/static/"):
         return None
-    if (_is_loopback(request.remote_addr) and _is_trusted_browser_origin()) or _has_valid_api_token():
+    if not _is_remote_proxy_request() and (
+        (_is_loopback(request.remote_addr) and _is_trusted_browser_origin())
+        or _has_valid_api_token()
+    ):
         ensure_browser_profile()
     owner_paths = (
         "/api/security", "/api/proactive", "/api/plugins", "/api/setup/provider",
@@ -971,7 +1062,12 @@ if __name__ == "__main__":
     from hypercorn.config import Config
 
     config = Config()
-    config.bind = ["localhost:5002"]
+    host = os.getenv("JARVIS_HOST", "localhost").strip() or "localhost"
+    try:
+        port = int(os.getenv("JARVIS_PORT", "5002").strip() or "5002")
+    except (TypeError, ValueError):
+        port = 5002
+    config.bind = [f"{host}:{port}"]
     config.use_reloader = False
     config.websocket_max_message_size = MAX_LIVE_WS_MESSAGE_BYTES
 
