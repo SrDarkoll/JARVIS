@@ -224,7 +224,12 @@ def _debe_buscar_en_web(text: str) -> bool:
     return _es_consulta_tecnica_actualizable(t)
 
 
-def _respuesta_rapida_social(user_input: str, profile_id: str = DEFAULT_PROFILE_ID) -> str | None:
+def _respuesta_rapida_social(
+    user_input: str,
+    profile_id: str = DEFAULT_PROFILE_ID,
+    *,
+    strict: bool = False,
+) -> str | None:
     """Respuestas instantaneas para conversacion casual sin ir al LLM."""
     lang = get_current_language()
     bt = BACKEND_TRANSLATIONS.get(lang, BACKEND_TRANSLATIONS["en"])
@@ -233,6 +238,16 @@ def _respuesta_rapida_social(user_input: str, profile_id: str = DEFAULT_PROFILE_
     t_plain = _normalizar_social_texto(t)
     if _has_information_intent(t_plain):
         return None
+
+    if strict:
+        phrases = {
+            _normalizar_social_texto(phrase)
+            for key in ("social_hi", "social_how", "social_assistant_who", "social_who", "social_thanks")
+            for phrase in bt.get(key, [])
+        }
+        without_name = re.sub(r"^jarvis\s+|\s+jarvis$", "", t_plain).strip()
+        if t_plain not in phrases and without_name not in phrases:
+            return None
 
     _snap = get_auth_snapshot()
     pid_norm = str(profile_id or "").strip().lower()

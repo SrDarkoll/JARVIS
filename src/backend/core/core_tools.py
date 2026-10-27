@@ -43,6 +43,7 @@ from tools.computer_use import (  # noqa: F401
     computer_type,
 )
 from tools.desktop_control import controlar_ventana, enfocar_ventana, listar_ventanas  # noqa: F401
+from tools.documents import abrir_documento  # noqa: F401
 from tools.memory import (  # noqa: F401
     _obtener_contexto_memoria_entrelazada,
     _obtener_contexto_perfil,

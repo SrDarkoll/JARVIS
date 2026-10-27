@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 from core.brain import processor
 from core.command_pipeline.models import CommandResponse
 from modules.spotify.desktop.models import SpotifyCandidate
@@ -21,6 +24,47 @@ class RecordingOrchestrator:
             emit({"type": "status", "text": "understanding"})
             emit({"type": "done", **response.to_dict()})
         return response
+
+
+def test_stream_yields_status_before_command_finishes(monkeypatch) -> None:
+    """Catch regressions that buffer every SSE event until processing ends."""
+
+    producer_started = threading.Event()
+    release_producer = threading.Event()
+
+    def delayed_process(request, *, emit=None):
+        assert emit is not None
+        emit({"type": "status", "text": "understanding"})
+        producer_started.set()
+        assert release_producer.wait(timeout=2.0)
+        response = CommandResponse(
+            request_id=request.request_id,
+            text="real response",
+            should_listen=False,
+            outcome="succeeded",
+        )
+        emit({"type": "done", **response.to_dict()})
+        return response
+
+    monkeypatch.delenv("JARVIS_LEGACY_COMMAND_PIPELINE", raising=False)
+    monkeypatch.setattr(processor, "process_command", delayed_process)
+    stream = processor.stream_procesar_mensaje_events(
+        "hola",
+        profile_id="admin",
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first_event_future = executor.submit(next, stream)
+        assert producer_started.wait(timeout=1.0)
+        try:
+            first_event = first_event_future.result(timeout=0.2)
+        finally:
+            release_producer.set()
+
+    assert first_event == {"type": "status", "text": "understanding"}
+    remaining_events = list(stream)
+    assert remaining_events[-1]["type"] == "done"
+    assert remaining_events[-1]["text"] == "real response"
 
 
 def test_direct_and_stream_facades_share_one_orchestrator(

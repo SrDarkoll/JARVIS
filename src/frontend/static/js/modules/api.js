@@ -3,6 +3,12 @@
  */
 
 export const API = {
+    async fetchSessionProfile() {
+        const res = await fetch('/api/session/profile', { cache: 'no-store' });
+        if (!res.ok) throw new Error('api_session_profile_fail');
+        return await res.json();
+    },
+
     async postChat(message, profileId = 'web_default') {
         const res = await fetch('/api/chat', {
             method: 'POST',
@@ -33,8 +39,8 @@ export const API = {
         return data;
     },
 
-    async fetchNews() {
-        const res = await fetch('/api/noticias');
+    async fetchNews({ automatic = false } = {}) {
+        const res = await fetch(automatic ? '/api/noticias?automatic=1' : '/api/noticias', { cache: 'no-store' });
         if (!res.ok) throw new Error('api_noticias_fail');
         return await res.json();
     },
@@ -48,6 +54,12 @@ export const API = {
     async fetchSetupStatus() {
         const res = await fetch('/api/setup/status', { cache: 'no-store' });
         if (!res.ok) throw new Error('api_setup_status_fail');
+        return await res.json();
+    },
+
+    async fetchLiveVoiceStatus() {
+        const res = await fetch('/api/voice/live/status', { cache: 'no-store' });
+        if (!res.ok) throw new Error('api_live_voice_status_fail');
         return await res.json();
     },
 
@@ -66,6 +78,32 @@ export const API = {
         if (!type.includes('application/json')) throw new Error('setup_failed');
         const data = await res.json();
         if (!res.ok || data.ok === false) throw new Error(data.error || 'setup_failed');
+        return data;
+    },
+
+    async claimDueReminders(profileId = 'web_default') {
+        const res = await fetch('/api/reminders/claim', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile_id: profileId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'api_reminder_claim_fail');
+        return data;
+    },
+
+    async acknowledgeReminder(reminderId, profileId = 'web_default') {
+        const id = encodeURIComponent(String(reminderId || '').trim());
+        if (!id) throw new Error('invalid_reminder_id');
+        const res = await fetch(`/api/reminders/${id}/ack`, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile_id: profileId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'api_reminder_ack_fail');
         return data;
     },
 

@@ -1,8 +1,16 @@
-const CACHE_NAME = 'jarvis-v2';
+const CACHE_NAME = 'jarvis-v7';
 const ASSETS = [
     '/',
-    '/static/css/style.css',
-    '/static/js/main.js',
+    '/mobile',
+    '/mobile-manifest.json',
+    '/static/css/style.css?v=1.5.1',
+    '/static/css/mobile.css?v=1.0.0',
+    '/static/js/main.js?v=1.5.1',
+    '/static/js/mobile.js?v=1.0.0',
+    '/static/js/modules/device-sync.js',
+    '/static/js/modules/mobile-pairing.js',
+    '/static/js/modules/live-voice.js',
+    '/static/js/modules/live-pcm-capture.js',
     '/media/favicon.svg'
 ];
 
@@ -11,6 +19,16 @@ self.addEventListener('install', event => {
         caches.open(CACHE_NAME).then(cache => {
             return cache.addAll(ASSETS);
         }).catch(err => console.log('SW Install error', err))
+    );
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(names => Promise.all(
+            names
+                .filter(name => name.startsWith('jarvis-') && name !== CACHE_NAME)
+                .map(name => caches.delete(name))
+        ))
     );
 });
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import tempfile
 from datetime import datetime
-import pytest
 
+import pytest
 from modules.proactive.models import DesktopContext
 from modules.proactive.predictor import WorkflowPredictorEngine
 from modules.proactive.reasoner import ProactiveReasoner
@@ -103,9 +103,10 @@ def test_prediction_langchain_tools():
     assert "PREDICCIÓN PROACTIVA" in out_pred or "Probabilidad" in out_pred
 
 
-def test_prediction_tools_in_base_catalog():
+def test_prediction_tools_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_PROACTIVE_TOOLS_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 

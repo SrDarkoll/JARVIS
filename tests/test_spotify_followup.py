@@ -1,6 +1,7 @@
 import pytest
 from core import jarvis_state
 from core.brain import processor, router, tool_manager
+from core.command_pipeline.models import ReceiptStatus, ToolExecutionResult
 from modules.spotify import service as spotify_service
 from modules.spotify import tools as spotify_tools
 from modules.spotify.api.playback import SpotifyAPIPlaybackResult
@@ -168,7 +169,15 @@ def test_new_explicit_play_command_clears_an_old_selection(monkeypatch):
 
     response = spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
 
-    assert response == "api:Killer Queen"
+    assert isinstance(response, ToolExecutionResult)
+    assert response.user_message == "api:Killer Queen"
+    assert response.status is ReceiptStatus.ACCEPTED
+    assert response.diagnostic_code == "spotify_api_playback_accepted"
+    assert response.accepted is True
+    assert response.verified is False
+    assert response.result == {
+        "provider": "api", "status": "unverified", "requires_follow_up": False, "choices": [],
+    }
     assert not pending_spotify_selections.has_pending("admin")
 
 

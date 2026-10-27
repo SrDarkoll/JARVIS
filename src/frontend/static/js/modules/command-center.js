@@ -52,5 +52,21 @@ export function microphoneRecoveryView(errorKind, translate) {
 
 export function isSuccessfulCommandOutcome(outcome) {
     const normalized = String(outcome || '').trim().toLowerCase();
-    return !normalized || normalized === 'succeeded' || normalized === 'duplicate';
+    return new Set([
+        'responded',
+        'accepted',
+        'executed',
+        'verified',
+        'duplicate',
+        'succeeded', // Compatibility with older backends.
+    ]).has(normalized);
+}
+
+export function commandDoneText(event, accumulatedText = '') {
+    if (event?.type !== 'done') return String(accumulatedText ?? '');
+    for (const candidate of [event.text, event.response, accumulatedText]) {
+        const text = String(candidate ?? '');
+        if (text.trim()) return text;
+    }
+    return '';
 }

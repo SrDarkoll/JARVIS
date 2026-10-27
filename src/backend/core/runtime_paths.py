@@ -77,6 +77,11 @@ def ensure_runtime_paths(paths: RuntimePaths) -> RuntimePaths:
         descriptor = -1
         try:
             directory.mkdir(parents=True, exist_ok=True)
+            if os.name != "nt":
+                try:
+                    os.chmod(directory, 0o700)
+                except OSError:
+                    pass
             descriptor, raw_probe_path = tempfile.mkstemp(
                 prefix=".jarvis-write-probe-",
                 dir=directory,

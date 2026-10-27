@@ -50,6 +50,10 @@ class ServiceContainer:
         self.llm_fallback: Any = None
         self.llm_with_tools: Any = None
 
+        from services.reminder_service import reminder_service
+
+        self.reminder_service = reminder_service
+
         # --- States and Context ---
         self.SRC_DIR: str = ""
         self.ROOT_DIR: str = ""
@@ -74,18 +78,30 @@ class ServiceContainer:
     def noticias_cache(self) -> dict:
         return jarvis_state._noticias_cache
 
-    def add_reminder(self, text: str, minutes: int):
-        from datetime import timedelta
-
-        cuando = datetime.now() + timedelta(minutes=minutes)
-        with jarvis_state.recordatorios_lock:
-            jarvis_state._recordatorios.append({"texto": text, "cuando": cuando})
+    def add_reminder(self, text: str, minutes: float):
+        record = self.reminder_service.add(
+            text,
+            minutes,
+            jarvis_state.get_active_profile_id(),
+        )
         self.log_event("reminder_added", text=text, minutes=minutes)
-        print(f"  [SERVICES] Reminder added: {text} in {minutes} min")
+        print(f"  [SERVICES] Reminder added for profile {record.profile_id}")
+        return record
 
-    def get_reminders(self) -> list[dict]:
-        with jarvis_state.recordatorios_lock:
-            return list(jarvis_state._recordatorios)
+    def get_reminders(self, profile_id: str | None = None) -> list[dict]:
+        records = self.reminder_service.list_active(
+            profile_id or jarvis_state.get_active_profile_id()
+        )
+        return [
+            {
+                "id": record.reminder_id,
+                "texto": record.text,
+                "cuando": datetime.fromtimestamp(record.due_at),
+                "profile_id": record.profile_id,
+                "status": record.status,
+            }
+            for record in records
+        ]
 
     def log_event(self, event_type: str, **payload):
         if self.obs_event:

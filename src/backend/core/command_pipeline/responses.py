@@ -8,11 +8,13 @@ from typing import Any
 
 from core.command_pipeline.models import (
     ActionPlan,
+    CommandOutcome,
     CommandRequest,
     CommandResponse,
     ExecutionReceipt,
     ReceiptStatus,
 )
+from core.command_pipeline.truthfulness import reports_unexecuted_action
 
 _FAILED_STATUSES = {
     ReceiptStatus.BLOCKED,
@@ -41,11 +43,24 @@ class ResponseComposer:
         frozen_metrics = _frozen_mapping(metrics)
         if plan.direct_response and not receipts:
             text = plan.direct_response.strip()
+            outcome = plan.direct_outcome
+            if outcome not in {
+                CommandOutcome.RESPONDED, CommandOutcome.BLOCKED,
+                CommandOutcome.UNAVAILABLE, CommandOutcome.FAILED,
+            }:
+                outcome = CommandOutcome.RESPONDED
+            if reports_unexecuted_action(text):
+                text = (
+                    "No he ejecutado ninguna acción en este turno. ¿Qué necesitas que haga?"
+                    if request.language.startswith("es")
+                    else "I have not executed any action in this turn. What would you like me to do?"
+                )
+                outcome = CommandOutcome.RESPONDED
             return CommandResponse(
                 request_id=request.request_id,
                 text=text,
                 should_listen=(plan.requires_follow_up or text.rstrip().endswith("?")),
-                outcome="succeeded",
+                outcome=outcome,
                 metrics=frozen_metrics,
             )
 
@@ -58,7 +73,7 @@ class ResponseComposer:
             messages.append(message)
             seen_messages.add(message)
 
-        failed = any(receipt.status in _FAILED_STATUSES for receipt in receipts)
+        failed_receipts = [receipt for receipt in receipts if receipt.status in _FAILED_STATUSES]
         blocked = any(receipt.status is ReceiptStatus.BLOCKED for receipt in receipts)
         all_duplicates = bool(receipts) and all(receipt.status is ReceiptStatus.DUPLICATE for receipt in receipts)
         missing_result = not messages and not all_duplicates
@@ -77,18 +92,41 @@ class ResponseComposer:
                     else "I could not complete the requested action."
                 )
 
-        if failed or missing_result:
-            outcome = "partial" if len(receipts) > 1 else "failed"
+        has_executed_step = any(
+            receipt.status in {
+                ReceiptStatus.SUCCEEDED,
+                ReceiptStatus.ACCEPTED,
+                ReceiptStatus.DUPLICATE,
+            }
+            for receipt in receipts
+        )
+        if missing_result:
+            outcome = CommandOutcome.FAILED
+        elif any(receipt.status is ReceiptStatus.PARTIAL for receipt in receipts):
+            outcome = CommandOutcome.PARTIAL
+        elif failed_receipts and has_executed_step:
+            outcome = CommandOutcome.PARTIAL
+        elif any(receipt.status is ReceiptStatus.FAILED for receipt in receipts):
+            outcome = CommandOutcome.FAILED
+        elif blocked:
+            outcome = CommandOutcome.BLOCKED
+        elif any(receipt.status is ReceiptStatus.UNAVAILABLE for receipt in receipts):
+            outcome = CommandOutcome.UNAVAILABLE
         elif all_duplicates:
-            outcome = "duplicate"
+            outcome = CommandOutcome.DUPLICATE
+        elif any(receipt.status is ReceiptStatus.ACCEPTED for receipt in receipts):
+            outcome = CommandOutcome.ACCEPTED
+        elif receipts and all(receipt.verified for receipt in receipts):
+            outcome = CommandOutcome.VERIFIED
         else:
-            outcome = "succeeded"
+            outcome = CommandOutcome.EXECUTED
 
         text = "\n".join(messages)
         if (
             self._synthesizer is not None
             and receipts
             and all(receipt.status is ReceiptStatus.SUCCEEDED for receipt in receipts)
+            and all(receipt.verified for receipt in receipts)
             and not plan.requires_follow_up
         ):
             try:
@@ -101,7 +139,7 @@ class ResponseComposer:
             except Exception:
                 pass
             else:
-                if synthesized.strip():
+                if synthesized.strip() and not reports_unexecuted_action(synthesized):
                     text = synthesized.strip()
 
         return CommandResponse(

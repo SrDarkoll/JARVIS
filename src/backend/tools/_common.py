@@ -27,11 +27,7 @@ def _open_url_or_app(target: str) -> bool:
         if IS_WINDOWS:
             import webbrowser
 
-            if target.startswith(("http://", "https://")):
-                webbrowser.open(target)
-            else:
-                webbrowser.open(target)
-            return True
+            return bool(webbrowser.open(target))
         else:
             import subprocess
 

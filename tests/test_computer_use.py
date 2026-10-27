@@ -298,9 +298,10 @@ def test_computer_use_service_and_tools():
         assert "Drag simulado OK" in out_drag
 
 
-def test_computer_use_tools_in_base_catalog():
+def test_computer_use_tools_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_COMPUTER_USE_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 

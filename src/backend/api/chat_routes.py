@@ -9,6 +9,8 @@ from core.errors import (
     LLMUnavailableError,
 )
 from core.jarvis_observability import obs_event
+from core.runtime_logger import log_warning
+from core.security.browser_profile import get_browser_profile_id
 from quart import Blueprint, Response, jsonify, request
 
 chat_bp = Blueprint("chat", __name__)
@@ -117,19 +119,39 @@ async def api_chat():
         limited = _rate_limit_response(ip, "chat")
         if limited:
             return limited
-        print(f"\n[LORD] {user_input}")
-        profile_id = (data.get("profile_id") or "web_default").strip()
+        print(f"\n[CHAT] Request received ({len(user_input)} chars)")
+        profile_id = get_browser_profile_id()
         obs_event(
             "api_chat_in",
             user_input=user_input[:220],
             ip=ip,
             profile_id=profile_id,
         )
+        try:
+            from core.device_sync import SyncEventType, sync_hub
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "user", "content": user_input, "origin_device": "Web/Desktop", "timestamp": time.time()},
+                origin_device_id="desktop",
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            log_warning("chat_sync_publish_failed", error=type(exc).__name__)
         reply, should_listen = await asyncio.to_thread(
             jarvis_brain.procesar_mensaje,
             user_input,
             profile_id=profile_id,
         )
+        try:
+            from core.device_sync import SyncEventType, sync_hub
+            sync_hub.broadcast_sync(
+                SyncEventType.CHAT_MESSAGE,
+                {"role": "assistant", "content": reply, "should_listen": bool(should_listen), "origin_device": "JARVIS Core", "timestamp": time.time()},
+                origin_device_id="desktop",
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            log_warning("chat_sync_publish_failed", error=type(exc).__name__)
         obs_event(
             "api_chat_out",
             reply=(reply or "")[:220],
@@ -137,7 +159,7 @@ async def api_chat():
             ip=ip,
             profile_id=profile_id,
         )
-        return jsonify({"response": reply, "should_listen": should_listen})
+        return jsonify({"response": reply, "should_listen": should_listen, "profile_id": profile_id})
     except LLMUnavailableError:
         obs_event(
             "api_chat_unconfigured",
@@ -168,13 +190,24 @@ async def api_chat_stream():
     limited = _rate_limit_response(ip, "chat_stream")
     if limited:
         return limited
-    profile_id = (data.get("profile_id") or "web_default").strip()
+    profile_id = get_browser_profile_id()
     obs_event(
         "api_chat_stream_in",
         user_input=user_input[:220],
         ip=ip,
         profile_id=profile_id,
     )
+
+    try:
+        from core.device_sync import SyncEventType, sync_hub
+        sync_hub.broadcast_sync(
+            SyncEventType.CHAT_MESSAGE,
+            {"role": "user", "content": user_input, "origin_device": "Web/Desktop Stream", "timestamp": time.time()},
+            origin_device_id="desktop",
+            profile_id=profile_id,
+        )
+    except Exception as exc:
+        log_warning("chat_sync_publish_failed", error=type(exc).__name__)
 
     def _next_stream_event(iterator):
         try:
@@ -183,6 +216,8 @@ async def api_chat_stream():
             return None, True
 
     async def generate():
+        response_accumulator = []
+        final_response = ""
         try:
             iterator = jarvis_brain.stream_procesar_mensaje_events(
                 user_input,
@@ -192,7 +227,23 @@ async def api_chat_stream():
                 event, done = await asyncio.to_thread(_next_stream_event, iterator)
                 if done:
                     break
+                if isinstance(event, dict) and event.get("type") == "token":
+                    response_accumulator.append(str(event.get("text") or ""))
+                elif isinstance(event, dict) and event.get("type") == "done":
+                    final_response = str(event.get("response") or event.get("text") or "")
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            assistant_text = final_response or "".join(response_accumulator)
+            if assistant_text:
+                try:
+                    from core.device_sync import SyncEventType, sync_hub
+                    sync_hub.broadcast_sync(
+                        SyncEventType.CHAT_MESSAGE,
+                        {"role": "assistant", "content": assistant_text, "origin_device": "JARVIS Core", "timestamp": time.time()},
+                        origin_device_id="desktop",
+                        profile_id=profile_id,
+                    )
+                except Exception as exc:
+                    log_warning("chat_sync_publish_failed", error=type(exc).__name__)
         except LLMUnavailableError:
             obs_event(
                 "api_chat_stream_unconfigured",

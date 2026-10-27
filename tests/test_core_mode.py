@@ -21,6 +21,10 @@ def test_core_mode_is_the_safe_default():
     assert flags.briefing_enabled is False
     assert flags.telegram_enabled is False
     assert flags.monitoring_enabled is False
+    assert flags.computer_use_enabled is False
+    assert flags.proactive_tools_enabled is False
+    assert flags.cognitive_memory_enabled is False
+    assert flags.action_plans_enabled is False
 
 
 def test_full_mode_enables_optional_features_except_voice_biometrics():
@@ -36,6 +40,10 @@ def test_full_mode_enables_optional_features_except_voice_biometrics():
     assert flags.briefing_enabled is True
     assert flags.telegram_enabled is True
     assert flags.monitoring_enabled is True
+    assert flags.computer_use_enabled is True
+    assert flags.proactive_tools_enabled is True
+    assert flags.cognitive_memory_enabled is True
+    assert flags.action_plans_enabled is True
 
 
 def test_core_mode_allows_explicit_feature_override():
@@ -62,6 +70,57 @@ def test_core_mode_allows_explicit_monitoring_override():
 
     assert flags.core_mode is True
     assert flags.monitoring_enabled is True
+    assert flags.computer_use_enabled is False
+    assert flags.proactive_tools_enabled is False
+    assert flags.cognitive_memory_enabled is False
+    assert flags.action_plans_enabled is False
+
+
+def test_core_tool_catalog_excludes_experimental_surfaces_by_default(monkeypatch):
+    from tools import _get_base_tools_impl
+
+    monkeypatch.setenv("JARVIS_CORE_MODE", "true")
+    for flag in (
+        "JARVIS_COMPUTER_USE_ENABLED",
+        "JARVIS_PROACTIVE_TOOLS_ENABLED",
+        "JARVIS_COGNITIVE_MEMORY_ENABLED",
+        "JARVIS_ACTION_PLANS_ENABLED",
+        "JARVIS_VISION_ENABLED",
+        "JARVIS_PLUGINS_ENABLED",
+    ):
+        monkeypatch.delenv(flag, raising=False)
+
+    names = {tool.name for tool in _get_base_tools_impl()}
+
+    assert "reproducir_en_spotify" in names
+    assert "poner_recordatorio" in names
+    assert "computer_click" not in names
+    assert "consultar_estado_proactivo" not in names
+    assert "aprender_procedimiento" not in names
+    assert "crear_plan_acciones" not in names
+    assert "analizar_pantalla" not in names
+    assert "recargar_plugins" not in names
+
+
+def test_experimental_tool_surfaces_require_explicit_core_opt_in(monkeypatch):
+    from tools import _get_base_tools_impl
+
+    monkeypatch.setenv("JARVIS_CORE_MODE", "true")
+    monkeypatch.setenv("JARVIS_COMPUTER_USE_ENABLED", "true")
+    monkeypatch.setenv("JARVIS_PROACTIVE_TOOLS_ENABLED", "true")
+    monkeypatch.setenv("JARVIS_COGNITIVE_MEMORY_ENABLED", "true")
+    monkeypatch.setenv("JARVIS_ACTION_PLANS_ENABLED", "true")
+    monkeypatch.setenv("JARVIS_VISION_ENABLED", "true")
+    monkeypatch.setenv("JARVIS_PLUGINS_ENABLED", "true")
+
+    names = {tool.name for tool in _get_base_tools_impl()}
+
+    assert "computer_click" in names
+    assert "consultar_estado_proactivo" in names
+    assert "aprender_procedimiento" in names
+    assert "crear_plan_acciones" in names
+    assert "analizar_pantalla" in names
+    assert "recargar_plugins" in names
 
 
 def test_core_mode_does_not_import_speechbrain():

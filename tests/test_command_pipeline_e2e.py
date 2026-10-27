@@ -132,7 +132,7 @@ def test_top_twenty_commands_use_one_pipeline_and_execute_once(
         ("sube el volumen 10", {"nivel": "+10"}),
         ("baja el volumen 20", {"nivel": "-20"}),
         ("pon el volumen al 35", {"nivel": 35}),
-        ("silencia el volumen", {"nivel": 0}),
+        ("silencia el volumen", {"nivel": "mute"}),
     ],
 )
 def test_volume_commands_preserve_requested_operation(

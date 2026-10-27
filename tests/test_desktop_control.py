@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -160,3 +162,115 @@ def test_find_window_matches_by_handle_or_title():
     assert _find_window("1002", windows)["title"] == "J.A.R.V.I.S."
     assert _find_window("studio", windows)["handle"] == 1001
     assert _find_window("missing", windows) is None
+
+
+@pytest.fixture
+def window_api(monkeypatch):
+    import ctypes
+
+    from tools import desktop_control
+
+    api = MagicMock()
+    api.IsWindow.return_value = True
+    api.IsWindowVisible.return_value = True
+    api.IsIconic.return_value = False
+    api.IsZoomed.return_value = False
+    api.GetForegroundWindow.return_value = 9999
+    api.PostMessageW.return_value = True
+    api.ShowWindow.return_value = 0  # Previous visibility, NOT an operation failure.
+
+    def get_pid(_hwnd, pointer):
+        pointer._obj.value = 42
+        return 1
+
+    api.GetWindowThreadProcessId.side_effect = get_pid
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=api), raising=False)
+    monkeypatch.setattr(desktop_control, "IS_WINDOWS", True)
+    monkeypatch.setattr(desktop_control, "WINDOW_VERIFY_SECONDS", 0, raising=False)
+    monkeypatch.setattr(desktop_control, "_window_snapshot", lambda *_args, **_kwargs: [
+        {"handle": 1001, "title": "JARVIS test window", "pid": 42},
+    ])
+    return api
+
+
+def test_focus_does_not_claim_verified_success_when_windows_refuses(window_api):
+    from tools import desktop_control
+
+    result = desktop_control.enfocar_ventana.invoke({"titulo_o_id": "1001"})
+    assert result.verified is False
+    assert result.accepted is True
+    assert "no pude confirmar" in result.user_message.lower()
+
+
+def test_minimize_checks_postcondition_not_showwindow_return_value(window_api):
+    from tools import desktop_control
+
+    window_api.IsIconic.return_value = True
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "1001", "accion": "minimizar"})
+    assert result.verified is True
+    assert result.accepted is False
+    assert window_api.IsIconic.called
+
+
+def test_close_only_confirms_request_acceptance_not_window_closure(window_api):
+    from tools import desktop_control
+
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "1001", "accion": "cerrar"})
+    assert result.accepted is True
+    assert result.verified is False
+    assert "solicitud" in result.user_message.lower()
+
+
+def test_close_rejection_is_failed(window_api):
+    from tools import desktop_control
+
+    window_api.PostMessageW.return_value = False
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "1001", "accion": "cerrar"})
+    assert result.status.value == "failed"
+    assert result.accepted is False
+
+
+def test_numeric_window_id_never_falls_back_to_title():
+    from tools.desktop_control import _find_window
+
+    assert _find_window("1002", [{"handle": 1001, "title": "report 1002"}]) is None
+
+
+def test_ambiguous_window_title_does_not_send_close(monkeypatch, window_api):
+    from tools import desktop_control
+
+    monkeypatch.setattr(desktop_control, "_window_snapshot", lambda *_args, **_kwargs: [
+        {"handle": 1001, "title": "Editor - first", "pid": 42},
+        {"handle": 1002, "title": "Editor - second", "pid": 43},
+    ])
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "Editor", "accion": "cerrar"})
+    assert result.status.value == "blocked"
+    assert "identificador" in result.user_message.lower()
+    window_api.PostMessageW.assert_not_called()
+
+
+def test_reused_window_handle_does_not_act_on_another_process(window_api):
+    from tools import desktop_control
+
+    def different_pid(_hwnd, pointer):
+        pointer._obj.value = 99
+        return 1
+
+    window_api.GetWindowThreadProcessId.side_effect = different_pid
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "1001", "accion": "minimizar"})
+    assert result.status.value == "unavailable"
+    window_api.ShowWindow.assert_not_called()
+
+
+def test_window_identity_is_rechecked_before_confirming_postcondition(window_api):
+    from tools import desktop_control
+
+    def reused_during_action(_hwnd, pointer):
+        pointer._obj.value = 42 if window_api.GetWindowThreadProcessId.call_count == 1 else 99
+        return 1
+
+    window_api.GetWindowThreadProcessId.side_effect = reused_during_action
+    window_api.IsIconic.return_value = True
+    result = desktop_control.controlar_ventana.invoke({"titulo_o_id": "1001", "accion": "minimizar"})
+    assert result.verified is False
+    assert result.diagnostic_code == "window_target_changed"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from core.brain import history_manager, processor, tool_manager
-from core.brain import security_engine
+from core.brain import history_manager, processor, security_engine, tool_manager
 from core.security.tool_policy import get_tool_policy
 
 
@@ -59,6 +58,21 @@ def test_pending_auth_confirmation_cancels_on_negative_response():
     assert history_manager._extraer_accion_pendiente_auth("admin") is None
 
 
+def test_pending_auth_confirmation_treats_mixed_negation_as_cancel():
+    history_manager._registrar_accion_pendiente_auth(
+        "admin",
+        "borrar_memoria",
+        {"confirmar": True},
+        "borra la memoria",
+    )
+
+    reply, should_listen = processor._resolve_pending_auth_confirmation("sí, pero no", "admin")
+
+    assert "cancelada" in reply.lower() or "cancelled" in reply.lower()
+    assert should_listen is False
+    assert history_manager._extraer_accion_pendiente_auth("admin") is None
+
+
 def test_unconfirmed_critical_tool_registers_pending_action(monkeypatch):
     history_manager._extraer_accion_pendiente_auth("admin", pop=True)
     monkeypatch.setattr(tool_manager, "_tool_permitida_por_contexto", lambda *_args: True)
@@ -82,10 +96,49 @@ def test_unconfirmed_critical_tool_registers_pending_action(monkeypatch):
         pending = history_manager._extraer_accion_pendiente_auth("admin")
 
         assert str(result).startswith("ACCESS_DENIED:")
+        assert "ejecutar_procedimiento" in str(result)
+        assert "rutina segura" in str(result)
         assert pending is not None
         assert pending["tool"] == "ejecutar_procedimiento"
         assert pending["args"] == {"nombre": "rutina segura"}
         assert pending["user_input"] == "ejecuta el procedimiento rutina segura"
+    finally:
+        history_manager._extraer_accion_pendiente_auth("admin", pop=True)
+
+
+def test_default_command_pipeline_resumes_a_pending_confirmation(monkeypatch):
+    history_manager._extraer_accion_pendiente_auth("admin", pop=True)
+    executed = {}
+
+    def fake_invocar(tool_name, args, user_input, source, profile_id):
+        executed.update(tool=tool_name, args=args, source=source, profile_id=profile_id)
+        return "acción ejecutada"
+
+    monkeypatch.setattr(tool_manager, "_invocar_tool_entry", fake_invocar)
+    monkeypatch.setattr(processor, "_record_pipeline_response", lambda *_args: None)
+    monkeypatch.setattr(
+        processor,
+        "_get_command_orchestrator",
+        lambda: (_ for _ in ()).throw(AssertionError("orchestrator must not run")),
+    )
+    history_manager._registrar_accion_pendiente_auth(
+        "admin",
+        "matar_proceso",
+        {"nombre_proceso": "notepad.exe"},
+        "mata notepad",
+    )
+
+    try:
+        reply, should_listen = processor.procesar_mensaje(
+            "si, hazlo",
+            profile_id="admin",
+            count_inbound=False,
+        )
+        assert reply == "acción ejecutada"
+        assert should_listen is False
+        assert executed["tool"] == "matar_proceso"
+        assert executed["source"] == "auth_resume"
+        assert history_manager._extraer_accion_pendiente_auth("admin") is None
     finally:
         history_manager._extraer_accion_pendiente_auth("admin", pop=True)
 

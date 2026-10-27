@@ -5,6 +5,21 @@
 
 import { MemoryGraphRenderer } from './memory-graph.js';
 
+export function coreTemperatureView(raw, locale = 'en-US') {
+    if (raw === undefined || raw === null || raw === '') {
+        return { available: false, label: '—', barWidth: 0 };
+    }
+    const temperature = Number(raw);
+    if (!Number.isFinite(temperature)) {
+        return { available: false, label: '—', barWidth: 0 };
+    }
+    const barWidth = Math.min(100, Math.max(0, ((temperature - 28) / 62) * 100));
+    const label = String(locale || '').startsWith('en')
+        ? `${((temperature * 9 / 5) + 32).toFixed(1)}°F`
+        : `${temperature.toFixed(1)}°C`;
+    return { available: true, label, barWidth };
+}
+
 export function classifyProactiveActionResult(httpResponse, payload = {}) {
     const httpOk = Boolean(httpResponse?.ok);
     const receipts = Array.isArray(payload?.receipts) ? payload.receipts : [];
@@ -59,6 +74,7 @@ export class HUDManager {
                 canvas: this.elements.memoryGraphCanvas,
                 countEl: this.elements.memoryNodeCount,
                 infoEl: this.elements.memoryGraphInfo,
+                listEl: this.elements.memoryGraphList,
                 refreshBtn: this.elements.refreshMemoryGraph,
             });
         }
@@ -214,13 +230,10 @@ export class HUDManager {
 
         const isEn = this.locale.startsWith('en');
 
-        if (data.temp !== undefined && data.temp !== null) {
-            let t = Number(data.temp);
-            if (Number.isFinite(t)) {
-                if (this.elements.tempBar) this.elements.tempBar.style.width = `${this.tempToBarWidth(t)}%`;
-                const label = isEn ? `${((t * 9/5) + 32).toFixed(1)}°F` : `${t.toFixed(1)}°C`;
-                if (this.elements.tempValue) this.elements.tempValue.textContent = label;
-            }
+        if (Object.prototype.hasOwnProperty.call(data, 'temp')) {
+            const temperature = coreTemperatureView(data.temp, this.locale);
+            if (this.elements.tempBar) this.elements.tempBar.style.width = `${temperature.barWidth}%`;
+            if (this.elements.tempValue) this.elements.tempValue.textContent = temperature.label;
         }
 
         if (data.ram !== undefined && data.ram !== null) {

@@ -247,4 +247,24 @@ class PendingSpotifySelections:
             )
 
 
+def resolve_requested_selection(
+    profile_id: str, user_input: str, choices: Iterable[SpotifyCandidate],
+) -> SpotifyCandidate | None:
+    """Recheck a request snapshot without consuming shared selection state."""
+    candidates = tuple(choices)[:3]
+    normalized = normalize_text(user_input)
+    selection_like = normalized in _ORDINALS or any(
+        normalized == cue or normalized.startswith(f"{cue} ") for cue in _SELECTION_CUES
+    )
+    named_title = any(normalized == normalize_text(candidate.title) for candidate in candidates)
+    if not (selection_like or named_title):
+        return None
+    isolated = PendingSpotifySelections()
+    isolated.remember(profile_id, candidates)
+    resolution = isolated.resolve(profile_id, user_input)
+    if resolution is not None and resolution.status is SpotifySelectionStatus.SELECTED:
+        return resolution.candidate
+    return None
+
+
 pending_spotify_selections = PendingSpotifySelections()

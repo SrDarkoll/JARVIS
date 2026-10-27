@@ -12,11 +12,15 @@ from dataclasses import dataclass
 
 from core.jarvis_config import resolve_live_voice_config
 from core.runtime_logger import log_warning
-from quart import Blueprint, jsonify, request
+from core.security.browser_profile import bind_browser_profile_id, get_browser_profile_id
+from quart import Blueprint, g, jsonify, request
 from voice.live_session import (
     DEFAULT_MAX_AUDIO_CHUNK_BYTES,
     DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
+    DEFAULT_MAX_LIVE_SESSIONS,
+    DEFAULT_MAX_LIVE_SESSIONS_PER_PROFILE,
     DEFAULT_MAX_USER_TEXT_CHARS,
+    LiveSessionCapacityError,
 )
 from voice.pipeline import normalizar_confianza_transcript as _norm_conf
 from voice.service import VoiceService
@@ -37,6 +41,18 @@ class LiveModeSelection:
     code: str = ""
 
 
+def resolve_live_session_context(
+    *,
+    requested_profile: str,
+    active_profile: str,
+    requested_language: str,
+) -> tuple[str, str]:
+    del requested_profile
+    profile_id = str(active_profile or "default").strip().lower()[:64] or "default"
+    language = "en" if str(requested_language or "").strip().lower().startswith("en") else "es"
+    return profile_id, language
+
+
 def _gemini_live_dependency_available() -> bool:
     return importlib.util.find_spec("websockets") is not None
 
@@ -47,6 +63,7 @@ def select_live_mode(
     gemini_configured: bool,
     gemini_dependency_available: bool,
     hybrid_available: bool,
+    gemini_model_error: str = "",
 ) -> LiveModeSelection:
     mode = str(requested_mode or "auto").strip().lower()
     if mode == "hybrid_stream":
@@ -59,10 +76,10 @@ def select_live_mode(
             "hybrid" if hybrid_available else "unavailable",
             "" if hybrid_available else "live_voice_unavailable",
         )
-    if gemini_configured and gemini_dependency_available:
+    if gemini_configured and gemini_dependency_available and not gemini_model_error:
         return LiveModeSelection("gemini_live")
 
-    gemini_code = (
+    gemini_code = gemini_model_error or (
         "gemini_live_unconfigured"
         if not gemini_configured
         else "gemini_live_dependency_missing"
@@ -105,12 +122,15 @@ def build_live_voice_status(
     active = str(active_mode or "").strip().lower()
     handshake = str(handshake_state or "idle").strip().lower()
     failure_code = str(last_failure_code or "").strip().lower()
-    gemini_startable = configured and dependency
+    gemini_startable = configured and dependency and not config.model_configuration_error
     runtime_ready = handshake == "ready" and bool(active)
 
     if active == "hybrid_stream":
         state = "degraded"
         code = failure_code or "live_fallback_active"
+    elif config.model_configuration_error:
+        state = "degraded" if hybrid_available else "unavailable"
+        code = config.model_configuration_error
     elif gemini_startable:
         state = "available"
         code = "gemini_live_ready" if runtime_ready else "gemini_live_configured"
@@ -143,8 +163,24 @@ def build_live_voice_status(
         "last_failure_code": failure_code,
         "model": config.model,
         "voice_name": config.voice_name,
-        "provider_preview": True,
-        "session_resumption_enabled": False,
+        "provider_preview": config.provider_preview,
+        "model_configuration_error": config.model_configuration_error,
+        "session_resumption_enabled": config.session_resumption_enabled,
+        "input_transcription_enabled": config.input_transcription_enabled,
+        "output_transcription_enabled": config.output_transcription_enabled,
+        "input_chunk_ms": config.input_chunk_ms,
+        "response_timeout_seconds": config.response_timeout_seconds,
+        "max_playback_queue_ms": config.max_playback_queue_ms,
+        "max_consecutive_audio_drops": config.max_consecutive_audio_drops,
+        "context_compression": {
+            "enabled": config.context_compression_enabled,
+            "trigger_tokens": config.context_compression_trigger_tokens,
+            "target_tokens": config.context_compression_target_tokens,
+        },
+        "session_limits": {
+            "global": DEFAULT_MAX_LIVE_SESSIONS,
+            "per_profile": DEFAULT_MAX_LIVE_SESSIONS_PER_PROFILE,
+        },
     }
 
 
@@ -180,10 +216,14 @@ async def _read_audio_payload(min_bytes: int = 1):
     return audio_bytes, None
 
 
-def _service_response(result):
+def _service_response(result, *, bind_profile: bool = False):
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], dict):
+        if bind_profile and 200 <= int(result[1]) < 300 and result[0].get("profile_id") and not result[0].get("error"):
+            bind_browser_profile_id(result[0]["profile_id"])
         return jsonify(result[0]), int(result[1])
     if isinstance(result, dict):
+        if bind_profile and result.get("profile_id") and not result.get("error"):
+            bind_browser_profile_id(result["profile_id"])
         return jsonify(result)
     return result
 
@@ -354,7 +394,7 @@ async def start_guest_registration():
 @voice_bp.route("/api/voice/registration/admin/init", methods=["POST"])
 @voice_bp.route("/api/voice/registro/admin/iniciar", methods=["POST"])
 def start_admin_registration():
-    client_profile_id = (request.headers.get("X-Profile-Id", "") or "").strip().lower()
+    client_profile_id = get_browser_profile_id()
     ip = request.remote_addr or "unknown"
     return _service_response(voice_service.start_admin_enrollment(ip, client_profile_id))
 
@@ -363,7 +403,7 @@ def start_admin_registration():
 @voice_bp.route("/api/voice/registro/admin/capturar", methods=["POST"])
 async def capture_admin_registration():
     ip = request.remote_addr or "unknown"
-    client_profile_id = (request.headers.get("X-Profile-Id", "") or "").strip().lower()
+    client_profile_id = get_browser_profile_id()
     audio_bytes, error_response = await _read_audio_payload(min_bytes=MIN_AUDIO_BYTES)
     if error_response:
         return error_response
@@ -384,7 +424,7 @@ async def capture_guest_registration():
     audio_bytes, error_response = await _read_audio_payload(min_bytes=MIN_AUDIO_BYTES)
     if error_response:
         return error_response
-    return _service_response(await asyncio.to_thread(voice_service.capture_guest_sample, ip, audio_bytes))
+    return _service_response(await asyncio.to_thread(voice_service.capture_guest_sample, ip, audio_bytes), bind_profile=True)
 
 
 @voice_bp.route("/api/voice", methods=["POST"])
@@ -395,11 +435,11 @@ async def process_voice():
     voice_request = {
         "transcript_hint": urllib.parse.unquote(request.headers.get("X-Transcript", "")).strip(),
         "transcript_confidence": _norm_conf(request.headers.get("X-Transcript-Confidence", "")),
-        "client_profile_id": (request.headers.get("X-Profile-Id", "") or "").strip(),
+        "client_profile_id": get_browser_profile_id(),
         "ip": request.remote_addr or "unknown",
         "content_type": (request.headers.get("Content-Type", "") or "").strip(),
     }
-    return _service_response(await asyncio.to_thread(voice_service.process_voice, audio_bytes, voice_request))
+    return _service_response(await asyncio.to_thread(voice_service.process_voice, audio_bytes, voice_request), bind_profile=True)
 
 
 @voice_bp.route("/api/voice/live/status", methods=["GET"])
@@ -419,8 +459,13 @@ async def live_voice_stream():
     from voice.live_transport import LiveTransportError
 
     session_id = str(uuid.uuid4())
-    language = websocket.args.get("lang", "es")
-    profile_id = websocket.args.get("profile_id", "default")
+    device = getattr(g, "jarvis_device_session", None)
+    active_profile = device.profile_id if device else get_browser_profile_id()
+    profile_id, language = resolve_live_session_context(
+        requested_profile=device.profile_id if device else websocket.args.get("profile_id", "default"),
+        active_profile=active_profile,
+        requested_language=websocket.args.get("lang", "es"),
+    )
     requested_mode = websocket.args.get("mode", "auto")
 
     async def _send_text(text: str) -> None:
@@ -429,14 +474,26 @@ async def live_voice_stream():
     async def _send_bytes(data: bytes) -> None:
         await websocket.send(data)
 
-    session = await live_session_manager.create_session(
-        session_id=session_id,
-        send_text=_send_text,
-        send_bytes=_send_bytes,
-        profile_id=profile_id,
-        language=language,
-        mode=requested_mode,
-    )
+    try:
+        session = await live_session_manager.create_session(
+            session_id=session_id,
+            send_text=_send_text,
+            send_bytes=_send_bytes,
+            profile_id=profile_id,
+            language=language,
+            mode=requested_mode,
+        )
+    except LiveSessionCapacityError as exc:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "error",
+                    "code": str(exc),
+                    "message": "Another live voice session is already active.",
+                }
+            )
+        )
+        return
 
     from core.llm_providers import resolve_gemini_api_key
     gemini_key = resolve_gemini_api_key()
@@ -450,9 +507,11 @@ async def live_voice_stream():
         gemini_configured=bool(gemini_key),
         gemini_dependency_available=_gemini_live_dependency_available(),
         hybrid_available=True,
+        gemini_model_error=live_config.model_configuration_error,
     )
 
     streamer_task: asyncio.Task | None = None
+    gemini_streamer: GeminiLiveStreamer | None = None
     hybrid_streamer: HybridLiveStreamer | None = None
 
     async def _activate_hybrid(reason_code: str = "") -> None:
@@ -479,7 +538,13 @@ async def live_voice_stream():
             )
 
     if selection.mode == "gemini_live":
-        gemini_streamer = GeminiLiveStreamer(session=session, api_key=gemini_key)
+        local_transcriber = getattr(_transcription_service, "local", None)
+        gemini_streamer = GeminiLiveStreamer(
+            session=session,
+            api_key=gemini_key,
+            config=live_config,
+            local_transcriber=local_transcriber,
+        )
         streamer_task = asyncio.create_task(gemini_streamer.start())
     elif selection.mode == "hybrid":
         await _activate_hybrid(selection.code)
@@ -587,9 +652,14 @@ async def live_voice_stream():
 
                 event_type = event.get("type", "")
                 if event_type == "interrupt":
-                    await session.interrupt()
+                    await session.interrupt(clear_input_audio=session.active_mode != "gemini_live")
                 elif event_type in ("user_text", "user_transcript"):
-                    text = str(event.get("text", "")).strip()
+                    raw_text = event.get("text", "")
+                    if not isinstance(raw_text, str):
+                        await session.emit_json({"type": "error", "code": "invalid_user_text",
+                                                 "message": "User text must be a string."})
+                        continue
+                    text = raw_text.strip()
                     if len(text) > session.max_user_text_chars:
                         await session.emit_json(
                             {
@@ -599,8 +669,17 @@ async def live_voice_stream():
                             }
                         )
                         continue
+                    if text and event_type == "user_text" and gemini_streamer and not hybrid_streamer:
+                        if not await gemini_streamer.send_user_text(text):
+                            await session.emit_json({
+                                "type": "error", "code": "live_text_not_delivered",
+                                "message": "Text delivery could not be confirmed. It was not automatically retried.",
+                            })
+                        continue
                     if text:
-                        print(f"\n[USUARIO] >> {text}\n", flush=True)
+                        if gemini_streamer and not live_config.input_transcription_enabled:
+                            gemini_streamer.accept_user_transcript(text)
+                        print(f"\n[VOICE] User transcript received ({len(text)} chars)\n", flush=True)
                         try:
                             from core import core_tools
                             from core.unified_log import write_conversation
@@ -643,8 +722,16 @@ async def live_voice_stream():
             }
         )
     finally:
-        if streamer_task and not streamer_task.done():
-            streamer_task.cancel()
-        if streamer_task:
-            await asyncio.gather(streamer_task, return_exceptions=True)
-        await live_session_manager.remove_session(session_id)
+        try:
+            session.begin_close()
+            if streamer_task and not streamer_task.done():
+                streamer_task.cancel()
+            if streamer_task:
+                await asyncio.gather(streamer_task, return_exceptions=True)
+        finally:
+            # A disconnect may cancel this route again during provider shutdown.
+            cleanup_task = asyncio.create_task(live_session_manager.remove_session(session_id))
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                await asyncio.shield(cleanup_task)

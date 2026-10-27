@@ -92,7 +92,18 @@ def validate_status_full_response(payload: Any) -> ContractResult:
     if not res.ok:
         return res
 
-    for key in ("status", "llm_ok", "llm_latency_ms", "cpu", "ram", "temp", "weather", "security", "proactive"):
+    for key in (
+        "status",
+        "llm_ok",
+        "llm_latency_ms",
+        "cpu",
+        "ram",
+        "temp",
+        "temp_source",
+        "weather",
+        "security",
+        "proactive",
+    ):
         if key not in payload:
             return ContractResult(False, f"Missing required field: {key}")
 
@@ -106,8 +117,10 @@ def validate_status_full_response(payload: Any) -> ContractResult:
         return ContractResult(False, "Field 'cpu' must be number")
     if not isinstance(payload.get("ram"), (int, float)):
         return ContractResult(False, "Field 'ram' must be number")
-    if not isinstance(payload.get("temp"), (int, float)):
-        return ContractResult(False, "Field 'temp' must be number")
+    if payload.get("temp") is not None and not isinstance(payload.get("temp"), (int, float)):
+        return ContractResult(False, "Field 'temp' must be number|null")
+    if not isinstance(payload.get("temp_source"), str):
+        return ContractResult(False, "Field 'temp_source' must be str")
 
     weather = payload.get("weather")
     security = payload.get("security")

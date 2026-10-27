@@ -14,8 +14,8 @@ from core.command_pipeline.reasoning import (
         ("ALWAYS", ReasoningMode.ALWAYS),
         ("hybrid", ReasoningMode.HYBRID),
         ("offline", ReasoningMode.OFFLINE),
-        ("", ReasoningMode.ALWAYS),
-        ("invalid", ReasoningMode.ALWAYS),
+        ("", ReasoningMode.HYBRID),
+        ("invalid", ReasoningMode.HYBRID),
     ],
 )
 def test_resolve_reasoning_mode_uses_supported_values(raw, expected) -> None:
@@ -24,8 +24,8 @@ def test_resolve_reasoning_mode_uses_supported_values(raw, expected) -> None:
     ) is expected
 
 
-def test_resolve_reasoning_mode_defaults_to_always() -> None:
-    assert resolve_reasoning_mode({}) is ReasoningMode.ALWAYS
+def test_resolve_reasoning_mode_defaults_to_hybrid() -> None:
+    assert resolve_reasoning_mode({}) is ReasoningMode.HYBRID
 
 
 def test_runtime_configuration_exposes_reasoning_mode() -> None:

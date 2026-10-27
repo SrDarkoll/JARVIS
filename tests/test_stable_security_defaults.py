@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.jarvis_config import resolve_runtime_features
-from core.security.tool_policy import get_tool_policy
+from core.security.tool_policy import (
+    DEFAULT_TOOL_POLICIES,
+    evaluate_tool_policy,
+    get_tool_policy,
+)
 from tools import _get_base_tools_impl, system
 
 
@@ -48,6 +52,35 @@ def test_dangerous_system_tools_require_explicit_opt_in(monkeypatch):
 
 def test_dangerous_system_tools_are_critical_and_require_confirmation():
     for tool_name in ("crear_archivo_texto", "ejecutar_comando_terminal"):
+        policy = get_tool_policy(tool_name)
+        assert policy.risk_level == "critical"
+        assert policy.allowed_profiles == ("admin",)
+        assert policy.requires_confirmation is True
+        assert policy.audit_log is True
+
+
+def test_every_registered_tool_has_an_explicit_policy(monkeypatch):
+    monkeypatch.setenv("JARVIS_SYSTEM_TOOLS_ENABLED", "true")
+
+    assert _tool_names() <= set(DEFAULT_TOOL_POLICIES)
+
+
+def test_unclassified_tool_is_denied_for_every_profile():
+    policy = get_tool_policy("unreviewed_plugin_tool")
+    decision = evaluate_tool_policy(
+        "unreviewed_plugin_tool",
+        profile_id="admin",
+        authorized=True,
+        confirmed=True,
+    )
+
+    assert policy.risk_level == "unclassified"
+    assert policy.audit_log is True
+    assert decision.allowed is False
+
+
+def test_browser_write_actions_are_critical_and_confirmed():
+    for tool_name in ("click_en_navegador", "escribir_en_navegador"):
         policy = get_tool_policy(tool_name)
         assert policy.risk_level == "critical"
         assert policy.allowed_profiles == ("admin",)

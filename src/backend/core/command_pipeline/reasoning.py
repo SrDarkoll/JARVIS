@@ -18,10 +18,10 @@ class ReasoningMode(StrEnum):
 def resolve_reasoning_mode(
     env: Mapping[str, str] | None = None,
 ) -> ReasoningMode:
-    """Return a supported mode, defaulting invalid values to reasoning-first."""
+    """Return a supported mode, defaulting invalid values to local-first hybrid."""
     source = os.environ if env is None else env
     raw = str(source.get("JARVIS_REASONING_MODE") or "").strip().lower()
     try:
-        return ReasoningMode(raw or ReasoningMode.ALWAYS.value)
+        return ReasoningMode(raw or ReasoningMode.HYBRID.value)
     except ValueError:
-        return ReasoningMode.ALWAYS
+        return ReasoningMode.HYBRID

@@ -92,6 +92,7 @@ def test_successful_receipt_is_synthesized_once_without_tools() -> None:
     assert len(model.calls) == 1
     assert len(model.calls[0]) == 2
     assert "buscar_en_internet" in model.calls[0][1].content
+    assert response.outcome == "verified"
 
 
 def test_synthesis_input_is_bounded() -> None:
@@ -123,7 +124,7 @@ def test_blocked_receipt_bypasses_synthesis() -> None:
     response = composer.compose(_request(), _plan(), (receipt,))
 
     assert response.text == "Necesito confirmacion explicita."
-    assert response.outcome == "failed"
+    assert response.outcome == "blocked"
     assert synthesizer.calls == []
 
 
@@ -156,6 +157,39 @@ def test_missing_execution_result_is_reported_as_failed() -> None:
 
     assert response.text == "No pude completar la accion solicitada."
     assert response.outcome == "failed"
+
+
+def test_direct_answer_reports_response_without_claiming_execution() -> None:
+    composer = ResponseComposer()
+    plan = ActionPlan(
+        request_id="synthesis-1",
+        source=PlanSource.DETERMINISTIC,
+        direct_response="Son las diez.",
+    )
+
+    response = composer.compose(_request(), plan, ())
+
+    assert response.outcome == "responded"
+    assert response.to_dict()["verified"] is False
+
+
+def test_unverified_tool_completion_reports_executed_not_verified() -> None:
+    composer = ResponseComposer()
+    unverified = ExecutionReceipt(
+        request_id="synthesis-1",
+        step_id="search-1",
+        tool_name="abrir_navegador",
+        status=ReceiptStatus.SUCCEEDED,
+        result="Open request sent.",
+        user_message="Open request sent.",
+        verified=False,
+        diagnostic_code="",
+    )
+
+    response = composer.compose(_request(), _plan(), (unverified,))
+
+    assert response.outcome == "executed"
+    assert response.to_dict()["verified"] is False
 
 
 def test_empty_or_oversized_model_output_returns_fallback() -> None:

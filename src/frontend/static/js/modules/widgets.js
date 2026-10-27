@@ -117,6 +117,10 @@ export class WidgetManager {
 
         wrapper.append(image, info);
         content.appendChild(wrapper);
+
+        try {
+            window.dispatchEvent(new CustomEvent('jarvis:media-state', { detail: data }));
+        } catch (_) {}
     }
 
     renderWeatherWidget(content, data) {

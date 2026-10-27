@@ -81,11 +81,12 @@ def test_tool_manager_records_start_and_successful_end(
     assert result == "played:Monster"
     content = readable_log.read_text(encoding="utf-8")
     assert "[TOOL] START demo_player" in content
-    assert 'args={"song": "Monster"}' in content
+    assert 'args={"song": "Monster"}' not in content
     assert "[TOOL] END demo_player" in content
     assert "status=ok" in content
     assert "elapsed_ms=" in content
-    assert "result=played:Monster" in content
+    assert "result=tool_result_available" in content
+    assert "result=played:Monster" not in content
 
 
 def test_tool_manager_records_context_block_as_an_end_state(

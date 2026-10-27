@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -45,9 +46,33 @@ def _message_line(message: object) -> str:
 
 
 def _language_directive(language: str) -> str:
-    if str(language or "").strip().lower().startswith("es"):
-        return "RESPONDE INEQUÍVOCAMENTE EN ESPAÑOL."
-    return "RESPOND UNMISTAKABLY IN ENGLISH."
+    default = (
+        "RESPOND UNMISTAKABLY IN ENGLISH."
+        if str(language or "").strip().lower().startswith("en")
+        else "RESPONDE INEQUÍVOCAMENTE EN ESPAÑOL."
+    )
+    return (
+        f"Idioma conversacional persistente / persistent conversation language: {default} "
+        "Mantén este idioma hasta que el usuario pida explícitamente responder en otro. "
+        "Los nombres, títulos musicales, citas, resultados y transcripciones accidentales en otro idioma "
+        "no son solicitudes de cambio de idioma. Never auto-switch based on detected speech language."
+    )
+
+
+def resolve_live_language(text: str, default: str = "es") -> str:
+    """Keep the preference unless a direct, affirmative language request changes it."""
+    fallback = "en" if str(default).strip().lower().startswith("en") else "es"
+    normalized = "".join(char for char in unicodedata.normalize("NFKD", str(text or "").lower())
+                         if not unicodedata.combining(char))
+    prefix = r"(?:jarvis[,\s]+)?(?:(?:por favor|please)[,\s]+)?"
+    request = re.match(
+        rf"^\s*{prefix}(?:(?:quiero que|puedes|podrias|can you|could you)\s+)?"
+        r"(?:me\s+)?(?:respond\w*|contest\w*|habl\w*|answer|speak|talk|reply)\s+"
+        r"(?:(?:me|to me)\s+)?(?:en|in)\s+(espanol|ingles|spanish|english)\b", normalized,
+    )
+    if not request:
+        return fallback
+    return "en" if request.group(1) in {"ingles", "english"} else "es"
 
 
 def build_live_context(
@@ -70,8 +95,8 @@ def build_live_context(
         }
     )
     header_lines = [
-        _safe_text(base_instruction),
         _language_directive(language),
+        _safe_text(base_instruction),
         f"Active profile: {_safe_text(profile_name)}",
         f"Relevant profile facts: {_safe_text(profile_facts)}",
         "Allowed tools: " + ", ".join(safe_tools),

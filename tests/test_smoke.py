@@ -50,6 +50,13 @@ class _SyncClient:
     def __init__(self, client):
         self._client = client
 
+    def set_profile(self, profile_id):
+        async def bind():
+            async with self._client.session_transaction() as browser_session:
+                browser_session["profile_id"] = profile_id
+
+        _run_async(bind())
+
     def _adapt_kwargs(self, kwargs):
         adapted = dict(kwargs)
         environ_base = adapted.pop("environ_base", None) or {}
@@ -196,7 +203,7 @@ def test_admin_voice_registration_requires_token_off_loopback(monkeypatch):
     )
     assert r.status_code == 401
     data = r.get_json() or {}
-    assert data.get("error") == "Token required for critical routes."
+    assert data.get("error") == "Invalid or missing token."
 
 
 def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
@@ -212,6 +219,23 @@ def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
     assert r.status_code == 403
     data = r.get_json() or {}
     assert data.get("error") == "Untrusted origin for critical route."
+
+
+@pytest.mark.parametrize("path", ["/api/memory/graph", "/media/private.png"])
+def test_sensitive_read_routes_reject_untrusted_origin(monkeypatch, path):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get(
+        path,
+        headers={"Origin": "https://evil.example"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code == 403
+    assert (response.get_json() or {}).get("error") == "Untrusted origin for critical route."
 
 
 def test_critical_route_allows_trusted_loopback_origin_without_token(monkeypatch):
@@ -284,7 +308,7 @@ def test_interactive_route_rejects_remote_client_without_origin_or_token(monkeyp
     )
 
     assert response.status_code == 401
-    assert (response.get_json() or {}).get("error") == "Token required for protected routes."
+    assert (response.get_json() or {}).get("error") == "Invalid or missing token."
 
 
 def test_interactive_route_requires_configured_token_from_trusted_origin(monkeypatch):
@@ -302,6 +326,49 @@ def test_interactive_route_requires_configured_token_from_trusted_origin(monkeyp
 
     assert response.status_code == 401
     assert (response.get_json() or {}).get("error") == "Invalid or missing token."
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("get", "/api/status/full", None),
+        ("get", "/api/noticias", None),
+        ("get", "/api/config/info", None),
+        ("post", "/api/frontend/log", {"message": "probe"}),
+    ],
+)
+def test_nonpublic_api_routes_are_protected_by_default(
+    monkeypatch,
+    method,
+    path,
+    payload,
+):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "configured-token")
+    c = _test_client(jarvis_backend.app)
+
+    request_method = getattr(c, method)
+    kwargs = {"json": payload} if payload is not None else {}
+    response = request_method(path, **kwargs)
+
+    assert response.status_code == 401
+    assert (response.get_json() or {}).get("error") == "Invalid or missing token."
+
+
+def test_health_route_remains_public_when_api_token_is_configured(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "configured-token")
+    response = _test_client(jarvis_backend.app).get("/api/health")
+
+    assert response.status_code == 200
+    payload = response.get_json() or {}
+    assert payload.get("status") == "online"
+    assert payload.get("service") == "jarvis"
+    assert payload.get("api_version") == 1
+    assert isinstance(payload.get("instance_id"), str)
+    assert len(payload["instance_id"]) >= 16
 
 
 def test_local_index_bootstrap_cookie_authenticates_protected_http_route(monkeypatch):
@@ -329,7 +396,7 @@ def test_local_index_bootstrap_cookie_authenticates_protected_http_route(monkeyp
     assert protected_response.status_code == 400
 
 
-def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
+def test_interactive_route_allows_valid_token_from_non_browser_client(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
 
     monkeypatch.setenv("JARVIS_API_TOKEN", "test-token")
@@ -339,7 +406,6 @@ def test_interactive_route_allows_valid_token_from_other_origin(monkeypatch):
         "/api/chat",
         json={},
         headers={
-            "Origin": "https://remote.example",
             "X-JARVIS-API-TOKEN": "test-token",
         },
         environ_base={"REMOTE_ADDR": "192.168.1.20"},
@@ -383,6 +449,25 @@ def test_status_endpoint_returns_telemetry():
     data = r.get_json()
     # Must have at least one telemetry field
     assert any(k in data for k in ["cpu", "ram", "weather", "uptime"])
+
+
+def test_status_endpoint_marks_missing_cpu_temperature_as_unavailable(monkeypatch):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from api import status_routes
+
+    monkeypatch.setattr(
+        status_routes,
+        "_read_cpu_temperature",
+        lambda: (None, "unavailable"),
+    )
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get("/api/status/full")
+    data = response.get_json() or {}
+
+    assert response.status_code == 200
+    assert data["temp"] is None
+    assert data["temp_source"] == "unavailable"
 
 
 def test_status_endpoint_reports_runtime_mode():
@@ -660,6 +745,7 @@ def test_session_owner_fallback_avoids_unknown_loop(monkeypatch):
     monkeypatch.setattr(voice_routes, "_biometria_activa", True)
 
     c = _test_client(jarvis_backend.app)
+    c.set_profile("admin")
     r = c.post(
         "/api/voice",
         data=b"RIFFFAKEAUDIO",
@@ -842,8 +928,11 @@ def test_normalizar_a_wav_accepts_ogg():
 # =============================================================================
 
 
-def test_chat_accepts_profile_id_payload():
+def test_chat_accepts_profile_id_payload(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
+    from core.brain import social_engine
+
+    monkeypatch.setattr(social_engine, "get_current_language", lambda: "es")
 
     c = _test_client(jarvis_backend.app)
     r = c.post("/api/chat", json={"message": "hola", "profile_id": "web_test_profile"})
@@ -871,7 +960,7 @@ def test_chat_returns_503_when_llm_is_unconfigured(monkeypatch):
     assert response.status_code == 503
     assert response.get_json() == {
         "error": "llm_unconfigured",
-        "message": ("Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses."),
+        "message": ("Configure Gemini or Groq in JARVIS to enable AI responses."),
     }
 
 
@@ -952,7 +1041,7 @@ def test_chat_stream_reports_unconfigured_llm(monkeypatch):
 
     assert response.status_code == 200
     assert '"code": "llm_unconfigured"' in body
-    assert ("Configure GEMINI_API_KEY or GROQ_API_KEY to enable AI responses.") in body
+    assert ("Configure Gemini or Groq in JARVIS to enable AI responses.") in body
 
 
 def test_chat_stream_hides_internal_exception_text(monkeypatch, capsys):
@@ -1079,6 +1168,9 @@ def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
     from core.brain import brain_state, processor
 
     class BrokenStreamingLLM:
+        def invoke(self, _messages):
+            raise RuntimeError("upstream-secret-response")
+
         def stream(self, _messages):
             raise RuntimeError("upstream-secret-response")
             yield  # pragma: no cover
@@ -1095,7 +1187,7 @@ def test_processor_stream_sanitizes_provider_failure(monkeypatch, capsys):
     )
     monkeypatch.setattr(brain_state, "llm", BrokenStreamingLLM())
 
-    events = list(processor.stream_procesar_mensaje_events("hello", "admin"))
+    events = list(processor.stream_procesar_mensaje_events("Explain stellar combustion in detail", "admin"))
     captured = capsys.readouterr()
 
     assert events[-1] == {
@@ -1159,10 +1251,12 @@ def test_chat_stream_endpoint_exists():
 # =============================================================================
 
 
-def test_guest_cannot_authorize_high_level_actions():
+def test_guest_cannot_authorize_high_level_actions(monkeypatch):
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
+    from core.brain import social_engine
     from utils.jarvis_auth import revocar_autorizacion  # pyright: ignore[reportMissingImports]
 
+    monkeypatch.setattr(social_engine, "get_current_language", lambda: "es")
     revocar_autorizacion()
     r1, _ = jarvis_brain.procesar_mensaje("apaga la computadora", profile_id="guest_demo")
     assert "acceso_denegado" in str(r1).lower() or "requiere autoriz" in str(r1).lower()
@@ -1217,20 +1311,26 @@ def test_plain_question_does_not_force_web_search():
     assert jarvis_brain._debe_buscar_en_web("como que invitados soy tu admin") is False
 
 
-def test_chat_greeting_without_tools():
+def test_chat_greeting_without_tools(monkeypatch):
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
+    from core.brain import social_engine
+
+    monkeypatch.setattr(social_engine, "get_current_language", lambda: "es")
 
     r, _ = jarvis_brain.procesar_mensaje("hola", profile_id="admin")
     assert r is not None
     assert len(str(r)) > 5
 
 
-def test_brain_handles_unknown_input():
+def test_brain_unknown_input_reports_missing_model(monkeypatch):
     from core import jarvis_brain  # pyright: ignore[reportMissingImports]
+    from core.brain import brain_state
+    from core.errors import LLMUnavailableError
 
-    # Should not crash even with gibberish
-    r, _ = jarvis_brain.procesar_mensaje("asdfghjkl", profile_id="admin")
-    assert r is not None
+    monkeypatch.setattr(brain_state, "llm", None)
+    monkeypatch.setattr(brain_state, "llm_with_tools", None)
+    with pytest.raises(LLMUnavailableError):
+        jarvis_brain.procesar_mensaje("asdfghjkl", profile_id="admin")
 
 
 # =============================================================================
@@ -1474,9 +1574,6 @@ def test_briefing_once_per_day_logic():
     hoy = datetime.now().strftime("%Y-%m-%d")
     ayer = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Same day = should skip
-    assert hoy == hoy
-
     # A previous day must not be treated as today's completed briefing.
     assert ayer != hoy
 
@@ -1493,6 +1590,7 @@ def test_low_similarity_does_not_trigger_session_continuity(monkeypatch):
 
     revocar_autorizacion()
     autorizar_por_biometria("admin", "Administrador")
+    monkeypatch.setattr(voice_routes._brain, "procesar_mensaje", lambda *_args, **_kwargs: ("Respuesta de prueba.", False))
 
     jarvis_backend._PENDING_VOICE_REGISTRATION.pop("127.0.0.1", None)
 
@@ -1608,6 +1706,7 @@ def test_owner_hint_avoids_guest_registration_when_authorized(monkeypatch):
     monkeypatch.setattr(voice_routes, "_norm_a_wav", lambda b: (b"wav-ok", True))
 
     c = _test_client(jarvis_backend.app)
+    c.set_profile("admin")
     r = c.post(
         "/api/voice",
         data=b"RIFFFAKEAUDIO",
@@ -2002,7 +2101,7 @@ def test_voice_http_route_delegates_processing_to_voice_service(monkeypatch):
     assert audio_bytes == b"RIFFFAKEAUDIO"
     assert request_data["transcript_hint"] == "Hello Jarvis"
     assert request_data["transcript_confidence"] == 0.91
-    assert request_data["client_profile_id"] == "guest_daniel"
+    assert request_data["client_profile_id"] == "web_default"
     assert request_data["ip"] == "127.0.0.9"
 
 

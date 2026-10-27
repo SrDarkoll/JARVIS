@@ -9,6 +9,7 @@ from core.app_config import get_default_location
 from core.brain import brain_utils as _brain_utils
 from core.brain.brain_utils import (
     _normalizar_ascii,
+    parse_mute_command,
     parse_reminder,
     parse_volume_command,
 )
@@ -180,6 +181,30 @@ def _lang_is_english() -> bool:
     return get_current_language().startswith("en")
 
 
+def _extract_document_request(text: str) -> str:
+    from pathlib import Path
+
+    from tools.desktop_document_resolver import DOCUMENT_SUFFIXES
+
+    match = re.match(
+        r"^\s*(?:jarvis[,\s]+)?(?:(?:por favor|please)[,\s]+)?"
+        r"(?:abre|abrir|muestra|open)\s+(?:(?:el|la|un|una|the|a)\s+)?(.+?)\s*[.!?]?$",
+        text, re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    target = match.group(1).strip()
+    kind = re.match(r"^(?:archivo|documento|presentaci[oó]n|file|document|presentation|pdf)\s+", target, re.IGNORECASE)
+    if kind:
+        target = target[kind.end():]
+        target = re.sub(r"^(?:que empieza (?:por|con)|cuyo nombre empieza (?:por|con)|starting with)\s+",
+                        "", target, flags=re.IGNORECASE)
+    target = re.sub(r"\s+(?:del escritorio|en el escritorio|on the desktop)$", "", target, flags=re.IGNORECASE).strip()
+    if kind or Path(target).suffix.lower() in DOCUMENT_SUFFIXES:
+        return target
+    return ""
+
+
 def _language_is_english(language: str | None = None) -> bool:
     if language is None:
         return _lang_is_english()
@@ -300,6 +325,8 @@ def _has_actionable_marker(t_ascii: str) -> bool:
         "reinicia",
         "hiberna",
         "bloquea",
+        "no molestar",
+        "do not disturb",
     ]
     return any(marker in t_ascii for marker in markers)
 
@@ -370,7 +397,11 @@ def _clean_music_query(value: str) -> str:
 
 def _extract_music_request(text: str) -> str:
     raw = reparar_unicode(str(text or "")).strip().lower()
+    raw = raw.lstrip("¿¡ ")
+    raw = re.sub(r"^(?:(?:hey|oye|hola)\s+)?jarvis[\s,:]+", "", raw)
     if not raw:
+        return ""
+    if re.match(r"^(?:no\b|don't\b|do not\b|never\b)", raw):
         return ""
 
     raw = re.sub(
@@ -381,26 +412,37 @@ def _extract_music_request(text: str) -> str:
     )
 
     play_patterns = [
-        r"^(?:pon|ponme|reproduce|play|toca|open|show)\s+(.+)$",
+        r"^(?:pon|ponme|reproduce|play|toca)\s+(.+)$",
         r"^(?:reproducir|reproduzcas)\s+(.+)$",
-        r"^(?:no,?\s+)?(?:es|es la de|es el tema|es la cancion|es un video de|es el video de|me refiero a|hablo de)\s+(.+)$",
-        r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar|escuchemos)?\s*(.+)$",
+        r"^(?:solo\s+quiero\s+que|solo\s+quiero|solo)\s+(?:reproduzcas|pongas|escuchar|escuchemos)\s+(.+)$",
         r"^(?:put\s+on|put)\s+(.+)$",
-        r"\b(?:puedes\s+(?:reproducir|poner|tocar)|"
+        r"^(?:puedes\s+(?:reproducir|poner|tocar)|"
         r"puedes\s+que\s+(?:reproduzcas|pongas)|"
-        r"can\s+(?:you\s+)?(?:play|reproduce|put(?:\s+on)?|open|show|start|launch))\s+(.+)$",
-        r"\b(?:i\s+(?:want|need)\s+(?:you\s+to\s+)?(?:play|reproduce|put(?:\s+on)?|open|show)|"
+        r"can\s+(?:you\s+)?(?:play|reproduce|put(?:\s+on)?))\s+(.+)$",
+        r"^(?:i\s+(?:want|need)\s+(?:you\s+to\s+)?(?:play|reproduce|put(?:\s+on)?)|"
         r"quiero\s+(?:que\s+)?(?:pongas|reproduzcas|escuchar)|"
         r"necesito\s+(?:que\s+)?(?:pongas|reproduzcas))\s+(.+)$",
-        r"\b(?:(?:can|could)\s+you|you\s+can)?\s*"
+        r"^(?:(?:can|could)\s+you|you\s+can)?\s*"
         r"(?:sing|play|reproduce)\s+(?:to\s+)?me\s+(.+)$",
-        r"\b(?:canta|cantame|c.ntame)\s+(.+)$",
+        r"^(?:canta|cantame|c.ntame)\s+(.+)$",
     ]
     for pattern in play_patterns:
         match = re.search(pattern, raw, flags=re.IGNORECASE)
         if not match:
             continue
         query = _clean_music_query(match.group(1))
+        non_music = _normalizar_ascii(query)
+        explicit_song = re.match(
+            r"^(?:(?:la|una|the|a)\s+)?(?:canci[oó]n|song|track|tema)\b",
+            match.group(1), flags=re.IGNORECASE,
+        )
+        if not explicit_song and re.match(
+            r"^(?:(?:un|una|el|la|los|las|the|a|an)\s+)?"
+            r"(?:ejemplos?|atencion|attention|error|bug|codigo|code|ajustes|settings|"
+            r"recordatorios?|alarma|reminder|chess|ajedrez|un juego|a game|en espanol|en ingles)\b",
+            non_music,
+        ):
+            continue
         if query:
             return query
     return ""
@@ -410,9 +452,10 @@ def _extract_spotify_mix_request(text: str) -> str:
     raw = reparar_unicode(str(text or "")).strip().lower()
     if not raw or not any(k in raw for k in ["mix", "playlist", "radio", "recomend"]):
         return ""
+    if re.match(r"^(?:no\b|don't\b|do not\b|never\b)", raw):
+        return ""
     patterns = [
-        r"\b(?:pon|ponme|reproduce|play|toca|crea|arma)\s+(?:un\s+|una\s+)?(?:mix|playlist|radio|recomendaciones?)\s+(?:similar(?:es)?\s+a|basad[oa]s?\s+en|de|para|like|of|for)?\s*(.+)$",
-        r"\b(?:mix|playlist|radio|recomendaciones?)\s+(?:similar(?:es)?\s+a|basad[oa]s?\s+en|de|para|like|of|for)\s+(.+)$",
+        r"^(?:(?:puedes|can you)\s+)?(?:pon|ponme|reproduce|play|toca|crea|arma)\s+(?:un\s+|una\s+)?(?:mix|playlist|radio|recomendaciones?)\s+(?:similar(?:es)?\s+a|basad[oa]s?\s+en|de|para|like|of|for)?\s*(.+)$",
     ]
     for pattern in patterns:
         match = re.search(pattern, raw, flags=re.IGNORECASE)
@@ -798,6 +841,17 @@ def plan_hybrid(
     if arithmetic_reply is not None:
         return _direct_plan(request, arithmetic_reply)
 
+    quiet_off = re.fullmatch(
+        r"(?:desactiva(?:r)?|inhabilita(?:r)?|disable|deactivate|turn off)\s+"
+        r"(?:(?:el|the)\s+)?(?:modo\s+(?:de\s+)?)?(?:no molestar|do not disturb)", text_ascii,
+    )
+    quiet_on = re.fullmatch(
+        r"(?:(?:activa(?:r)?|habilita(?:r)?|enable|activate|turn on)\s+)?"
+        r"(?:(?:el|the)\s+)?(?:modo\s+(?:de\s+)?)?(?:no molestar|do not disturb)", text_ascii,
+    )
+    if quiet_on or quiet_off:
+        return _tool_plan(request, "modo_no_molestar", {"activar": quiet_off is None})
+
     if text_ascii in {
         "quien eres",
         "quien eres tu",
@@ -886,6 +940,9 @@ def plan_hybrid(
             {"texto": reminder_text, "minutos": reminder_minutes},
         )
 
+    mute = parse_mute_command(user_input)
+    if mute is not None:
+        return _tool_plan(request, "ajustar_volumen", {"nivel": "mute" if mute else "unmute"})
     volume_mode, volume_value = parse_volume_command(user_input)
     if volume_mode and volume_value is not None:
         level: object = volume_value
@@ -1091,8 +1148,9 @@ def plan_hybrid(
         return _tool_plan(request, "frase_motivacional", {})
 
     memory_match = re.match(
-        r"^(?:recuerda que|guarda en memoria que|acuerdate que|remember that)\s+(.+)$",
-        text_ascii,
+        r"^(?:recuerda que|guarda en memoria que|acu[eé]rdate(?: de)? que|remember that)\s+(.+)$",
+        request.text.strip(),
+        re.IGNORECASE,
     )
     if memory_match:
         fact = memory_match.group(1).strip()
@@ -1205,6 +1263,10 @@ def plan_hybrid(
                 {"accion": action},
             )
 
+    document_name = _extract_document_request(request.text)
+    if document_name:
+        return _tool_plan(request, "abrir_documento", {"nombre": document_name})
+
     navigation = re.match(
         r"^(?:abre|abrir|abras|abraz|ve a|navega a|inicia|ejecuta|lanza)"
         r"[\s,.:;-]+(.+)$",
@@ -1256,6 +1318,25 @@ def plan_hybrid(
                 "abrir_navegador",
                 {"destino": destination_raw},
             )
+
+    process_markers = [
+        "procesos mas pesados",
+        "procesos pesados",
+        "procesos que mas consumen",
+        "que procesos consumen mas",
+        "cuales son los procesos mas pesados",
+        "ver procesos",
+        "top procesos",
+        "heavy processes",
+        "top processes",
+        "heavy process",
+    ]
+    if any(marker in text_ascii for marker in process_markers):
+        return _tool_plan(
+            request,
+            "ver_procesos_pesados",
+            {},
+        )
 
     return None
 

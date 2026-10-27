@@ -1,4 +1,5 @@
 import os
+import queue
 import re
 import threading
 import time as _time
@@ -23,6 +24,7 @@ from core.command_pipeline.deterministic import DeterministicPlanner
 from core.command_pipeline.groq_planner import GroqPlanner
 from core.command_pipeline.models import (
     ActionPlan,
+    CommandOutcome,
     CommandRequest,
     CommandResponse,
     PlanSource,
@@ -152,7 +154,7 @@ def _finalize_reply(reply: str, messages: list, user_input: str, pid: str, path:
 
     obs_event("reply_sent", path=path, should_listen=bool(should_listen), reply=reply[:220])
     write_conversation("JARVIS", reply, profile_id=pid, channel=path)
-    print(f"[JARVIS] {reply}")
+    print("[JARVIS] Response delivered")
 
     rag_motor.agregar_interaccion(user_msg=user_input, ai_msg=reply, profile_id=pid)
 
@@ -264,7 +266,7 @@ def _resolve_pending_auth_confirmation(
     tokens = set(normalized.split())
     is_cancellation = (
         normalized in cancellation
-        or bool(tokens & {"cancela", "cancelar", "abortar", "aborta", "detener", "rechazar"})
+        or bool(tokens & {"no", "nunca", "cancela", "cancelar", "abortar", "aborta", "detener", "rechazar"})
         or normalized == "no"
         or normalized.startswith(("no ", "cancela", "cancelar", "abortar", "no quiero", "no lo hagas"))
     )
@@ -391,11 +393,17 @@ def _preflight(
         ), False
 
     # 4. Volume + Specific error log
+    mute = brain_utils.parse_mute_command(user_input_norm)
+    if mute is not None:
+        reply = tool_manager._invocar_tool_entry(
+            "ajustar_volumen", {"nivel": "mute" if mute else "unmute"}, user_input_norm, "router", pid,
+        )
+        return str(reply), False
     m_vol, v_vol = brain_utils.parsear_comando_volumen(user_input_norm)
     if m_vol and v_vol is not None:
         try:
             res = _ajustar_volumen_relativo(v_vol) if m_vol == "relative" else _ajustar_volumen_absoluto(v_vol)
-            return str(res), False
+            return str(getattr(res, "user_message", res)), False
         except Exception as exc:
             obs_event("volume_adjustment_error", error=type(exc).__name__)
             return "Could not adjust the system volume.", False
@@ -487,10 +495,10 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
         + [HumanMessage(content=user_input)]
     )
 
-    if _llm_calls_disabled_for_tests():
-        return "Brain not initialized.", False
     if brain_state.llm is None:
         raise LLMUnavailableError
+    if _llm_calls_disabled_for_tests():
+        return "Brain not initialized.", False
 
     if not necesita_tools(user_input):
         response = _invoke_model(
@@ -653,13 +661,12 @@ def _stream_procesar_mensaje_events_legacy(user_input: str, profile_id: str = DE
                 + history_manager._get_history_for_profile(pid)[-10:]
                 + [HumanMessage(content=user_input)]
             )
+            if brain_state.llm is None:
+                raise LLMUnavailableError
             if _llm_calls_disabled_for_tests():
                 final = "Brain not initialized."
                 yield {"type": "done", "response": final, "should_listen": False}
                 return
-            if brain_state.llm is None:
-                raise LLMUnavailableError
-
             acc = []
             in_thinking = False
             for chunk in brain_state.llm.stream(messages):
@@ -733,6 +740,9 @@ class _RuntimeGroqPlanner:
         *,
         candidate_plan: ActionPlan | None = None,
     ) -> ActionPlan:
+        bound_model, plain_model, registry = brain_state.get_tooling_snapshot()
+        if bound_model is None and plain_model is None:
+            raise LLMUnavailableError
         if _llm_calls_disabled_for_tests():
             return ActionPlan(
                 request_id=request.request_id,
@@ -740,12 +750,17 @@ class _RuntimeGroqPlanner:
                 direct_response="Brain not initialized.",
             )
 
-        bound_model, plain_model, registry = brain_state.get_tooling_snapshot()
-        model = bound_model or plain_model
+        needs_tools = necesita_tools(request.text)
+        if not needs_tools and plain_model is not None:
+            model = plain_model
+            allowed_tools: tuple[str, ...] = ()
+        else:
+            model = bound_model or plain_model
+            allowed_tools = tuple(registry.by_name) if bound_model is not None else ()
+
         if model is None:
             raise LLMUnavailableError
 
-        allowed_tools = tuple(registry.by_name) if bound_model is not None else ()
         try:
             return GroqPlanner(model, allowed_tools=allowed_tools).plan(
                 request,
@@ -764,7 +779,7 @@ class _RuntimeGroqPlanner:
             raise LLMServiceError from None
         fallback_allowed_tools: tuple[str, ...] = ()
         try:
-            if registry.tools and hasattr(fallback_model, "bind_tools"):
+            if needs_tools and registry.tools and hasattr(fallback_model, "bind_tools"):
                 fallback_model = fallback_model.bind_tools(
                     list(registry.tools),
                     tool_choice="auto",
@@ -875,7 +890,7 @@ def _build_planner_messages(
             request.text,
             profile_id=request.profile_id,
         ),
-        *history[-10:],
+        *history[-4:],
         HumanMessage(content=request.text),
     ]
 
@@ -903,6 +918,7 @@ def _build_command_request(
     *,
     profile_id: str,
     channel: str,
+    request_id: str | None = None,
 ) -> CommandRequest:
     pid = jarvis_state.normalize_profile_id(
         profile_id,
@@ -913,6 +929,7 @@ def _build_command_request(
         profile_id=pid,
         channel=channel,
         language=get_current_language(),
+        request_id=request_id,
         metadata={
             "default_location": get_default_location(),
             "spotify_pending_choices": pending_spotify_selections.snapshot(pid),
@@ -940,7 +957,7 @@ def _record_pipeline_response(
         profile_id=request.profile_id,
         channel=request.channel,
     )
-    print(f"[JARVIS] {response.text}")
+    print(f"[JARVIS] Response delivered ({response.outcome.value})")
     obs_event(
         "reply_sent",
         path="command_pipeline",
@@ -985,6 +1002,10 @@ def process_command(
         profile_id=request.profile_id,
         channel=request.channel,
     )
+    pending_response = _resolve_pending_confirmation_for_request(request)
+    if pending_response is not None:
+        _record_pipeline_response(request, pending_response)
+        return pending_response
     with jarvis_state.active_profile(request.profile_id):
         response = _get_command_orchestrator().process(
             request,
@@ -994,11 +1015,38 @@ def process_command(
     return response
 
 
+def _resolve_pending_confirmation_for_request(request: CommandRequest) -> CommandResponse | None:
+    """Resume a pending critical action from the default command pipeline."""
+    pending = history_manager._extraer_accion_pendiente_auth(request.profile_id, pop=False)
+    if pending is None:
+        return None
+    reply, should_listen = _resolve_pending_auth_confirmation(
+        request.text,
+        request.profile_id,
+    )
+    if reply is None:
+        return None
+    normalized = str(reply or "").strip().casefold()
+    if normalized.startswith(("access_denied", "acceso_denegado")):
+        outcome = CommandOutcome.BLOCKED
+    elif normalized.startswith(("error", "no pude", "no fue posible")):
+        outcome = CommandOutcome.FAILED
+    else:
+        outcome = CommandOutcome.EXECUTED
+    return CommandResponse(
+        request_id=request.request_id,
+        text=str(reply),
+        should_listen=bool(should_listen),
+        outcome=outcome,
+    )
+
+
 def procesar_mensaje(
     user_input: str,
     profile_id: str = DEFAULT_PROFILE_ID,
     *,
     count_inbound: bool = True,
+    request_id: str | None = None,
 ) -> tuple[str, bool]:
     if _legacy_pipeline_enabled():
         return _procesar_mensaje_legacy(
@@ -1013,6 +1061,7 @@ def procesar_mensaje(
         user_input,
         profile_id=profile_id,
         channel="brain",
+        request_id=request_id,
     )
     response = process_command(request)
     return response.text, response.should_listen
@@ -1029,33 +1078,62 @@ def stream_procesar_mensaje_events(
         )
         return
 
+    event_queue: queue.Queue[object] = queue.Queue()
+    producer_finished = object()
+    consumer_closed = threading.Event()
+
+    def publish(event: dict) -> None:
+        if not consumer_closed.is_set():
+            event_queue.put(event)
+
+    def produce() -> None:
+        try:
+            obs_inc("messages_total", 1)
+            request = _build_command_request(
+                user_input,
+                profile_id=profile_id,
+                channel="stream",
+            )
+            process_command(request, emit=publish)
+        except LLMUnavailableError:
+            obs_event(
+                "llm_stream_unavailable",
+                error="LLMUnavailableError",
+            )
+            publish(
+                {
+                    "type": "error",
+                    "code": "llm_unconfigured",
+                    "message": LLM_UNCONFIGURED_MESSAGE,
+                }
+            )
+        except Exception as exc:
+            obs_event(
+                "llm_stream_failed",
+                error=type(exc).__name__,
+            )
+            publish(
+                {
+                    "type": "error",
+                    "code": "chat_unavailable",
+                    "message": CHAT_UNAVAILABLE_MESSAGE,
+                }
+            )
+        finally:
+            event_queue.put(producer_finished)
+
+    producer = threading.Thread(
+        target=produce,
+        name="CommandStreamProducer",
+        daemon=True,
+    )
+    producer.start()
     try:
-        obs_inc("messages_total", 1)
-        request = _build_command_request(
-            user_input,
-            profile_id=profile_id,
-            channel="stream",
-        )
-        events: list[dict] = []
-        process_command(request, emit=events.append)
-        yield from events
-    except LLMUnavailableError:
-        obs_event(
-            "llm_stream_unavailable",
-            error="LLMUnavailableError",
-        )
-        yield {
-            "type": "error",
-            "code": "llm_unconfigured",
-            "message": LLM_UNCONFIGURED_MESSAGE,
-        }
-    except Exception as exc:
-        obs_event(
-            "llm_stream_failed",
-            error=type(exc).__name__,
-        )
-        yield {
-            "type": "error",
-            "code": "chat_unavailable",
-            "message": CHAT_UNAVAILABLE_MESSAGE,
-        }
+        while True:
+            event = event_queue.get()
+            if event is producer_finished:
+                break
+            if isinstance(event, dict):
+                yield event
+    finally:
+        consumer_closed.set()

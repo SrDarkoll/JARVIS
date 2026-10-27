@@ -221,7 +221,9 @@ class MemoryRAG:
         if not self.lista or self.embeddings is None:
             return
         pid = (str(profile_id or "").strip().lower() or _OWNER_PID)[:64]
-        scope = "shared" if pid == _OWNER_PID else "private"
+        # Conversation text stays profile-private. Cross-profile knowledge is
+        # shared only through the explicit facts/vault paths, never through RAG.
+        scope = "private"
 
         texto = f"The User said: '{user_msg}'.\nJ.A.R.V.I.S. (AI) responded: '{ai_msg}'."
         doc = Document(
@@ -284,6 +286,10 @@ class MemoryRAG:
                 d_pid = str(md.get("profile_id") or "").strip().lower()
 
                 # Interconnected memory: each profile sees its private memory + shared memory.
+                # Legacy indexes may still contain owner conversations marked shared;
+                # conversation text is never cross-profile, even in old indexes.
+                if d_scope == "shared" and str(md.get("tipo") or "").strip().lower() == "conversacion":
+                    continue
                 if d_scope == "shared":
                     pass
                 elif d_pid != pid:

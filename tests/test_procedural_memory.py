@@ -231,9 +231,10 @@ def test_langchain_memory_tools():
     assert "No encontre recuerdos" in out_episode
 
 
-def test_procedural_tools_in_base_catalog():
+def test_procedural_tools_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_COGNITIVE_MEMORY_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 

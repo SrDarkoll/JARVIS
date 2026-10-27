@@ -2,7 +2,9 @@
 Security Routes: security policy, proactive alerts, quick control.
 """
 
+from core import jarvis_state
 from core.jarvis_observability import obs_snapshot
+from core.security.browser_profile import can_manage_browser_profiles, get_browser_profile_id
 from quart import Blueprint, jsonify, request
 
 security_bp = Blueprint("security", __name__)
@@ -108,9 +110,12 @@ async def clear_proactive_alerts():
 async def control_quick_action():
     data = (await request.get_json(silent=True)) or {}
     action = str(data.get("action", "")).strip()
-    print(f"\n[PANEL] Executing action: {action}")
-    result = _ejecutar_accion_control(action)
-    print(f"[PANEL] Result ({action}): {result}")
+    if action in {"reload_plugins", "security_strict_toggle", "proactive_toggle"} and not can_manage_browser_profiles():
+        return jsonify({"error": "profile_access_denied"}), 403
+    print("\n[PANEL] Executing quick action")
+    with jarvis_state.active_profile(get_browser_profile_id()):
+        result = _ejecutar_accion_control(action)
+    print("[PANEL] Quick action completed")
     return jsonify(
         {
             "action": action,

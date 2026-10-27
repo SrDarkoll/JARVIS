@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.11-3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](#system-requirements)
 
-**A local desktop AI assistant built around Gemini 3.1 Flash Live for natural full-duplex voice conversations, real-time tool calling, persistent memory, media control, and guarded desktop automation.**
+**A local desktop AI assistant built around Gemini 3.8 Live for natural full-duplex voice conversations, real-time tool calling, persistent memory, media control, and guarded desktop automation.**
 
 Talk naturally. Interrupt while it is speaking. Ask it to act on your PC without leaving the conversation.
 
@@ -53,9 +53,12 @@ J.A.R.V.I.S. can instead use **Gemini Live native bidirectional audio**, keeping
 
 - ⚡ **Native speech-to-speech streaming** — 16 kHz PCM microphone input and 24 kHz PCM audio output over a persistent WebSocket session.
 - 🛑 **Real-time barge-in** — Interrupt J.A.R.V.I.S. while it is answering and immediately take back the conversation.
-- 🛠️ **Function calling inside the voice session** — Gemini Live can invoke the same registered J.A.R.V.I.S. tools used by the command pipeline and receive their results without leaving the conversation.
+- 🛠️ **Guarded function calling inside the voice session** — Gemini Live can invoke a stable voice-tool allowlist; every call still crosses the same policy, confirmation, idempotency, and receipt boundary as text commands.
+- 📝 **Authoritative Live transcripts** — Provider input/output transcripts drive the visible conversation and bounded local reconnect context. They can be disabled to avoid Gemini's additional transcription token surcharge.
+- 🔄 **Privacy-first continuity** — Provider context uses a compressed 25k→8k sliding window. Native session resumption remains disabled; reconnects rebuild bounded context from local profile memory.
 - 👑 **`Charon` by default** — Gemini Live uses the calm `Charon` voice profile by default, with other supported voices configurable in `.env`.
 - 🧠 **Persistent memory** — Conversation context and useful facts can survive between sessions.
+- 📱 **Private mobile PWA** — Pair a phone with a one-use QR over Tailscale Serve, then chat, review synchronized history, and use Live voice without exposing JARVIS to the public Internet.
 - 👤 **Optional speaker identification** — SpeechBrain ECAPA biometrics can identify registered speakers when explicitly enabled.
 
 ### Voice Paths
@@ -160,10 +163,14 @@ The defaults in `.env.example` currently use:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `JARVIS_GEMINI_LIVE_MODEL` | Native real-time audio model | `gemini-3.1-flash-live-preview` |
+| `JARVIS_GEMINI_LIVE_MODEL` | Native real-time audio model | `gemini-3.8-live` |
 | `JARVIS_GEMINI_LIVE_VOICE` | Gemini Live voice | `Charon` |
-| `JARVIS_GEMINI_MODEL` | Standard Gemini text/reasoning model | `gemini-2.5-flash` |
-| `JARVIS_GEMINI_VISION_MODEL` | Gemini vision model | `gemini-2.5-flash` |
+| `JARVIS_LIVE_INPUT_TRANSCRIPTION_ENABLED` | Input transcript for UI/local reconnect context | `true` |
+| `JARVIS_LIVE_OUTPUT_TRANSCRIPTION_ENABLED` | Spoken-output transcript for UI/local reconnect context | `true` |
+| `JARVIS_LIVE_COMPRESSION_TRIGGER_TOKENS` | Provider context compression trigger | `25000` |
+| `JARVIS_LIVE_COMPRESSION_TARGET_TOKENS` | Tokens retained after provider compression | `8000` |
+| `JARVIS_GEMINI_MODEL` | Standard Gemini text/reasoning model | `gemini-3.5-flash-lite` |
+| `JARVIS_GEMINI_VISION_MODEL` | Gemini vision model | Inherits `JARVIS_GEMINI_MODEL` |
 | `JARVIS_GROQ_MODEL` | Alternate/fallback Groq model | `qwen/qwen3.6-27b` |
 | `JARVIS_STT_PROVIDER` | Speech-to-text provider selection | `auto` |
 | `JARVIS_GROQ_STT_MODEL` | Groq STT model | `whisper-large-v3-turbo` |
@@ -171,8 +178,24 @@ The defaults in `.env.example` currently use:
 | `JARVIS_WHISPER_MODEL` | Local Whisper model | `medium` |
 | `JARVIS_CORE_MODE` | Lightweight stable feature set | `true` |
 | `JARVIS_VOICE_ID_ENABLED` | Experimental speaker biometrics | disabled unless enabled |
+| `JARVIS_REASONING_MODE` | Local deterministic routes before provider planning | `hybrid` |
 
-The exact model IDs are configurable; you are not locked to these defaults.
+The exact model IDs are configurable; explicit selections are preserved, including
+legacy models. Live IDs must identify a conversational Gemini Live model; invalid
+configuration is reported through status and prevents a native connection. Future
+Live IDs are passed to the provider with conservative setup options; successful
+handshake is required before the session reports ready. Live tools explicitly use
+blocking execution so spoken actions wait for their controlled receipts.
+
+The default Gemini text/vision model is the cost-efficient 3.5 Flash-Lite. Set
+`JARVIS_GEMINI_MODEL=gemini-3.8-flash` for a higher-cost model, or override vision
+separately. Existing Groq-primary configurations keep their provider order.
+
+In Core Mode, experimental tool surfaces are excluded from the runtime catalog.
+Computer Use, proactive tools, cognitive/procedural memory, action plans, vision,
+and plugin reload each require their corresponding explicit feature flag. Full
+Mode enables these experimental groups by default, while every action still
+passes through the central security policy.
 
 ---
 
@@ -185,7 +208,9 @@ J.A.R.V.I.S. can touch real desktop applications, so tools are not treated as eq
 - **Privileged tools are opt-in** — Arbitrary terminal execution and text-file creation are excluded from the normal tool catalog unless `JARVIS_SYSTEM_TOOLS_ENABLED=true`.
 - **File writes are constrained** — Allowed write roots can be limited with `JARVIS_FILE_WRITE_ROOTS`.
 - **Optional API token** — When configured, `JARVIS_API_TOKEN` is required by protected HTTP/WebSocket routes. The loopback UI receives a derived HttpOnly cookie; explicit remote clients send the token and use configured CORS origins.
+- **Private remote access** — Mobile/PWA access stays on loopback and uses a user-managed private HTTPS proxy such as Tailscale Serve, never Funnel or port forwarding. Set `JARVIS_REMOTE_BASE_URL` and `JARVIS_API_TOKEN`; remote mode fails closed and paired devices use scoped tokens.
 - **Voice biometrics are off by default** — Speaker identification must be explicitly enabled.
+- **Server-selected browser profiles** — A signed HttpOnly session keeps chat, Live voice, memory graphs, and reminder delivery in the same conversation namespace. Request profile fields do not switch identity; successful backend voice identification can. Browser history still starts in `web_default`. Session identity resets on backend restart. Profiles are not independent user accounts: application access remains protected by the local-origin/API-token policy, and a shared trusted OS/browser account has owner access.
 - **Public-IP geolocation is off by default** — It must be explicitly enabled if desired.
 - **Secrets stay in `.env`** — API keys, tokens, caches, voice profiles, memory databases, and logs should never be committed.
 
@@ -343,7 +368,7 @@ JARVIS/
 └── start_app.py                  # main launcher
 ```
 
-The Gemini Live implementation dynamically exposes the registered base tool schemas to the live model, executes requested functions through the same J.A.R.V.I.S. tool layer, and returns tool results to the active voice session.
+The Gemini Live implementation exposes only the stable voice-tool allowlist, executes requested functions through the same J.A.R.V.I.S. tool layer, and returns protocol-matched, truthful receipts to the active voice session. Input/output transcripts are enabled by default for continuity; context compression bounds long sessions, while native provider session resumption remains disabled for the privacy-first mode. See Google's [Live API session-management guidance](https://ai.google.dev/gemini-api/docs/live-api/session-management) and [Live API best practices](https://ai.google.dev/gemini-api/docs/live-api/best-practices).
 
 ---
 

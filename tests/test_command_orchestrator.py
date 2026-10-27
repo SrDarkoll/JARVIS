@@ -167,7 +167,23 @@ def test_deterministic_direct_response_skips_groq_and_tools() -> None:
     response = orchestrator.process(_request())
 
     assert response.text == "Son las 10:30."
-    assert response.outcome == "succeeded"
+    assert response.outcome == "responded"
+    assert executor.calls == []
+
+
+def test_social_reply_is_not_replanned_into_an_action_in_always_mode() -> None:
+    request = replace(_request(), text="Gracias.")
+    plan = ActionPlan(request_id=request.request_id, source=PlanSource.DETERMINISTIC,
+                      direct_response="De nada.", conversation_only=True)
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(plan), groq=FailingGroqPlanner(),
+        executor=executor, reasoning_mode=ReasoningMode.ALWAYS,
+    )
+
+    response = orchestrator.process(request)
+
+    assert response.text == "De nada."
     assert executor.calls == []
 
 
@@ -272,7 +288,7 @@ def test_blocked_receipt_marks_failure_and_requests_follow_up() -> None:
 
     response = orchestrator.process(_request())
 
-    assert response.outcome == "failed"
+    assert response.outcome == "blocked"
     assert response.should_listen is True
     assert response.text == "Necesito confirmacion explicita."
 
@@ -311,7 +327,7 @@ def test_duplicate_receipts_do_not_repeat_success_message() -> None:
     )
 
     assert response.text == "Listo."
-    assert response.outcome == "succeeded"
+    assert response.outcome == "verified"
 
 
 def test_event_and_direct_results_share_the_same_final_response() -> None:
@@ -350,6 +366,77 @@ def test_plan_for_another_request_is_rejected_before_execution() -> None:
     with pytest.raises(ValueError, match="plan_request_mismatch"):
         orchestrator.process(_request())
 
+    assert executor.calls == []
+
+
+def test_command_pipeline_does_not_print_conversation_to_stdout(capsys) -> None:
+    request = CommandRequest.create(
+        text="PRIVATE_USER_TEXT_123",
+        profile_id="admin",
+        channel="chat",
+        request_id="private-stdout-test",
+    )
+    plan = ActionPlan(
+        request_id=request.request_id,
+        source=PlanSource.DETERMINISTIC,
+        direct_response="PRIVATE_ASSISTANT_TEXT_123",
+    )
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(plan),
+        groq=FailingGroqPlanner(),
+        executor=RecordingExecutor(),
+    )
+
+    orchestrator.process(request)
+
+    output = capsys.readouterr().out
+    assert "PRIVATE_USER_TEXT_123" not in output
+    assert "PRIVATE_ASSISTANT_TEXT_123" not in output
+
+
+def test_failed_prerequisite_blocks_dependent_step_without_invoking_it() -> None:
+    request = _request()
+    plan = ActionPlan(
+        request_id=request.request_id,
+        source=PlanSource.DETERMINISTIC,
+        steps=(
+            ActionStep("open", "abrir_aplicacion"),
+            ActionStep("type", "computer_type", depends_on=("open",)),
+        ),
+    )
+    executor = RecordingExecutor(
+        "No pude abrir la aplicación.", status=ReceiptStatus.FAILED,
+    )
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(plan),
+        groq=FailingGroqPlanner(),
+        executor=executor,
+    )
+
+    response = orchestrator.process(request)
+
+    assert executor.calls == [(request.request_id, "open", "abrir_aplicacion")]
+    assert response.receipts[1].status is ReceiptStatus.BLOCKED
+    assert response.receipts[1].diagnostic_code == "dependency_not_satisfied"
+    assert response.outcome == "failed"
+
+
+def test_plan_rejects_forward_or_unknown_dependencies_before_execution() -> None:
+    request = _request()
+    executor = RecordingExecutor()
+    plan = ActionPlan(
+        request_id=request.request_id,
+        source=PlanSource.DETERMINISTIC,
+        steps=(ActionStep("first", "computer_type", depends_on=("later",)),),
+    )
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(plan),
+        groq=FailingGroqPlanner(),
+        executor=executor,
+    )
+
+    with pytest.raises(ValueError, match="invalid_step_dependency"):
+        orchestrator.process(request)
     assert executor.calls == []
 
 
@@ -430,6 +517,7 @@ def test_offline_mode_returns_controlled_reply_when_router_is_unresolved() -> No
 
     assert response.should_listen is True
     assert "sin conexion" in response.text.lower()
+    assert response.outcome == "unavailable"
 
 
 @pytest.mark.parametrize(

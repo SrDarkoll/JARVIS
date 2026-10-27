@@ -13,15 +13,17 @@ const NODE_COLORS = {
 };
 
 export class MemoryGraphRenderer {
-    constructor({ canvas, countEl, infoEl, refreshBtn }) {
+    constructor({ canvas, countEl, infoEl, listEl, refreshBtn }) {
         this.canvas = canvas;
         this.ctx = canvas?.getContext('2d');
         this.countEl = countEl;
         this.infoEl = infoEl;
+        this.listEl = listEl;
         this.refreshBtn = refreshBtn;
 
         this.nodes = [];
         this.links = [];
+        this.synapseSignals = [];
         this.hoveredNode = null;
         this.selectedNode = null;
         this.animFrameId = null;
@@ -97,6 +99,7 @@ export class MemoryGraphRenderer {
                     const count = data.count || 0;
                     this.countEl.textContent = `${count} ${count === 1 ? 'nodo cognitivo' : 'nodos cognitivos'}`;
                 }
+                this.pulseSynapses();
             }
         } catch (_err) {
             // Fails gracefully in offline or restricted environments
@@ -106,23 +109,15 @@ export class MemoryGraphRenderer {
     _buildGraph(rawNodes, rawLinks) {
         const cx = this.width / 2;
         const cy = this.height / 2;
+        this._renderAccessibleList(rawNodes);
 
         if (rawNodes.length === 0) {
-            // Placeholder demonstration nodes scaled to canvas bounds
-            const spanX = Math.min(45, cx * 0.45);
-            const spanY = Math.min(22, cy * 0.45);
-            this.nodes = [
-                { id: 'p1', title: 'JARVIS', type: 'concept', x: cx, y: cy, vx: 0, vy: 0, radius: 5.5, color: '#00d2ff', content: 'Asistente IA central' },
-                { id: 'p2', title: 'Usuario', type: 'concept', x: cx - spanX, y: cy - spanY, vx: 0, vy: 0, radius: 4.5, color: '#00ffaa', content: 'Administrador del sistema' },
-                { id: 'p3', title: 'Spotify', type: 'skill', x: cx + spanX, y: cy - spanY * 0.6, vx: 0, vy: 0, radius: 4.5, color: '#ffaa00', content: 'Control de reproducción musical' },
-                { id: 'p4', title: 'Rutinas', type: 'skill', x: cx - spanX * 0.5, y: cy + spanY, vx: 0, vy: 0, radius: 4, color: '#b388ff', content: 'Automatizaciones aprendidas' },
-            ];
-            this.links = [
-                { sourceId: 'p1', targetId: 'p2', relation: 'administrado_por' },
-                { sourceId: 'p1', targetId: 'p3', relation: 'controla' },
-                { sourceId: 'p1', targetId: 'p4', relation: 'ejecuta' },
-            ];
-            this._startLoop();
+            this.nodes = [];
+            this.links = [];
+            this.synapseSignals = [];
+            this.stop();
+            if (this.ctx) this._render();
+            if (this.infoEl) this.infoEl.textContent = '0 nodos cognitivos';
             return;
         }
 
@@ -161,6 +156,19 @@ export class MemoryGraphRenderer {
         }
 
         this._startLoop();
+    }
+
+    _renderAccessibleList(rawNodes) {
+        if (!this.listEl) return;
+        this.listEl.replaceChildren();
+        for (const node of rawNodes) {
+            const item = document.createElement('li');
+            const type = String(node?.type || 'concept');
+            const title = String(node?.title || '');
+            const content = String(node?.content || '');
+            item.textContent = `[${type}] ${title}${content ? ` — ${content}` : ''}`;
+            this.listEl.appendChild(item);
+        }
     }
 
     _startLoop() {
@@ -251,6 +259,32 @@ export class MemoryGraphRenderer {
             ctx.stroke();
         }
 
+        // Render traveling synaptic photons
+        for (let i = this.synapseSignals.length - 1; i >= 0; i--) {
+            const sig = this.synapseSignals[i];
+            const s = nodeMap.get(sig.sourceId);
+            const t = nodeMap.get(sig.targetId);
+            if (!s || !t) {
+                this.synapseSignals.splice(i, 1);
+                continue;
+            }
+            sig.progress += sig.speed;
+            if (sig.progress >= 1) {
+                this.synapseSignals.splice(i, 1);
+                continue;
+            }
+            const px = s.x + (t.x - s.x) * sig.progress;
+            const py = s.y + (t.y - s.y) * sig.progress;
+
+            ctx.beginPath();
+            ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#00f2ff';
+            ctx.shadowColor = '#00f2ff';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
         // Render nodes
         const now = Date.now() * 0.003;
         for (const node of this.nodes) {
@@ -283,6 +317,18 @@ export class MemoryGraphRenderer {
         }
     }
 
+    pulseSynapses() {
+        if (!this.links || this.links.length === 0) return;
+        for (const link of this.links) {
+            this.synapseSignals.push({
+                sourceId: link.sourceId,
+                targetId: link.targetId,
+                progress: 0,
+                speed: 0.02 + Math.random() * 0.025,
+            });
+        }
+    }
+
     _onMouseMove(e) {
         const rect = this.canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -301,7 +347,9 @@ export class MemoryGraphRenderer {
         if (found) {
             this.canvas.style.cursor = 'pointer';
             if (this.infoEl) {
-                this.infoEl.innerHTML = `<span class="memory-tag" style="color: ${found.color}">[${found.type.toUpperCase()}]</span> <strong>${found.title}</strong>${found.content ? `<span class="memory-snippet"> - ${found.content}</span>` : ''}`;
+                const type = String(found.type || 'concept').toUpperCase();
+                const detail = found.content ? ` - ${found.content}` : '';
+                this.infoEl.textContent = `[${type}] ${found.title}${detail}`;
             }
         } else {
             this.canvas.style.cursor = 'default';
@@ -313,7 +361,7 @@ export class MemoryGraphRenderer {
         this.canvas.style.cursor = 'default';
         if (this.infoEl) {
             const count = this.nodes.length;
-            this.infoEl.innerHTML = `<span class="memory-count-label">${count} ${count === 1 ? 'nodo cognitivo' : 'nodos cognitivos'}</span>`;
+            this.infoEl.textContent = `${count} ${count === 1 ? 'nodo cognitivo' : 'nodos cognitivos'}`;
         }
     }
 

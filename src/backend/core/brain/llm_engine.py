@@ -17,7 +17,7 @@ from core.jarvis_config import (
     PLUGINS_ENABLED,
     VISION_ENABLED,
 )
-from core.llm_providers import provider_base_url, resolve_llm_provider_config
+from core.llm_providers import provider_base_url, resolve_gemini_vision_model, resolve_llm_provider_config
 from core.runtime_logger import log_warning
 from core.service_container import services
 from langchain_core.messages import AIMessage
@@ -93,9 +93,9 @@ def _tool_schema_from_langchain_tool(tool) -> dict:
 
     if args_schema is not None:
         if hasattr(args_schema, "model_json_schema"):
-            parameters = args_schema.model_json_schema()
+            parameters = dict(args_schema.model_json_schema())
         elif hasattr(args_schema, "schema"):
-            parameters = args_schema.schema()
+            parameters = dict(args_schema.schema())
 
     if not parameters:
         properties = {}
@@ -114,12 +114,28 @@ def _tool_schema_from_langchain_tool(tool) -> dict:
         parameters = {"type": "object", "properties": properties}
         if required:
             parameters["required"] = required
+    else:
+        parameters.pop("title", None)
+        parameters.pop("description", None)
+        raw_props = parameters.get("properties")
+        if isinstance(raw_props, dict):
+            clean_props = {}
+            for pk, pv in raw_props.items():
+                if isinstance(pv, dict):
+                    clean_props[pk] = {k: v for k, v in pv.items() if k != "title"}
+                else:
+                    clean_props[pk] = pv
+            parameters["properties"] = clean_props
+
+    first_line_desc = description.split("\n")[0].strip() if "\n" in description else description
+    if len(first_line_desc) > 200:
+        first_line_desc = first_line_desc[:200]
 
     return {
         "type": "function",
         "function": {
             "name": name,
-            "description": description,
+            "description": first_line_desc or description,
             "parameters": parameters,
         },
     }
@@ -349,7 +365,7 @@ def _build_llm_clients(provider_env: Mapping[str, str]):
     vision = None
     if VISION_ENABLED:
         vision_model = (
-            str(provider_env.get("JARVIS_GEMINI_VISION_MODEL") or "gemini-2.5-flash")
+            resolve_gemini_vision_model(provider_env)
             if provider_config.primary_provider == "gemini"
             else str(provider_env.get("JARVIS_GROQ_VISION_MODEL") or GROQ_VISION_MODEL)
         )

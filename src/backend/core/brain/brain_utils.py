@@ -84,6 +84,12 @@ def _limpiar_contexto_memoria(texto: str) -> str:
 
 def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
     text = reparar_unicode(str(user_input or "")).strip()
+    text = re.sub(
+        r"^[¿¡\s]*(?:(?:jarvis|oye|hey|hola|por favor|please|can you|could you|would you|"
+        r"puedes|podr[ií]as)[\s,:;!¿¡]+)*",
+        "", text, flags=re.IGNORECASE,
+    )
+    ending = r"(?:[\s,;]+(?:por favor|please|gracias|thanks))*[\s,.!?]*"
     patterns = [
         r"\bremind me\s+(.+?)\s+in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?|min|h)\b",
         r"\bremind me\s+(.+?)\s+in\s+(\d+)(minutes?|mins?|hours?|hrs?|min|h)\b",
@@ -91,15 +97,10 @@ def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
         r"\b(?:pon(?:me)?\s+un\s+recordatorio(?:\s+para)?|recordatorio(?:\s+para)?)\s+(.+?)\s+en\s+(\d+)\s*(minutos?|mins?|min|horas?|hrs?|h)\b",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.fullmatch(pattern + ending, text, re.IGNORECASE)
         if not match:
             continue
-        reminder_text = re.sub(
-            r"\b(?:por favor|please|gracias|thanks)\b.*$",
-            "",
-            match.group(1),
-            flags=re.IGNORECASE,
-        ).strip(" \t\r\n,.;:!?")
+        reminder_text = match.group(1).strip(" \t\r\n,.;:!?")
         amount = int(match.group(2))
         unit = match.group(3).lower()
         minutes = amount * 60 if "hour" in unit or "hora" in unit or unit in {"h", "hr", "hrs"} else amount
@@ -109,6 +110,19 @@ def parse_reminder(user_input: str) -> tuple[str | None, int | None]:
 
 def parsear_recordatorio(user_input: str) -> tuple[str | None, int | None]:
     return parse_reminder(user_input)
+
+
+def parse_mute_command(user_input: str) -> bool | None:
+    """Recognize explicit system-audio mute without changing its volume level."""
+    text = _normalizar_ascii(user_input).strip().lower().strip(".?!")
+    audio_target = r"(?:\s+(?:el\s+|the\s+)?(?:audio|sonido|sound|volumen|volume|sistema|system)(?:\s+del sistema)?)?"
+    if re.fullmatch(r"(?:unmute|desmutear|desilenciar)" + audio_target, text) or re.fullmatch(
+        r"(?:desactiva(?:r)?|quita(?:r)?|disable|remove|turn off)\s+(?:el\s+|the\s+)?(?:silencio|mute)", text,
+    ):
+        return False
+    if re.fullmatch(r"(?:silencia(?:r)?|mute|silence|mutear)" + audio_target, text):
+        return True
+    return None
 
 
 def parse_volume_command(
@@ -134,8 +148,11 @@ def parse_volume_command(
         return None, None
 
     normalized = re.sub(r"\s+", " ", text).strip()
-    if any(marker in normalized for marker in ("mute", "silence", "silencia", "silenciar")):
+    mute = parse_mute_command(normalized)
+    if mute is True:
         return "absolute", 0
+    if mute is False or re.search(r"\b(?:unmute|mute|silence|silencia|silenciar)\b", normalized):
+        return None, None
 
     number_match = re.search(
         r"(?<!\d)-?\d{1,3}(?:[.,]\d+)?\s*%?(?!\d)",

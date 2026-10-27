@@ -1,11 +1,13 @@
 """Pruebas unitarias para helpers de recomendaciones de Spotify."""
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from core import jarvis_config
+from core.command_pipeline.models import ReceiptStatus, ToolExecutionResult
 from modules.spotify import config as spotify_config
 from modules.spotify import service as spotify_service
 from modules.spotify import tools as spotify_tools
@@ -95,7 +97,6 @@ def test_spotify_access_token_uses_supported_cache_handler(monkeypatch):
 
         def get_access_token(self, **_kwargs):
             self.calls += 1
-            return None
 
     class FakeSpotify:
         def __init__(self):
@@ -261,7 +262,10 @@ def test_spotify_mix_tool_delegates_to_spotify_playback(monkeypatch):
 
     monkeypatch.setattr(spotify_service, "_play_spotify_seed", fake_play)
 
-    assert spotify_tools.reproducir_mix_spotify.invoke({"semilla": "latin pop"}) == "mix-ok"
+    result = spotify_tools.reproducir_mix_spotify.invoke({"semilla": "latin pop"})
+    assert isinstance(result, ToolExecutionResult)
+    assert result.user_message == "mix-ok"
+    assert result.status is ReceiptStatus.SUCCEEDED
     assert calls == ["latin pop"]
 
 
@@ -524,7 +528,14 @@ def test_spotify_playback_errors_do_not_expose_provider_details(monkeypatch, cap
     response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
     output = capsys.readouterr().out
 
-    assert secret_error not in response
+    assert isinstance(response, ToolExecutionResult)
+    assert response.status is ReceiptStatus.FAILED
+    assert response.accepted is False
+    assert response.verified is False
+    assert response.diagnostic_code == "spotify_api_control_failed"
+    assert secret_error not in response.user_message
+    assert secret_error not in json.dumps(response.result, ensure_ascii=False)
+    assert "oauth-token" not in json.dumps(response.result, ensure_ascii=False)
     assert secret_error not in output
     assert "RuntimeError" in output
 
@@ -605,7 +616,12 @@ def test_spotify_control_rejects_stop_and_para_aliases(monkeypatch):
 
     for accion in ("stop", "para"):
         response = spotify_tools.controlar_reproduccion.invoke({"accion": accion})
-        assert "not recognized" in response or "no reconocida" in response
+        assert isinstance(response, ToolExecutionResult)
+        assert response.status is ReceiptStatus.FAILED
+        assert response.accepted is False
+        assert response.verified is False
+        assert response.diagnostic_code == "spotify_api_control_failed"
+        assert "not recognized" in response.user_message or "no reconocida" in response.user_message
 
 
 def test_auto_mode_uses_desktop_without_cached_api_token(monkeypatch):
@@ -620,13 +636,22 @@ def test_auto_mode_uses_desktop_without_cached_api_token(monkeypatch):
             "desktop-ok",
             ok=True,
             provider="desktop",
+            status=DesktopResultStatus.SUCCESS,
+            verified=True,
+            diagnostic_code="spotify_playback_started",
         ),
     )
 
-    assert (
-        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
-        == "desktop-ok"
-    )
+    result = spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+    assert isinstance(result, ToolExecutionResult)
+    assert result.user_message == "desktop-ok"
+    assert result.status is ReceiptStatus.SUCCEEDED
+    assert result.accepted is False
+    assert result.verified is True
+    assert result.diagnostic_code == "spotify_playback_started"
+    assert result.result == {
+        "provider": "desktop", "status": "success", "requires_follow_up": False, "choices": [],
+    }
     assert calls == ["Killer Queen"]
 
 
@@ -648,10 +673,16 @@ def test_api_mode_keeps_explicit_spotipy_path(monkeypatch):
         ),
     )
 
-    assert (
-        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
-        == "api:Killer Queen"
-    )
+    result = spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+    assert isinstance(result, ToolExecutionResult)
+    assert result.user_message == "api:Killer Queen"
+    assert result.status is ReceiptStatus.ACCEPTED
+    assert result.accepted is True
+    assert result.verified is False
+    assert result.diagnostic_code == "spotify_api_playback_accepted"
+    assert result.result == {
+        "provider": "api", "status": "unverified", "requires_follow_up": False, "choices": [],
+    }
 
 
 def test_auto_mode_falls_back_and_temporarily_blocks_failed_api_capability(monkeypatch):
@@ -673,13 +704,22 @@ def test_auto_mode_falls_back_and_temporarily_blocks_failed_api_capability(monke
             "desktop-ok",
             ok=True,
             provider="desktop",
+            status=DesktopResultStatus.SUCCESS,
+            verified=True,
+            diagnostic_code="spotify_playback_started",
         ),
     )
 
-    assert (
-        spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
-        == "desktop-ok"
-    )
+    result = spotify_tools.reproducir_en_spotify.invoke({"cancion": "Killer Queen"})
+    assert isinstance(result, ToolExecutionResult)
+    assert result.user_message == "desktop-ok"
+    assert result.status is ReceiptStatus.SUCCEEDED
+    assert result.accepted is False
+    assert result.verified is True
+    assert result.diagnostic_code == "spotify_playback_started"
+    assert result.result == {
+        "provider": "desktop", "status": "success", "requires_follow_up": False, "choices": [],
+    }
     assert spotify_service._spotify_api_temporarily_blocked("play")
 
 
@@ -814,12 +854,20 @@ def test_desktop_mode_routes_playback_controls_to_uia(monkeypatch):
             )
 
     monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "desktop")
-    monkeypatch.setattr(spotify_service, "_get_desktop_controller", lambda: Controller())
+    monkeypatch.setattr(spotify_service, "_get_desktop_controller", Controller)
 
     response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
 
     assert calls == ["pause"]
-    assert "paused" in response.lower() or "pausada" in response.lower()
+    assert isinstance(response, ToolExecutionResult)
+    assert response.status is ReceiptStatus.SUCCEEDED
+    assert response.verified is True
+    assert response.accepted is False
+    assert response.diagnostic_code == "spotify_control_complete"
+    assert response.result == {
+        "provider": "desktop", "status": "success", "requires_follow_up": False, "choices": [],
+    }
+    assert "paused" in response.user_message.lower() or "pausada" in response.user_message.lower()
 
 
 def test_desktop_control_reports_unverified_state_change(monkeypatch):
@@ -831,8 +879,16 @@ def test_desktop_control_reports_unverified_state_change(monkeypatch):
             )
 
     monkeypatch.setattr(spotify_service, "SPOTIFY_PLAYBACK_MODE", "desktop")
-    monkeypatch.setattr(spotify_service, "_get_desktop_controller", lambda: Controller())
+    monkeypatch.setattr(spotify_service, "_get_desktop_controller", Controller)
 
     response = spotify_tools.controlar_reproduccion.invoke({"accion": "pausar"})
 
-    assert "verify" in response.lower() or "verificar" in response.lower()
+    assert isinstance(response, ToolExecutionResult)
+    assert response.status is ReceiptStatus.ACCEPTED
+    assert response.accepted is True
+    assert response.verified is False
+    assert response.diagnostic_code == "spotify_control_not_verified"
+    assert response.result == {
+        "provider": "desktop", "status": "unverified", "requires_follow_up": False, "choices": [],
+    }
+    assert "verify" in response.user_message.lower() or "verificar" in response.user_message.lower()

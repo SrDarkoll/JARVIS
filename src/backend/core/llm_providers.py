@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 _DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 
 
@@ -32,6 +32,8 @@ def _provider_model(
     default: str,
 ) -> str:
     configured = str(source.get(variable) or default).strip() or default
+    if provider == "gemini":
+        configured = configured.removeprefix("models/")
     normalized = configured.lower()
     if provider == "groq" and normalized.startswith("gemini-"):
         return default
@@ -40,6 +42,13 @@ def _provider_model(
     ):
         return default
     return configured
+
+
+def resolve_gemini_vision_model(env: Mapping[str, str] | None = None) -> str:
+    """Use the selected Gemini text model unless vision explicitly overrides it."""
+    source = os.environ if env is None else env
+    text_model = _provider_model(source, "JARVIS_GEMINI_MODEL", provider="gemini", default=_DEFAULT_GEMINI_MODEL)
+    return _provider_model(source, "JARVIS_GEMINI_VISION_MODEL", provider="gemini", default=text_model)
 
 
 def resolve_llm_provider_config(

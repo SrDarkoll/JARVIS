@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-import pytest
 
 from modules.memory.embeddings import LocalSemanticVectorizer
 from modules.memory.hybrid_search import HybridMemorySearchEngine
@@ -84,9 +83,10 @@ def test_hybrid_search_tool():
     assert "Streaming Audio" in out
 
 
-def test_hybrid_search_in_base_catalog():
+def test_hybrid_search_in_base_catalog(monkeypatch):
     from core import core_tools
 
+    monkeypatch.setenv("JARVIS_COGNITIVE_MEMORY_ENABLED", "true")
     tools = core_tools.get_base_tools()
     tool_names = {t.name for t in tools}
 

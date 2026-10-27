@@ -73,6 +73,9 @@ _API_CAPABILITY_MARKERS = (
     "redireccion",
     "session expired",
     "sesion de spotify vencio",
+    "spotify authorization",
+    "autorizacion de spotify",
+    "acceso a la api de spotify",
 )
 
 
@@ -154,23 +157,31 @@ def _inferir_query_track_artist_tail(raw: str) -> tuple[str, str, str] | None:
 def _mensaje_error_spotify(tipo: str, track_name: str, artist: str) -> str:
     msgs_es = {
         "premium": (
-            "La reproducción explícita requiere Spotify Premium. "
-            "Alternativas: usá una versión instrumental, otra canción, o actualizá tu cuenta."
+            "Spotify requiere Premium para esta acción de su API. "
+            "Puedes usar el modo de escritorio para controlar la aplicación de Spotify."
         ),
         "auth": (
-            "La sesión de Spotify venció. Necesitás re-autenticar JARVIS: "
-            "borren el archivo .cache-jarvis en src/backend/ y reinicien el backend."
+            "La autorización de Spotify venció o ya no es válida. "
+            "Vuelve a autorizar JARVIS con tu cuenta de Spotify."
+        ),
+        "forbidden": (
+            "El acceso a la API de Spotify está bloqueado. "
+            "Revisa los permisos y el acceso de tu cuenta a la aplicación."
         ),
         "quota": ("Spotify detectó demasiadas solicitudes desde JARVIS.  Esperá unos minutos y volvé a intentarlo."),
     }
     msgs_en = {
         "premium": (
-            "Explicit playback requires Spotify Premium. "
-            "Use an instrumental version, choose another song, or upgrade your account."
+            "Spotify requires Premium for this API action. "
+            "You can use desktop mode to control the Spotify app."
         ),
         "auth": (
-            "The Spotify session expired. Re-authenticate JARVIS: "
-            "delete .cache-jarvis in src/backend/ and restart the backend."
+            "The Spotify authorization expired or is no longer valid. "
+            "Authorize JARVIS again with your Spotify account."
+        ),
+        "forbidden": (
+            "Spotify API access is blocked. "
+            "Check the permissions and your account's access to the application."
         ),
         "quota": ("Spotify detected too many requests from JARVIS. Wait a few minutes and try again."),
     }
@@ -315,7 +326,7 @@ def _spotify_play_api_message(cancion: str) -> str:
             _spotify_log_error(f"active_device_playback_{err_type}", error)
             if err_type == "no_device":
                 pass  # sigue a estrategia B
-            elif err_type in ("premium", "auth", "quota"):
+            elif err_type in ("premium", "auth", "forbidden", "quota"):
                 return _mensaje_error_spotify(err_type, track_name, artist)
             else:
                 return _spotify_text(
@@ -337,7 +348,7 @@ def _spotify_play_api_message(cancion: str) -> str:
             return _post_playback_ok(track_name, artist, track_uri, track_id, track=track)
         err_type = _spotify_classify_error(err)
         print(f"  [SPOTIFY] Estrategia B failed ({err_type}).")
-        if err_type in ("premium", "auth", "quota"):
+        if err_type in ("premium", "auth", "forbidden", "quota"):
             return _mensaje_error_spotify(err_type, track_name, artist)
 
     # ── 5. Estrategia C: abrir cliente, esperar, reintentar ───────────────
@@ -356,7 +367,7 @@ def _spotify_play_api_message(cancion: str) -> str:
         except Exception as error:
             err_type = _spotify_classify_error(error)
             _spotify_log_error(f"reopened_device_playback_{err_type}", error)
-            if err_type in ("premium", "auth", "quota"):
+            if err_type in ("premium", "auth", "forbidden", "quota"):
                 return _mensaje_error_spotify(err_type, track_name, artist)
     elif availables:
         target = availables[0]
@@ -366,7 +377,7 @@ def _spotify_play_api_message(cancion: str) -> str:
             return _post_playback_ok(track_name, artist, track_uri, track_id, track=track)
         err_type = _spotify_classify_error(err)
         print(f"  [SPOTIFY] Estrategia C (B fallback) falló: {err_type}")
-        if err_type in ("premium", "auth", "quota"):
+        if err_type in ("premium", "auth", "forbidden", "quota"):
             return _mensaje_error_spotify(err_type, track_name, artist)
 
     # ── 6. Estrategia D: agregar a cola ────────────────────────────────
@@ -383,7 +394,7 @@ def _spotify_play_api_message(cancion: str) -> str:
     except Exception as error:
         err_type = _spotify_classify_error(error)
         _spotify_log_error(f"fallback_queue_{err_type}", error)
-        if err_type in ("premium", "auth", "quota"):
+        if err_type in ("premium", "auth", "forbidden", "quota"):
             return _mensaje_error_spotify(err_type, track_name, artist)
 
     # ── 7. Todo falló ──────────────────────────────────────────────────
@@ -446,6 +457,8 @@ def _spotify_control_api_message(accion: str) -> str:
                     return None
                 except Exception as e1:
                     errores.append(e1)
+                    if _spotify_classify_error(e1) in {"auth", "premium", "forbidden", "quota"}:
+                        return e1
             try:
                 without_device()
                 return None
@@ -462,7 +475,7 @@ def _spotify_control_api_message(accion: str) -> str:
                     f"No active Spotify device is available for {accion_humana}. Open Spotify, play any song once, and repeat the command.",
                     f"No hay dispositivo activo de Spotify para {accion_humana}. Abra Spotify, reproduzca cualquier canción una vez y repita el comando.",
                 )
-            if error_type in {"auth", "premium", "quota"}:
+            if error_type in {"auth", "premium", "forbidden", "quota"}:
                 return _mensaje_error_spotify(error_type, "playback", "Spotify")
             return _spotify_text(
                 f"I could not {accion_humana} right now.",
@@ -680,7 +693,7 @@ def _spotify_add_to_queue_api(cancion: str) -> SpotifyAPIPlaybackResult:
                     "Could not add song to queue right now.",
                     "No se pudo añadir la canción a la cola en este momento.",
                 ),
-                capability_failure=error_type in {"auth", "premium", "quota"},
+                capability_failure=error_type in {"auth", "premium", "forbidden", "quota"},
             )
 
         return SpotifyAPIPlaybackResult(
@@ -780,7 +793,7 @@ def _spotify_like_track_api(cancion: str = "") -> SpotifyAPIPlaybackResult:
                 "Could not like song on Spotify right now.",
                 "No se pudo guardar la canción en Me Gusta en este momento.",
             ),
-            capability_failure=error_type in {"auth", "quota"},
+            capability_failure=error_type in {"auth", "forbidden", "quota"},
         )
 
 
@@ -861,7 +874,7 @@ def _spotify_unlike_track_api(cancion: str = "") -> SpotifyAPIPlaybackResult:
                 "Could not remove song from Liked Songs right now.",
                 "No se pudo eliminar la canción de Me Gusta en este momento.",
             ),
-            capability_failure=error_type in {"auth", "quota"},
+            capability_failure=error_type in {"auth", "forbidden", "quota"},
         )
 
 
@@ -931,7 +944,7 @@ def _spotify_current_track_api() -> SpotifyAPIPlaybackResult:
                 "Could not inspect current Spotify track.",
                 "No se pudo consultar la canción actual de Spotify.",
             ),
-            capability_failure=error_type in {"auth", "quota"},
+            capability_failure=error_type in {"auth", "forbidden", "quota"},
         )
 
 

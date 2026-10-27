@@ -10,16 +10,34 @@ import {
     isValidPcm16Chunk,
 } from './live-pcm-capture.js';
 
+export function buildLiveVoiceSocketUrl(location, {
+    language = 'es',
+    profileId = 'default',
+    mode = 'auto',
+    websocketTicket = '',
+} = {}) {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const params = new URLSearchParams({
+        lang: String(language || 'es'),
+        mode: String(mode || 'auto'),
+    });
+    if (websocketTicket) params.set('ws_ticket', String(websocketTicket));
+    else params.set('profile_id', String(profileId || 'default'));
+    return `${protocol}//${location.host}/api/voice/stream?${params.toString()}`;
+}
+
 const LIVE_ERROR_CODES = new Set([
     'gemini_live_unconfigured',
     'gemini_live_dependency_missing',
     'gemini_live_connect_failed',
     'gemini_live_setup_timeout',
+    'gemini_live_turn_timeout',
     'gemini_live_setup_rejected',
     'gemini_live_reconnect_exhausted',
     'gemini_live_protocol_error',
     'live_audio_capture_unsupported',
     'live_audio_transport_degraded',
+    'live_text_not_delivered',
     'live_voice_unavailable',
 ]);
 
@@ -42,14 +60,18 @@ export function liveVoiceErrorView(error, translate) {
         code,
         key,
         message: typeof translate === 'function' ? translate(key) : key,
-        terminal: code !== 'live_audio_transport_degraded',
+        terminal: !['live_audio_transport_degraded', 'live_text_not_delivered'].includes(code),
     };
 }
 
+export function shouldCommitLiveTranscript(data) {
+    return data?.is_final === true;
+}
+
 export class AudioBufferQueuePlayer {
-    constructor(sampleRate = 24000, maxQueuedMs = 2000) {
+    constructor(sampleRate = 24000, maxQueuedMs = 15000) {
         this.sampleRate = sampleRate;
-        this.maxQueuedMs = Math.max(250, Number(maxQueuedMs) || 2000);
+        this.maxQueuedMs = Math.max(250, Math.min(30000, Number(maxQueuedMs) || 15000));
         this.audioCtx = null;
         this.nextPlayTime = 0;
         this.activeSources = [];
@@ -123,9 +145,8 @@ export class AudioBufferQueuePlayer {
 
         source.onended = () => {
             const index = this.activeSources.indexOf(source);
-            if (index !== -1) {
-                this.activeSources.splice(index, 1);
-            }
+            if (index === -1) return;
+            this.activeSources.splice(index, 1);
             if (this.activeSources.length === 0) {
                 if (this._stopCheckTimer) clearTimeout(this._stopCheckTimer);
                 this._stopCheckTimer = setTimeout(() => {
@@ -168,22 +189,41 @@ export class AudioBufferQueuePlayer {
 export class BargeInDetector {
     constructor(options = {}) {
         this.speechThreshold = options.speechThreshold ?? 0.025;
+        this.minSpeechMs = options.minSpeechMs == null ? null : Math.max(40, Number(options.minSpeechMs) || 120);
+        this.minVoicedRatio = Math.max(0.5, Math.min(1, Number(options.minVoicedRatio) || 0.75));
+        this.sampleRate = Math.max(8000, Number(options.sampleRate) || 48000);
         this.minConsecutiveFrames = options.minConsecutiveFrames ?? 3;
         this.consecutiveFrames = 0;
+        this.windowSamples = 0;
+        this.voicedSamples = 0;
         this.onBargeIn = null;
         this.isAssistantSpeaking = false;
+    }
+
+    setSampleRate(sampleRate) {
+        const value = Number(sampleRate);
+        if (Number.isFinite(value) && value >= 8000 && value <= 192000) {
+            this.sampleRate = value;
+        }
+        this._resetWindow();
+    }
+
+    _resetWindow() {
+        this.consecutiveFrames = 0;
+        this.windowSamples = 0;
+        this.voicedSamples = 0;
     }
 
     setAssistantSpeaking(speaking) {
         this.isAssistantSpeaking = Boolean(speaking);
         if (!speaking) {
-            this.consecutiveFrames = 0;
+            this._resetWindow();
         }
     }
 
     processAudioFrame(samples) {
         if (!this.isAssistantSpeaking || !samples || samples.length === 0) {
-            this.consecutiveFrames = 0;
+            this._resetWindow();
             return;
         }
 
@@ -192,6 +232,20 @@ export class BargeInDetector {
             sumSq += samples[i] * samples[i];
         }
         const rms = Math.sqrt(sumSq / samples.length);
+
+        if (this.minSpeechMs != null) {
+            this.windowSamples += samples.length;
+            if (rms >= this.speechThreshold) this.voicedSamples += samples.length;
+            if (this.windowSamples < this.sampleRate * (this.minSpeechMs / 1000)) return;
+
+            const voicedRatio = this.voicedSamples / this.windowSamples;
+            const durationMs = Math.round((this.windowSamples / this.sampleRate) * 1000);
+            this._resetWindow();
+            if (voicedRatio >= this.minVoicedRatio) {
+                this.onBargeIn?.({ source: 'local_barge_in', duration_ms: durationMs });
+            }
+            return;
+        }
 
         if (rms >= this.speechThreshold) {
             this.consecutiveFrames += 1;
@@ -210,12 +264,15 @@ export class LiveVoiceClient {
         this.language = options.language || 'es';
         this.profileId = options.profileId || 'default';
         this.mode = options.mode || 'auto';
+        this.websocketTicketProvider = typeof options.websocketTicketProvider === 'function'
+            ? options.websocketTicketProvider
+            : null;
         this.ws = null;
         this.player = options.player || new AudioBufferQueuePlayer(
             24000,
-            options.maxPlaybackQueueMs ?? 2000
+            options.maxPlaybackQueueMs ?? 15000
         );
-        this.bargeInDetector = new BargeInDetector();
+        this.bargeInDetector = new BargeInDetector({ minSpeechMs: 120 });
         this.capture = options.capture || new LivePcmCapture({
             windowRef: globalThis.window,
             targetRate: 16000,
@@ -228,6 +285,9 @@ export class LiveVoiceClient {
         this.isSocketOpen = false;
         this.isProviderReady = false;
         this.activeMode = '';
+        this.serverInputTranscriptionEnabled = false;
+        this.serverOutputTranscriptionEnabled = false;
+        this.browserTranscriptionRequired = true;
         this.isStreaming = false;
         this.connectTimeoutMs = Math.max(100, Number(options.connectTimeoutMs ?? 10000));
         this.readyTimeoutMs = Math.max(100, Number(options.readyTimeoutMs ?? 12000));
@@ -269,8 +329,8 @@ export class LiveVoiceClient {
             this.onStateChange?.(speaking ? 'speaking' : 'listening');
         };
 
-        this.bargeInDetector.onBargeIn = () => {
-            this.handleLocalBargeIn();
+        this.bargeInDetector.onBargeIn = evidence => {
+            this.handleLocalBargeIn(evidence);
         };
     }
 
@@ -278,11 +338,20 @@ export class LiveVoiceClient {
         if (this.isConnected && this.ws?.readyState === WebSocket.OPEN) return true;
         if (this._connectPromise) return this._connectPromise;
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host;
-        const url = `${protocol}//${host}/api/voice/stream?lang=${encodeURIComponent(this.language)}&profile_id=${encodeURIComponent(this.profileId)}&mode=${encodeURIComponent(this.mode)}`;
+        const connectionPromise = (async () => {
+            let websocketTicket = '';
+            if (this.websocketTicketProvider) {
+                websocketTicket = await this.websocketTicketProvider();
+                if (!websocketTicket) throw new Error('live_websocket_ticket_unavailable');
+            }
+            const url = buildLiveVoiceSocketUrl(window.location, {
+                language: this.language,
+                profileId: this.profileId,
+                mode: this.mode,
+                websocketTicket,
+            });
 
-        const connectionPromise = new Promise((resolve, reject) => {
+            return new Promise((resolve, reject) => {
             let settled = false;
             let timeoutId = null;
 
@@ -353,7 +422,8 @@ export class LiveVoiceClient {
             } catch (e) {
                 rejectConnection(e);
             }
-        });
+            });
+        })();
 
         this._connectPromise = connectionPromise;
         try {
@@ -419,6 +489,11 @@ export class LiveVoiceClient {
         }
     }
 
+    _publishState(state) {
+        const actualState = state === 'listening' && this.player.isPlaying ? 'speaking' : state;
+        this.onStateChange?.(actualState);
+    }
+
     handleWsMessage(event) {
         if (event.data instanceof ArrayBuffer) {
             this.player.enqueuePcmChunk(event.data);
@@ -433,16 +508,29 @@ export class LiveVoiceClient {
                     this.isProviderReady = true;
                     this.audioSendPaused = false;
                     this.activeMode = data.mode || '';
+                    this.serverInputTranscriptionEnabled = (
+                        data.input_transcription_enabled === true
+                    );
+                    this.serverOutputTranscriptionEnabled = (
+                        data.output_transcription_enabled === true
+                    );
+                    this.browserTranscriptionRequired = (
+                        typeof data.browser_transcription_required === 'boolean'
+                            ? data.browser_transcription_required
+                            : this.activeMode !== 'gemini_live'
+                                || !this.serverInputTranscriptionEnabled
+                    );
                     this._readyResolve?.(true);
                     this.onSessionReady?.(data);
                     break;
                 case 'provider_state':
                     this.audioSendPaused = Boolean(data.input_paused);
+                    if (this.audioSendPaused) this.player.interrupt();
                     if (data.active_mode) this.activeMode = data.active_mode;
-                    this.onStateChange?.(data.state);
+                    this._publishState(data.state);
                     break;
                 case 'state_change':
-                    this.onStateChange?.(data.state);
+                    this._publishState(data.state);
                     break;
                 case 'tool_executing':
                 case 'tool_call':
@@ -459,11 +547,16 @@ export class LiveVoiceClient {
                     break;
                 case 'session_reconnecting':
                     this.audioSendPaused = true;
+                    this.player.interrupt();
+                    this._publishState('reconnecting');
                     this.onReconnecting?.(data);
                     break;
                 case 'live_fallback_active':
                     this.activeMode = data.mode || 'hybrid_stream';
                     this.audioSendPaused = false;
+                    this.serverInputTranscriptionEnabled = false;
+                    this.browserTranscriptionRequired = true;
+                    if (this.isStreaming) this._startBrowserRecognition();
                     this.onSessionReady?.(data);
                     break;
                 case 'transcript':
@@ -473,8 +566,11 @@ export class LiveVoiceClient {
                     this.player.interrupt();
                     this.onInterrupted?.(data);
                     break;
+                case 'generation_complete':
+                    this._publishState('listening');
+                    break;
                 case 'turn_complete':
-                    this.onStateChange?.('listening');
+                    this._publishState('listening');
                     if (data.diagnostics) {
                         this.onDiagnostics?.(data.diagnostics);
                     }
@@ -491,16 +587,55 @@ export class LiveVoiceClient {
         }
     }
 
-    handleLocalBargeIn() {
+    handleLocalBargeIn(evidence = {}) {
         this.player.interrupt();
-        this._sendJson({ type: 'interrupt' }, { force: true });
-        this.onInterrupted?.({ source: 'local_barge_in' });
+        this._sendJson({ type: 'interrupt', source: 'local_barge_in' }, { force: true });
+        this.onInterrupted?.({ source: 'local_barge_in', ...evidence });
+    }
+
+    _startBrowserRecognition() {
+        if (this.rec || !this.isStreaming) return false;
+        if (
+            this.activeMode === 'gemini_live'
+            && this.serverInputTranscriptionEnabled
+        ) {
+            return false;
+        }
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRec) return false;
+        try {
+            this.rec = new SpeechRec();
+            this.rec.continuous = true;
+            this.rec.interimResults = false;
+            this.rec.lang = this.language === 'en' ? 'en-US' : 'es-MX';
+            this.rec.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        const userTranscript = event.results[i][0].transcript.trim();
+                        if (userTranscript) this.sendUserTranscript(userTranscript);
+                    }
+                }
+            };
+            this.rec.onerror = () => {};
+            this.rec.onend = () => {
+                if (this.isStreaming && this.rec) {
+                    try { this.rec.start(); } catch (error) {}
+                }
+            };
+            try { this.rec.start(); } catch (error) {}
+            return true;
+        } catch (error) {
+            this.rec = null;
+            console.debug('[LIVE_VOICE] Browser speech recognition init:', error);
+            return false;
+        }
     }
 
     async startStreaming() {
         if (this.isStreaming) return;
         try {
             await this.capture.prime();
+            this.bargeInDetector.setSampleRate(this.capture.audioContext?.sampleRate);
             if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
                 await this.connect();
             }
@@ -515,36 +650,9 @@ export class LiveVoiceClient {
             this.isStreaming = true;
             this.onStateChange?.('listening');
 
-            // Optional parallel browser speech recognition for local user transcription
-            const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (SpeechRec) {
-                try {
-                    this.rec = new SpeechRec();
-                    this.rec.continuous = true;
-                    this.rec.interimResults = false;
-                    this.rec.lang = this.language === 'en' ? 'en-US' : 'es-MX';
-                    this.rec.onresult = (event) => {
-                        for (let i = event.resultIndex; i < event.results.length; ++i) {
-                            if (event.results[i].isFinal) {
-                                const userTranscript = event.results[i][0].transcript.trim();
-                                if (userTranscript) {
-                                    this.sendUserTranscript(userTranscript);
-                                    this.onTranscript?.({ role: 'user', text: userTranscript, is_final: true });
-                                }
-                            }
-                        }
-                    };
-                    this.rec.onerror = () => {};
-                    this.rec.onend = () => {
-                        if (this.isStreaming && this.rec) {
-                            try { this.rec.start(); } catch (e) {}
-                        }
-                    };
-                    try { this.rec.start(); } catch (e) {}
-                } catch (e) {
-                    console.debug('[LIVE_VOICE] Browser speech recognition init:', e);
-                }
-            }
+            // Gemini transcripts are authoritative. Browser recognition is only
+            // retained for hybrid mode or when provider transcription is disabled.
+            this._startBrowserRecognition();
         } catch (error) {
             await this.disconnect();
             throw error;
@@ -556,7 +664,7 @@ export class LiveVoiceClient {
     }
 
     sendUserText(text) {
-        this._sendJson({ type: 'user_text', text });
+        return this._sendJson({ type: 'user_text', text });
     }
 
     async startScreenShare() {

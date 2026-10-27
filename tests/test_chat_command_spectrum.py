@@ -4,7 +4,8 @@ import asyncio
 import threading
 
 import pytest
-from api.chat_routes import ChatRoutesConfig, chat_bp, init_chat_routes
+from api import chat_routes
+from api.chat_routes import chat_bp
 from quart import Quart
 
 
@@ -38,16 +39,12 @@ class _SyncClient:
 
 
 @pytest.fixture
-def sync_client():
+def sync_client(monkeypatch):
     app = Quart(__name__)
     app.config["TESTING"] = True
-    init_chat_routes(
-        ChatRoutesConfig(
-            ip_last_call={},
-            ip_last_call_lock=threading.Lock(),
-            chat_limit_seconds=0.0,
-        )
-    )
+    monkeypatch.setattr(chat_routes, "_ip_last_call", {})
+    monkeypatch.setattr(chat_routes, "_ip_last_call_lock", threading.Lock())
+    monkeypatch.setattr(chat_routes, "chat_limit_seconds", 0.0)
     app.register_blueprint(chat_bp)
     return _SyncClient(app.test_client())
 

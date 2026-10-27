@@ -284,7 +284,7 @@ def _buscar_en_youtube(query: str) -> list:
                 if i.get("id", {}).get("videoId")
             ]
     except Exception as e:
-        print(f"  [YOUTUBE] Error: {e}")
+        print(f"  [YOUTUBE] Error: {type(e).__name__}")
     return []
 
 

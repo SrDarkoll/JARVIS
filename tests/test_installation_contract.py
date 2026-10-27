@@ -84,6 +84,44 @@ def test_core_requirements_declare_live_websocket_dependency():
     assert re.search(r"(?m)^websockets>=15,<17$", requirements)
 
 
+def test_core_requirements_declare_the_qr_pairing_dependency():
+    core = _requirement_names(ROOT / "requirements.txt")
+
+    assert "qrcode" in core
+
+
+def test_remote_access_configuration_is_documented():
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "JARVIS_REMOTE_BASE_URL" in env_example
+    assert "JARVIS_HOST" in env_example
+    assert "JARVIS_PORT" in env_example
+    assert "JARVIS_API_TOKEN" in env_example
+    assert "private remote access" in readme.lower()
+    assert "tailscale serve" in env_example.lower()
+    assert "funnel" in env_example.lower()
+
+
+def test_release_builder_requires_device_sync_and_mobile_files():
+    release_script = (ROOT / "scripts" / "build_windows_release.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "src/backend/api/device_sync_routes.py",
+        "src/backend/core/device_sync/sync_hub.py",
+        "src/backend/core/device_sync/auth.py",
+        "src/frontend/templates/mobile.html",
+        "src/frontend/static/js/mobile.js",
+        "src/frontend/static/js/modules/device-sync.js",
+        "src/frontend/static/js/modules/mobile-pairing.js",
+        "src/frontend/static/mobile-manifest.json",
+    ):
+        assert required in release_script
+        assert (ROOT / required).is_file()
+
+
 def test_setup_scripts_require_explicit_full_mode_for_optional_dependencies():
     powershell = (ROOT / "setup.ps1").read_text(encoding="utf-8")
     shell = (ROOT / "setup.sh").read_text(encoding="utf-8")

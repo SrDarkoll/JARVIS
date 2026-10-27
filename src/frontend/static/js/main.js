@@ -17,13 +17,17 @@ import { classifyVoiceApiFailure } from './modules/voice-api.js';
 import {
     LiveVoiceClient,
     liveVoiceErrorView,
+    shouldCommitLiveTranscript,
 } from './modules/live-voice.js';
 import {
     normalizeCommandText,
     commandStateView,
+    commandDoneText,
     microphoneRecoveryView,
     isSuccessfulCommandOutcome,
 } from './modules/command-center.js';
+import { reminderNotificationText } from './modules/reminders.js';
+import { initMobilePairing } from './modules/mobile-pairing.js';
 import {
     STORAGE_KEY as ONBOARDING_STORAGE_KEY,
     ONBOARDING_STAGES,
@@ -73,23 +77,36 @@ document.addEventListener('DOMContentLoaded', () => {
         onboardingContinue: document.getElementById('onboarding-continue'),
         onboardingLanguage: document.getElementById('onboarding-language'),
         onboardingApiKey: document.getElementById('onboarding-api-key'),
-        onboardingSaveLocal: document.getElementById('onboarding-save-local'),
         onboardingConfigure: document.getElementById('onboarding-configure'),
         onboardingBack: document.getElementById('onboarding-back'),
         onboardingCommandBack: document.getElementById('onboarding-command-back'),
         onboardingUseSuggestion: document.getElementById('onboarding-use-suggestion'),
+        onboardingCommandForm: document.getElementById('onboarding-command-form'),
+        onboardingCommandInput: document.getElementById('onboarding-command-input'),
+        onboardingCommandSubmit: document.getElementById('onboarding-command-submit'),
         onboardingError: document.getElementById('onboarding-error'),
         onboardingProviderStatus: document.getElementById('onboarding-provider-status'),
         onboardingCommandStatus: document.getElementById('onboarding-command-status'),
         onboardingFinish: document.getElementById('onboarding-finish'),
         completeSetupAction: document.getElementById('complete-setup-action'),
         replayOnboardingAction: document.getElementById('replay-onboarding-action'),
+        mobilePairDialog: document.getElementById('mobile-pair-dialog'),
+        mobilePairAction: document.getElementById('mobile-pair-action'),
+        mobilePairClose: document.getElementById('mobile-pair-close'),
+        mobilePairCloseBottom: document.getElementById('mobile-pair-close-bottom'),
+        mobilePairRefresh: document.getElementById('mobile-pair-refresh'),
+        mobilePairQr: document.getElementById('mobile-pair-qr'),
+        mobilePairQrWrap: document.getElementById('mobile-pair-qr-wrap'),
+        mobilePairPin: document.getElementById('mobile-pair-pin'),
+        mobilePairStatus: document.getElementById('mobile-pair-status'),
+        mobileDeviceList: document.getElementById('mobile-device-list'),
         onboardingProviders: document.querySelectorAll('input[name="onboarding-provider"]'),
         diagnosticsToggle: document.getElementById('diagnostics-toggle'),
         diagnosticsPanels: document.querySelectorAll('.side-panel'),
         memoryGraphCanvas: document.getElementById('memory-graph-canvas'),
         memoryNodeCount: document.getElementById('memory-node-count'),
         memoryGraphInfo: document.getElementById('memory-graph-info'),
+        memoryGraphList: document.getElementById('memory-graph-list'),
         refreshMemoryGraph: document.getElementById('refresh-memory-graph'),
         activateBtn: document.getElementById('activate-btn'),
         liveVoiceBtn: document.getElementById('live-voice-btn'),
@@ -128,6 +145,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const voice = new VoiceManager();
     const reactor = new ArcReactor('arc-canvas');
     const widgets = new WidgetManager(dom.widgetContainer);
+    ui.reactor = reactor;
+    initMobilePairing({
+        dialog: dom.mobilePairDialog,
+        openButton: dom.mobilePairAction,
+        closeButtons: [dom.mobilePairClose, dom.mobilePairCloseBottom],
+        refreshButton: dom.mobilePairRefresh,
+        qrImage: dom.mobilePairQr,
+        qrWrap: dom.mobilePairQrWrap,
+        pinValue: dom.mobilePairPin,
+        status: dom.mobilePairStatus,
+        deviceList: dom.mobileDeviceList,
+    });
 
     // --- CONSTANTES ---
     const WAKE_WORD = 'jarvis';
@@ -244,6 +273,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let ttsChainActive = false;
     let ttsChainToken = 0;
     let activeRestartPending = false;
+    let classicVoiceGeneration = 0;
+    let pendingRecordingStop = null;
 
     // --- ESTADO AVANZADO TTS ---
     let activeSpeakToken = 0;
@@ -252,6 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let wakeWordCooldownUntil = 0;
     let hudPollTimer = null;
     let voiceObsPollTimer = null;
+    let reminderPollTimer = null;
+    let reminderPollInFlight = false;
+    let reminderBootReady = false;
+    let reminderOnboardingReady = false;
     const VOICE_DEBUG = true;
 
     // --- REFERENCIA AL TRANSCRIPT TEXT ---
@@ -324,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function getRandomWakeResponse() {
         const name = lastIdentifiedName || t('label_admin');
-        const esOwner = (lastIdentifiedProfileId === null || lastIdentifiedProfileId === 'admin');
+        const esOwner = (lastIdentifiedProfileId === null || ['admin', 'web_default'].includes(lastIdentifiedProfileId));
 
         if (esOwner) {
             const responses = t('wake_admin');
@@ -348,6 +383,13 @@ document.addEventListener('DOMContentLoaded', () => {
         lastIdentifiedName = name || t('label_guest');
         lastVoiceObsSignature = '';
     }
+
+    API.fetchSessionProfile().then(data => {
+        if (data.profile_id && lastIdentifiedProfileId === null) {
+            const owner = ['admin', 'web_default'].includes(data.profile_id);
+            saveProfile(data.profile_id, owner ? t('label_admin') : t('label_guest'));
+        }
+    }).catch(() => { /* A later voice response can still establish the profile. */ });
 
     function logError(context, err, recoverFn) {
         const msg = err instanceof Error ? err.message : String(err || 'Unknown error');
@@ -381,14 +423,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => {
                     dom.loader.classList.add('hidden');
                     dom.app.classList.remove('hidden');
+                    renderOnboarding(onboardingStage, { focusHeading: true });
                     const greetings = t('boot_greetings');
-                    speak(
-                        greetings[Math.floor(Math.random() * greetings.length)],
-                        () => {
-                            loadNewsBackground();
-                            setCommandState('idle');
-                        }
-                    );
+                    const finishBoot = () => {
+                        loadNewsBackground();
+                        setCommandState('idle');
+                        reminderBootReady = true;
+                        startReminderPollingWhenReady();
+                    };
+                    API.fetchStatus().then(status => {
+                        if (status.notifications?.auto_announce === false) return finishBoot();
+                        speak(greetings[Math.floor(Math.random() * greetings.length)], finishBoot);
+                    }).catch(finishBoot);
                     ui.addLogEntry(t('boot_protocols'));
                     window.addEventListener('resize', () => reactor.resize(), { passive: true });
                     reactor.resize();
@@ -397,6 +443,25 @@ document.addEventListener('DOMContentLoaded', () => {
             if (dom.progressBar) dom.progressBar.style.width = progress + '%';
         }, 80);
     });
+
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('autostart')) {
+            setTimeout(() => {
+                dom.loader?.click();
+                if (urlParams.has('skip_onboarding')) {
+                    setTimeout(() => {
+                        dom.onboardingSkip?.click();
+                    }, 2100);
+                }
+                if (urlParams.has('diagnostics')) {
+                    setTimeout(() => {
+                        dom.diagnosticsToggle?.click();
+                    }, 2400);
+                }
+            }, 300);
+        }
+    } catch (_) {}
 
     // --- HUD Y RELOJ ---
     setInterval(() => hud.updateTime(), 1000);
@@ -409,6 +474,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error('status_full_fail');
             const data = await res.json();
             hud.updateHudFromPayload(data, { latencyMs: performance.now() - t0 });
+            if (deferredNewsPending && data.notifications?.auto_announce === true
+                && !isSpeaking && !liveVoiceClient?.isStreaming) {
+                loadNewsBackground();
+            }
         } catch (e) {
             if (dom.latencyValue) dom.latencyValue.textContent = '—';
             console.warn('[pollStatus]', e);
@@ -491,6 +560,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function pollDueReminders() {
+        if (reminderPollInFlight || isSpeaking) return;
+        reminderPollInFlight = true;
+        const profileId = lastIdentifiedProfileId || 'web_default';
+        try {
+            const data = await API.claimDueReminders(profileId);
+            const reminder = Array.isArray(data?.reminders) ? data.reminders[0] : null;
+            const message = reminderNotificationText(reminder, t);
+            if (!message) return;
+
+            ui.addConversationSegment('system', message);
+            setTranscript(message);
+            ui.addLogEntry(`> REMINDER: ${reminder.text}`);
+            await API.acknowledgeReminder(reminder.id, profileId);
+            void speak(message);
+        } catch (error) {
+            console.warn('[pollDueReminders]', error);
+        } finally {
+            reminderPollInFlight = false;
+        }
+    }
+
+    function startReminderPollingWhenReady() {
+        if (
+            !reminderBootReady
+            || !reminderOnboardingReady
+            || reminderPollTimer
+        ) return;
+        pollDueReminders();
+        reminderPollTimer = setInterval(pollDueReminders, 5000);
+    }
+
     pollStatus();
     hudPollTimer = setInterval(pollStatus, 5000);
     pollVoiceObservability();
@@ -510,7 +611,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function runAdminEnrollmentWizard() {
-        if (adminEnrollmentActive) return;
+        if (!isClassicVoiceCurrent() || adminEnrollmentActive) return;
         ui.addLogEntry(t('bio_start'));
         const prevMode = currentMode;
         adminEnrollmentActive = true;
@@ -689,11 +790,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function prefillFirstCommand({ focus = false } = {}) {
-        if (!dom.commandInput) return;
-        if (!normalizeCommandText(dom.commandInput.value)) {
-            dom.commandInput.value = t('onboarding_command_suggestion');
+        if (!dom.onboardingCommandInput) return;
+        if (!normalizeCommandText(dom.onboardingCommandInput.value)) {
+            dom.onboardingCommandInput.value = t('onboarding_command_suggestion');
         }
-        if (focus) dom.commandInput.focus();
+        if (focus) dom.onboardingCommandInput.focus();
     }
 
     function renderOnboarding(stage, { focusHeading = false } = {}) {
@@ -703,9 +804,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const visible = ![
             ONBOARDING_STAGES.HIDDEN,
             ONBOARDING_STAGES.DISMISSED,
-        ].includes(onboardingStage);
+        ].includes(onboardingStage) && !dom.app?.classList.contains('hidden');
 
-        dom.onboardingRail?.classList.toggle('hidden', !visible);
+        const wasOpen = Boolean(dom.onboardingRail?.open);
+        if (visible && dom.onboardingRail) {
+            dom.onboardingRail.classList.remove('hidden');
+            if (!wasOpen) {
+                try {
+                    dom.onboardingRail.showModal();
+                } catch {
+                    dom.onboardingRail.setAttribute('open', '');
+                }
+            }
+        } else if (dom.onboardingRail) {
+            if (wasOpen) dom.onboardingRail.close();
+            dom.onboardingRail.classList.add('hidden');
+        }
         dom.app?.classList.toggle('onboarding-active', visible);
         dom.onboardingSkip?.classList.toggle(
             'hidden',
@@ -728,7 +842,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const title = document.getElementById(`onboarding-title-${onboardingStage}`);
             if (title) {
                 dom.onboardingRail?.setAttribute('aria-labelledby', title.id);
-                if (focusHeading) title.focus();
+                if (focusHeading || !wasOpen) title.focus();
             }
         } else {
             dom.onboardingRail?.removeAttribute('aria-labelledby');
@@ -749,6 +863,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const message = t(key) === key ? t('onboarding_error_setup_failed') : t(key);
         dom.onboardingError.textContent = message;
         dom.onboardingError.classList.remove('hidden');
+        if (normalized === 'invalid_key_format' && dom.onboardingApiKey) {
+            dom.onboardingApiKey.setAttribute('aria-invalid', 'true');
+            dom.onboardingApiKey.focus();
+        }
     }
 
     function clearOnboardingMessages() {
@@ -756,6 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
             dom.onboardingError.textContent = '';
             dom.onboardingError.classList.add('hidden');
         }
+        dom.onboardingApiKey?.setAttribute('aria-invalid', 'false');
         if (dom.onboardingProviderStatus) dom.onboardingProviderStatus.textContent = '';
     }
 
@@ -769,7 +888,7 @@ document.addEventListener('DOMContentLoaded', () => {
             payload = buildProviderPayload(
                 provider,
                 dom.onboardingApiKey?.value,
-                dom.onboardingSaveLocal?.checked === true
+                true
             );
         } catch (error) {
             showOnboardingError(error?.message || 'setup_failed');
@@ -868,9 +987,17 @@ document.addEventListener('DOMContentLoaded', () => {
         let outcomeReported = false;
         textCommandInFlight = true;
         ui.addConversationSegment('user', text);
-        ui.updateAssistantSegment(t('command_state_processing'));
+        if (!isLiveVoiceActive) ui.updateAssistantSegment(t('command_state_processing'));
         setCommandState('processing');
         try {
+            if (isLiveVoiceActive || liveVoiceStartInFlight || liveVoiceStopInFlight) {
+                if (!isLiveVoiceActive || !liveVoiceClient?.sendUserText(text)) {
+                    throw new Error('live_text_not_delivered');
+                }
+                liveTextCommandPending = true;
+                if (dom.commandInput) dom.commandInput.value = '';
+                return true;
+            }
             const data = await getLlamaResponses(text);
             const successful = data?.ok === false
                 ? false
@@ -886,9 +1013,11 @@ document.addEventListener('DOMContentLoaded', () => {
             setTranscript(reply);
             ui.updateAssistantSegment(reply);
             setCommandState('success');
+            hud?.memoryGraph?.pulseSynapses?.();
             if (dom.commandInput) dom.commandInput.value = '';
             return true;
         } catch {
+            if (isLiveVoiceActive) liveTextCommandPending = false;
             if (!outcomeReported) {
                 window.dispatchEvent(new CustomEvent('jarvis:command-outcome', {
                     detail: { outcome: '', ok: false }
@@ -938,6 +1067,94 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     dom.quickActionButtons.forEach(btn => btn.addEventListener('click', () => runQuickAction(btn.dataset.action)));
+
+    // --- MODO CINEMA / FULLSCREEN ---
+    const cinemaToggle = document.getElementById('cinema-toggle');
+    const cinemaText = document.getElementById('cinema-toggle-text');
+    if (cinemaToggle) {
+        cinemaToggle.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        });
+        document.addEventListener('fullscreenchange', () => {
+            const isFull = Boolean(document.fullscreenElement);
+            document.body.classList.toggle('fullscreen-cinema', isFull);
+            if (cinemaText) {
+                cinemaText.textContent = t(isFull ? 'cinema_exit' : 'cinema_label');
+            }
+        });
+    }
+
+    // --- FILTROS DE REGISTRO / TERMINAL ---
+    document.querySelectorAll('.log-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const filter = btn.dataset.filter || 'all';
+            ui.setLogFilter(filter);
+        });
+    });
+
+    // --- PESTAÑAS DEL PANEL DE COMANDOS ---
+    document.querySelectorAll('.cmd-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.cmd-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const tab = btn.dataset.tab;
+            const tabRoutines = document.getElementById('tab-routines');
+            const tabSystem = document.getElementById('tab-system');
+            if (tab === 'routines') {
+                tabRoutines?.classList.remove('hidden');
+                tabSystem?.classList.add('hidden');
+            } else {
+                tabRoutines?.classList.add('hidden');
+                tabSystem?.classList.remove('hidden');
+            }
+        });
+    });
+
+    // --- MINI-PLAYER MULTIMEDIA HUD ---
+    const hudMediaPlayer = document.getElementById('hud-media-player');
+    const mediaTitle = document.getElementById('media-player-title');
+    const mediaArtist = document.getElementById('media-player-artist');
+    const mediaArt = document.getElementById('media-player-art');
+    const defaultMediaIcon = document.getElementById('media-default-icon');
+    const btnPrev = document.getElementById('media-btn-prev');
+    const btnPlayPause = document.getElementById('media-btn-playpause');
+    const btnNext = document.getElementById('media-btn-next');
+
+    let mediaIsPlaying = true;
+
+    window.addEventListener('jarvis:media-state', (e) => {
+        const data = e.detail || {};
+        if (hudMediaPlayer) hudMediaPlayer.classList.remove('hidden');
+        if (mediaTitle) mediaTitle.textContent = data.track || t('media_player_title');
+        if (mediaArtist) mediaArtist.textContent = data.artist || t('media_no_playback');
+        if (data.image && mediaArt) {
+            mediaArt.src = data.image;
+            mediaArt.style.display = 'block';
+            if (defaultMediaIcon) defaultMediaIcon.style.display = 'none';
+        }
+        mediaIsPlaying = true;
+        if (btnPlayPause) btnPlayPause.textContent = '❚❚';
+    });
+
+    btnPrev?.addEventListener('click', () => submitTextCommand('cancion anterior'));
+    btnNext?.addEventListener('click', () => submitTextCommand('siguiente cancion'));
+    btnPlayPause?.addEventListener('click', () => {
+        if (mediaIsPlaying) {
+            submitTextCommand('pausar musica');
+            mediaIsPlaying = false;
+            if (btnPlayPause) btnPlayPause.textContent = '▶';
+        } else {
+            submitTextCommand('reanudar musica');
+            mediaIsPlaying = true;
+            if (btnPlayPause) btnPlayPause.textContent = '❚❚';
+        }
+    });
 
     if (dom.commandForm) {
         dom.commandForm.addEventListener('submit', (e) => {
@@ -992,6 +1209,15 @@ document.addEventListener('DOMContentLoaded', () => {
         dom.commandInput?.focus();
     });
 
+    dom.onboardingRail?.addEventListener('cancel', event => {
+        event.preventDefault();
+        if (onboardingStage === ONBOARDING_STAGES.SUCCESS) {
+            dom.onboardingFinish?.click();
+        } else {
+            dom.onboardingSkip?.click();
+        }
+    });
+
     dom.onboardingContinue?.addEventListener('click', async () => {
         const selectedLanguage = dom.onboardingLanguage?.value || currentLang;
         await applyLanguageSetting(selectedLanguage);
@@ -1033,9 +1259,29 @@ document.addEventListener('DOMContentLoaded', () => {
     dom.onboardingConfigure?.addEventListener('click', configureOnboardingProvider);
 
     dom.onboardingUseSuggestion?.addEventListener('click', () => {
-        if (dom.commandInput) {
-            dom.commandInput.value = t('onboarding_command_suggestion');
-            dom.commandInput.focus();
+        if (dom.onboardingCommandInput) {
+            dom.onboardingCommandInput.value = t('onboarding_command_suggestion');
+            dom.onboardingCommandInput.focus();
+        }
+    });
+
+    dom.onboardingCommandForm?.addEventListener('submit', async event => {
+        event.preventDefault();
+        const text = normalizeCommandText(dom.onboardingCommandInput?.value);
+        if (!text || textCommandInFlight) {
+            dom.onboardingCommandInput?.focus();
+            return;
+        }
+        if (dom.onboardingCommandSubmit) dom.onboardingCommandSubmit.disabled = true;
+        dom.onboardingCommandInput?.setAttribute('aria-busy', 'true');
+        if (dom.onboardingCommandStatus) {
+            dom.onboardingCommandStatus.textContent = t('command_state_processing');
+        }
+        try {
+            await submitTextCommand(text);
+        } finally {
+            if (dom.onboardingCommandSubmit) dom.onboardingCommandSubmit.disabled = false;
+            dom.onboardingCommandInput?.setAttribute('aria-busy', 'false');
         }
     });
 
@@ -1066,6 +1312,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.detail?.ok === true && firstCommandCompletes(event.detail?.outcome)) {
             const nextStage = transitionOnboarding(onboardingStage, 'command_succeeded');
             saveOnboardingState(ONBOARDING_STATUSES.COMPLETED, nextStage);
+            if (dom.onboardingCommandInput) dom.onboardingCommandInput.value = '';
             renderOnboarding(nextStage, { focusHeading: true });
             return;
         }
@@ -1082,8 +1329,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         updateUI(); // Initial translation
     }
-    initializeOnboarding();
+    const onboardingInitialization = initializeOnboarding();
+    onboardingInitialization.finally(() => {
+        reminderOnboardingReady = true;
+        startReminderPollingWhenReady();
+    });
     dom.activateBtn?.addEventListener('click', () => {
+        if (!isClassicVoiceCurrent()) return;
         dom.activateBtn.blur();
         resetMicrophonePermissionBlock();
         const capabilities = refreshVoiceCapabilities(true);
@@ -1139,51 +1391,131 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- LIVE FULL-DUPLEX VOZ ---
     let liveVoiceClient = null;
     let isLiveVoiceActive = false;
+    let liveTextCommandPending = false;
     let liveVoiceStartInFlight = false;
+    let liveVoiceGeneration = 0;
+    let liveVoiceStartup = null;
+    let liveVoiceStopInFlight = null;
+
+    function isClassicVoiceCurrent(generation = classicVoiceGeneration) {
+        return generation === classicVoiceGeneration
+            && !isLiveVoiceActive && !liveVoiceStartInFlight && !liveVoiceStopInFlight;
+    }
+
+    function discardClassicVoiceCapture() {
+        classicVoiceGeneration++;
+        clearPassiveRestartTimer();
+        clearActiveStartTimer();
+        if (activeTimeout) clearTimeout(activeTimeout);
+        activeTimeout = null;
+        voice.stopSilenceDetector();
+        const recorder = mediaRecorder;
+        mediaRecorder = null;
+        if (recorder) {
+            recorder.onstop = null;
+            recorder.ondataavailable = null;
+            if (recorder.state !== 'inactive') {
+                try { recorder.stop(); } catch (_) { }
+            }
+        }
+        const streams = new Set([activeAudioStream, recorder?.stream]);
+        activeAudioStream = null;
+        streams.forEach(stream => stream?.getTracks().forEach(track => track.stop()));
+        pendingRecordingStop?.(null);
+        pendingRecordingStop = null;
+        audioChunks = [];
+        recordedAudioMimeType = '';
+        fullTranscript = '';
+        latestInterimTranscript = '';
+        latestTranscriptConfidence = null;
+        activeCommandProcessRequested = false;
+        activeRestartPending = false;
+        passiveErrorRestartPending = false;
+    }
 
     async function stopLiveVoiceStream({
         resumePassive = true,
         focusText = false,
     } = {}) {
-        if (!isLiveVoiceActive && !liveVoiceClient) return;
+        if (liveVoiceStopInFlight) return liveVoiceStopInFlight;
+        if (!liveVoiceStartInFlight) {
+            if (!isLiveVoiceActive && !liveVoiceClient) return;
+        }
+        const client = liveVoiceClient;
+        const startup = liveVoiceStartup;
+        liveVoiceGeneration++;
         isLiveVoiceActive = false;
-        if (liveVoiceClient) {
-            await liveVoiceClient.disconnect();
+        if (liveTextCommandPending) setCommandState('idle');
+        liveTextCommandPending = false;
+        liveVoiceStartInFlight = false;
+        if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = true;
+        liveVoiceStopInFlight = Promise.resolve().then(async () => {
+            try {
+                await client?.disconnect();
+            } finally {
+                if (startup) {
+                    // A pending microphone permission may complete after disconnect.
+                    try { await startup; } catch (_) { }
+                    await client?.disconnect();
+                }
+            }
+        }).catch(() => {
+            ui.addLogEntry('> LIVE: disconnect_failed');
+        }).finally(() => {
             liveVoiceClient = null;
-        }
-        if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_live_voice');
-        if (dom.liveVoiceBtn) dom.liveVoiceBtn.classList.remove('live-active');
-        if (dom.btnLiveScreenText) dom.btnLiveScreenText.textContent = t('btn_live_screen');
-        if (dom.liveScreenBtn) dom.liveScreenBtn.classList.remove('screen-active');
-        setCurrentMode('idle', 'stop_live_voice');
-        updateButtonUI('idle');
-        if (focusText) {
-            setCommandState('idle');
-            dom.commandInput?.focus();
-        } else if (resumePassive) {
-            startPassiveListening();
-        }
+            liveVoiceStartup = null;
+            liveVoiceStopInFlight = null;
+            if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_live_voice');
+            if (dom.liveVoiceBtn) {
+                dom.liveVoiceBtn.disabled = false;
+                dom.liveVoiceBtn.classList.remove('live-active');
+            }
+            if (dom.btnLiveScreenText) dom.btnLiveScreenText.textContent = t('btn_live_screen');
+            if (dom.liveScreenBtn) dom.liveScreenBtn.classList.remove('screen-active');
+            setCurrentMode('idle', 'stop_live_voice');
+            updateButtonUI('idle');
+            if (focusText) {
+                setCommandState('idle');
+                dom.commandInput?.focus();
+            } else if (resumePassive) {
+                startPassiveListening();
+            }
+        });
+        return liveVoiceStopInFlight;
     }
 
     async function startLiveVoiceStream() {
-        if (isLiveVoiceActive || liveVoiceStartInFlight) return;
+        if (!isClassicVoiceCurrent() || adminEnrollmentActive) return;
         liveVoiceStartInFlight = true;
+        const generation = ++liveVoiceGeneration;
         if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = true;
+        discardClassicVoiceCapture();
         safeStopRecognition('passive');
         safeStopRecognition('active');
         if (isSpeaking) {
             interrumpirAudio();
         }
-        clearPassiveRestartTimer();
-        clearActiveStartTimer();
+        setCurrentMode('transition', 'live_connecting');
 
-        liveVoiceClient = new LiveVoiceClient({
+        let liveStatus = {};
+        try {
+            liveStatus = await API.fetchLiveVoiceStatus();
+        } catch (error) {
+            if (generation === liveVoiceGeneration) ui.addLogEntry('> LIVE: status_unavailable');
+        }
+        if (generation !== liveVoiceGeneration) return;
+
+        const client = liveVoiceClient = new LiveVoiceClient({
             language: currentLang,
             profileId: lastIdentifiedProfileId || 'default',
-            mode: 'auto'
+            mode: 'auto',
+            inputChunkMs: liveStatus.input_chunk_ms,
+            maxPlaybackQueueMs: liveStatus.max_playback_queue_ms,
+            maxConsecutiveAudioDrops: liveStatus.max_consecutive_audio_drops,
         });
 
         liveVoiceClient.onStateChange = (state) => {
+            if (generation !== liveVoiceGeneration) return;
             if (state === 'speaking') {
                 setCurrentMode('processing', 'live_speaking');
                 if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_speaking');
@@ -1208,15 +1540,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         liveVoiceClient.onTranscript = (data) => {
+            if (generation !== liveVoiceGeneration) return;
             const role = data.role === 'assistant' ? 'jarvis' : 'user';
             const text = data.text || '';
             if (text) {
-                ui.addConversationSegment(role, text);
+                if (shouldCommitLiveTranscript(data) && data.source !== 'live_typed_text') {
+                    ui.addConversationSegment(role, text);
+                }
+                if (data.role === 'assistant' && data.is_final && liveTextCommandPending) {
+                    liveTextCommandPending = false;
+                    setCommandState('success');
+                }
                 if (dom.transcriptText) dom.transcriptText.textContent = text;
             }
         };
 
         liveVoiceClient.onToolExecuting = (data) => {
+            if (generation !== liveVoiceGeneration) return;
             const toolName = data.tool || data.name || 'herramienta';
             ui.addLogEntry(`> [LIVE TOOL] Ejecutando: ${toolName}...`);
             if (dom.transcriptText) dom.transcriptText.textContent = `[Ejecutando ${toolName}...]`;
@@ -1224,12 +1564,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         liveVoiceClient.onInterrupted = (data) => {
-            ui.addLogEntry(t('mode_live_interrupted'));
+            if (generation !== liveVoiceGeneration) return;
+            if (data?.source === 'local_barge_in') {
+                const duration = Math.max(0, Number(data.duration_ms) || 0);
+                ui.addLogEntry(`> LIVE: interrupción local confirmada (${duration} ms de voz).`);
+            } else {
+                ui.addLogEntry(`${t('mode_live_interrupted')} (confirmada por el servidor)`);
+            }
             if (reactor && reactor.triggerPulse) reactor.triggerPulse(1.0);
         };
 
         liveVoiceClient.onError = (err) => {
+            if (generation !== liveVoiceGeneration) return;
             const view = liveVoiceErrorView(err, t);
+            if (liveTextCommandPending) {
+                liveTextCommandPending = false;
+                setCommandState('error');
+            }
             ui.addLogEntry(`> LIVE: ${view.code}`);
             if (dom.transcriptText) dom.transcriptText.textContent = view.message;
             if (view.terminal && isLiveVoiceActive) {
@@ -1238,6 +1589,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         liveVoiceClient.onSessionReady = (data) => {
+            if (generation !== liveVoiceGeneration) return;
             const fallback = data.type === 'live_fallback_active'
                 || data.mode === 'hybrid_stream';
             ui.addLogEntry(fallback ? '> LIVE: hybrid_fallback' : '> LIVE: ready');
@@ -1247,10 +1599,12 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         liveVoiceClient.onReconnecting = () => {
+            if (generation !== liveVoiceGeneration) return;
             if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_reconnecting');
         };
 
         liveVoiceClient.onDiagnostics = data => {
+            if (generation !== liveVoiceGeneration) return;
             if (data?.code === 'live_audio_transport_degraded') {
                 const view = liveVoiceErrorView(data, t);
                 if (dom.commandStatus) dom.commandStatus.textContent = view.message;
@@ -1258,6 +1612,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         liveVoiceClient.onActionPlanUpdated = plan => {
+            if (generation !== liveVoiceGeneration) return;
             const confirmation = (plan?.actions || []).find(
                 action => action.state === 'confirmation_required'
             );
@@ -1271,20 +1626,26 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         try {
-            await liveVoiceClient.startStreaming();
+            liveVoiceStartup = client.startStreaming();
+            await liveVoiceStartup;
+            if (generation !== liveVoiceGeneration) return;
             isLiveVoiceActive = true;
             if (dom.btnLiveVoiceText) dom.btnLiveVoiceText.textContent = t('btn_stop_live');
             if (dom.liveVoiceBtn) dom.liveVoiceBtn.classList.add('live-active');
             setCurrentMode('active', 'live_stream_started');
             if (dom.transcriptText) dom.transcriptText.textContent = t('mode_live_connected');
         } catch (err) {
+            if (generation !== liveVoiceGeneration) return;
             const view = liveVoiceErrorView(err, t);
             ui.addLogEntry(`> LIVE: ${view.code}`);
             if (dom.transcriptText) dom.transcriptText.textContent = view.message;
             await stopLiveVoiceStream({ resumePassive: false, focusText: true });
         } finally {
-            liveVoiceStartInFlight = false;
-            if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = false;
+            if (generation === liveVoiceGeneration) {
+                liveVoiceStartup = null;
+                liveVoiceStartInFlight = false;
+                if (dom.liveVoiceBtn) dom.liveVoiceBtn.disabled = false;
+            }
         }
     }
 
@@ -1330,6 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function safeStartRecognition(kind) {
+        if (!isClassicVoiceCurrent()) return false;
         if (adminEnrollmentActive) {
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: start(${kind}) skipped (admin enrollment)`);
             return false;
@@ -1489,6 +1851,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function schedulePassiveRestart(delayMs = 300) {
+        if (!isClassicVoiceCurrent()) return;
+        const generation = classicVoiceGeneration;
         if (!shouldRestartPassiveRecognition(
             currentMode,
             adminEnrollmentActive,
@@ -1500,6 +1864,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         clearPassiveRestartTimer();
         passiveRestartTimer = setTimeout(() => {
+            if (!isClassicVoiceCurrent(generation)) return;
             passiveRestartTimer = null;
             if (shouldRestartPassiveRecognition(
                 currentMode,
@@ -1514,6 +1879,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function scheduleActiveRecognitionStart(delayMs = 100) {
+        if (!isClassicVoiceCurrent()) return;
+        const generation = classicVoiceGeneration;
         if (adminEnrollmentActive || browserRecognitionDegraded) {
             clearActiveStartTimer();
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG TIMER: active start skipped (admin enrollment)');
@@ -1521,6 +1888,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         clearActiveStartTimer();
         activeStartTimer = setTimeout(() => {
+            if (!isClassicVoiceCurrent(generation)) return;
             activeStartTimer = null;
             if (currentMode === 'active') {
                 safeStartRecognition('active');
@@ -1536,12 +1904,14 @@ document.addEventListener('DOMContentLoaded', () => {
         passiveRecognition.continuous = true;
         passiveRecognition.maxAlternatives = 5;
         passiveRecognition.onstart = () => {
+            if (!isClassicVoiceCurrent()) return;
             passiveRecognitionRunning = true;
             markBrowserRecognitionHealthy();
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG REC: passive onstart');
         };
 
         passiveRecognition.onresult = (event) => {
+            if (!isClassicVoiceCurrent()) return;
             markBrowserRecognitionHealthy();
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 if (Date.now() < wakeWordCooldownUntil) continue;
@@ -1593,12 +1963,14 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         passiveRecognition.onend = () => {
+            if (!isClassicVoiceCurrent()) return;
             passiveRecognitionRunning = false;
             if (currentMode === 'passive') {
                 schedulePassiveRestart(320);
             }
         };
         passiveRecognition.onerror = (err) => {
+            if (!isClassicVoiceCurrent()) return;
             passiveRecognitionRunning = false;
             if (classifyVoiceError(err.error) === 'recognition_network') {
                 markBrowserRecognitionDegraded(err.error);
@@ -1618,6 +1990,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Función para procesar comando después de wake word
         // Procesa inmediatamente el texto para eliminar latencia en comandos continuos
         function processWakeWordCommand(command) {
+            if (!isClassicVoiceCurrent()) return;
             if (!command || command.trim().length === 0) {
                 activateFromWakeWord();
                 return;
@@ -1648,6 +2021,7 @@ document.addEventListener('DOMContentLoaded', () => {
         activeRecognition.continuous = true;
         activeRecognition.maxAlternatives = 3;
         activeRecognition.onstart = () => {
+            if (!isClassicVoiceCurrent()) return;
             activeRecognitionRunning = true;
             activeRestartPending = false;
             markBrowserRecognitionHealthy();
@@ -1655,6 +2029,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         activeRecognition.onresult = (event) => {
+            if (!isClassicVoiceCurrent()) return;
             if (currentMode !== 'active') return;
             markBrowserRecognitionHealthy();
             let interimTranscript = '';
@@ -1681,6 +2056,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         activeRecognition.onerror = (event) => {
+            if (!isClassicVoiceCurrent()) return;
             activeRecognitionRunning = false;
             const errType = String(event?.error || '').toLowerCase();
             if (VOICE_DEBUG) ui.addLogEntry(`> DEBUG REC: active onerror (${errType || 'unknown'})`);
@@ -1705,6 +2081,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         activeRecognition.onend = () => {
+            if (!isClassicVoiceCurrent()) return;
             activeRecognitionRunning = false;
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG REC: active onend');
             if (currentMode === 'active') {
@@ -1726,6 +2103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function activateFromWakeWord() {
+        if (!isClassicVoiceCurrent()) return;
         if (Date.now() < wakeWordCooldownUntil) {
             return;
         }
@@ -1744,20 +2122,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function startActiveListening(withBiometry = true, options = {}) {
-        if (adminEnrollmentActive) return;
+        if (!isClassicVoiceCurrent() || adminEnrollmentActive) return;
         const forceFromProcessing = !!options.forceFromProcessing;
         if (currentMode === 'active') return;
         if (currentMode === 'processing' && !forceFromProcessing) return;
 
-        clearPassiveRestartTimer();
-        clearActiveStartTimer();
-        passiveErrorRestartPending = false;
+        discardClassicVoiceCapture();
+        const generation = classicVoiceGeneration;
         safeStopRecognition('passive');
-
-        if (activeAudioStream) {
-            activeAudioStream.getTracks().forEach(t => t.stop());
-            activeAudioStream = null;
-        }
 
         interrumpirAudio();
         setCurrentMode('active', 'startActiveListening');
@@ -1788,6 +2160,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CAPTURE_CONSTRAINTS);
+            if (!isClassicVoiceCurrent(generation) || currentMode !== 'active') {
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
             resetMicrophonePermissionBlock();
             activeAudioStream = stream;
             window._activeStartTime = Date.now();
@@ -1799,6 +2175,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     mediaRecorder = createMediaRecorder(stream);
                     recordedAudioMimeType = mediaRecorder.mimeType || '';
                     mediaRecorder.ondataavailable = (e) => {
+                        if (!isClassicVoiceCurrent(generation)) return;
                         if (e.data && e.data.size > 0) {
                             recordedAudioMimeType = e.data.type || recordedAudioMimeType;
                             audioChunks.push(e.data);
@@ -1817,8 +2194,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             voice.startSilenceDetector(stream, () => {
-                if (currentMode === 'active') {
-                    finishActiveListening();
+                if (isClassicVoiceCurrent(generation) && currentMode === 'active') {
+                    finishActiveListening(generation);
                 }
             }, { silenceMs: 1300, minSpeechMs: 220, checkIntervalMs: 60 });
 
@@ -1826,6 +2203,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             armActiveTimeout(9000);
         } catch (e) {
+            if (!isClassicVoiceCurrent(generation)) return;
             if (isMicrophonePermissionError(e?.name)) {
                 markMicrophonePermissionBlocked(e?.name);
                 return;
@@ -1838,7 +2216,10 @@ document.addEventListener('DOMContentLoaded', () => {
      * Detiene la grabación biométrica de forma segura y retorna el WAV blob.
      */
     async function stopBiometricRecording() {
+        const generation = classicVoiceGeneration;
+        if (!isClassicVoiceCurrent(generation)) return null;
         const flushChunksToWav = async () => {
+            if (!isClassicVoiceCurrent(generation)) return null;
             if (!audioChunks.length) {
                 recordedAudioMimeType = '';
                 return null;
@@ -1847,9 +2228,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const raw = new Blob(audioChunks, {
                 type: chunkType || recordedAudioMimeType || 'application/octet-stream'
             });
-            const wav = await convertBlobToWav(raw, getGlobalAudioContext(), { enhanceSpeech: false });
             audioChunks = [];
             recordedAudioMimeType = '';
+            const wav = await convertBlobToWav(raw, getGlobalAudioContext(), { enhanceSpeech: false });
+            if (!isClassicVoiceCurrent(generation)) return null;
             return wav || raw;
         };
 
@@ -1863,11 +2245,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         return new Promise((resolve) => {
-            mediaRecorder.onstop = async () => {
+            const recorder = mediaRecorder;
+            pendingRecordingStop = resolve;
+            recorder.onstop = () => {
+                if (!isClassicVoiceCurrent(generation) || mediaRecorder !== recorder) {
+                    resolve(null);
+                    return;
+                }
+                pendingRecordingStop = null;
                 mediaRecorder = null;
-                resolve(await flushChunksToWav());
+                resolve(flushChunksToWav());
             };
-            mediaRecorder.stop();
+            recorder.stop();
         });
     }
 
@@ -1875,8 +2264,8 @@ document.addEventListener('DOMContentLoaded', () => {
      * Finaliza la escucha activa de forma segura, garantizando que el MediaRecorder
      * termine de procesar los chunks antes de disparar el procesamiento.
      */
-    function finishActiveListening() {
-        if (currentMode !== 'active') return;
+    function finishActiveListening(generation = classicVoiceGeneration) {
+        if (!isClassicVoiceCurrent(generation) || currentMode !== 'active') return;
         if (activeCommandProcessRequested) {
             if (VOICE_DEBUG) ui.addLogEntry('> DEBUG FLOW: finishActiveListening ignored (process already requested)');
             return;
@@ -1888,14 +2277,15 @@ document.addEventListener('DOMContentLoaded', () => {
         safeStopRecognition('active');
 
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.onstop = () => processVoiceCommand();
+            mediaRecorder.onstop = () => processVoiceCommand(generation);
             mediaRecorder.stop();
         } else {
-            processVoiceCommand();
+            processVoiceCommand(generation);
         }
     }
 
     function startPassiveListening() {
+        if (!isClassicVoiceCurrent()) return;
         clearActiveStartTimer();
         clearPassiveRestartTimer();
         if (adminEnrollmentActive) return;
@@ -1904,17 +2294,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateButtonUI('idle');
             return;
         }
-        passiveErrorRestartPending = false;
-        activeCommandProcessRequested = false;
-        activeRestartPending = false;
-
-        if (activeAudioStream) {
-            activeAudioStream.getTracks().forEach(t => t.stop());
-            activeAudioStream = null;
-            mediaRecorder = null;
-        }
-        if (activeTimeout) clearTimeout(activeTimeout);
-        voice.stopSilenceDetector();
+        discardClassicVoiceCapture();
         setCurrentMode('passive', 'startPassiveListening');
         wakeWordTriggered = false;
         updateButtonUI('passive');
@@ -1923,13 +2303,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function armActiveTimeout(ms = 6500) {
+        if (!isClassicVoiceCurrent()) return;
+        const generation = classicVoiceGeneration;
         if (activeTimeout) clearTimeout(activeTimeout);
-        activeTimeout = setTimeout(() => { if (currentMode === 'active') finishActiveListening(); }, ms);
+        activeTimeout = setTimeout(() => finishActiveListening(generation), ms);
     }
 
-    async function getLlamaResponseClassic(text) {
+    async function getLlamaResponseClassic(text, isCurrent = () => true) {
+        if (!isCurrent()) return null;
         const started = performance.now();
         const data = await API.postChat(text, lastIdentifiedProfileId || 'web_default');
+        if (!isCurrent()) return null;
         const totalNetworkMs = performance.now() - started;
         if (data?.metrics) {
             const metrics = data.metrics;
@@ -1941,11 +2325,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return data;
     }
 
-    async function getLlamaResponses(userInput) {
+    async function getLlamaResponses(userInput, isCurrent = () => true) {
+        if (!isCurrent()) return null;
         if (!ENABLE_STREAMING) {
             addLogEntry(t('cog_classic'));
-            try { return await getLlamaResponseClassic(userInput); }
+            try { return await getLlamaResponseClassic(userInput, isCurrent); }
             catch (e) {
+                if (!isCurrent()) return null;
                 addLogEntry(t('cog_error').replace('{detail}', e?.message || '---'));
                 return {
                     ok: false,
@@ -1975,6 +2361,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ message: userInput, profile_id: lastIdentifiedProfileId || 'web_default' }),
                 signal: controller.signal
             });
+            if (!isCurrent()) {
+                try { await response.body?.cancel(); } catch (_) { }
+                return null;
+            }
             if (!response.ok || !response.body) { clearTimers(); throw new Error('stream_unavailable'); }
             reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -1999,7 +2389,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ui.updateAssistantSegment(statusText);
                         }
                     } else if (ev.type === 'done') {
-                        finalReply = ev.response || acc || '';
+                        finalReply = commandDoneText(ev, acc);
                         finalOutcome = ev.outcome || '';
                         shouldListen = !!ev.should_listen;
                         gotDone = true;
@@ -2008,6 +2398,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             while (true) {
                 const { done, value } = await reader.read();
+                if (!isCurrent()) return null;
                 if (value) { carry += decoder.decode(value, { stream: true }).replace(/\r/g, ''); resetIdleTimer(); }
                 let sep;
                 while ((sep = carry.indexOf('\n\n')) >= 0) {
@@ -2019,6 +2410,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (gotDone) { try { await reader.cancel(); } catch (_) { } break; }
                 if (done) { if (carry.trim()) consumeSseBlock(carry.replace(/\r/g, '')); break; }
             }
+            if (!isCurrent()) return null;
             clearTimers();
             let rawReply = gotDone ? finalReply : acc;
             const cleanReply = widgets.processResponse(rawReply);
@@ -2032,10 +2424,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             clearTimers();
             if (reader) { try { await reader.cancel(); } catch (_) { } reader = null; }
+            if (!isCurrent()) return null;
             addLogEntry(t('streaming_fail').replace('{detail}', error?.message || '---'));
             addLogEntry(t('streaming_fallback'));
-            try { return await getLlamaResponseClassic(userInput); }
+            try { return await getLlamaResponseClassic(userInput, isCurrent); }
             catch (e2) {
+                if (!isCurrent()) return null;
                 addLogEntry('> ERROR: Agente desconectado.');
                 return {
                     ok: false,
@@ -2043,6 +2437,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     response: t('cog_fail_msg'),
                     should_listen: false,
                 };
+            }
+        } finally {
+            clearTimers();
+            if (!isCurrent() && reader) {
+                try { await reader.cancel(); } catch (_) { }
             }
         }
     }
@@ -2072,6 +2471,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function speakSentenceChain(sentences, index, callback) {
+        if (!isClassicVoiceCurrent()) return;
         const isFirstSentence = index === 0;
         if (isFirstSentence) {
             ttsChainActive = true;
@@ -2104,8 +2504,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function processVoiceCommand() {
-        if (currentMode !== 'active') return;
+    async function processVoiceCommand(generation = classicVoiceGeneration) {
+        if (!isClassicVoiceCurrent(generation) || currentMode !== 'active') return;
         setCurrentMode('processing', 'processVoiceCommand');
         updateButtonUI('processing');
         if (activeTimeout) {
@@ -2127,6 +2527,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const audioBlob = await stopBiometricRecording();
+            if (!isClassicVoiceCurrent(generation)) return;
             const hasAudio = !!(audioBlob && audioBlob.size > 1000);
 
             if (!transcript && !hasAudio) {
@@ -2169,11 +2570,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         },
                         body: audioBlob
                     });
+                    if (!isClassicVoiceCurrent(generation)) return;
                     const responseType = String(res.headers.get('content-type') || '').toLowerCase();
                     if (!responseType.includes('application/json')) {
                         throw new Error('voice_invalid_response');
                     }
                     data = await res.json();
+                    if (!isClassicVoiceCurrent(generation)) return;
                     const voiceFailureKey = classifyVoiceApiFailure(res.status, data);
                     if (!res.ok && !voiceFailureKey) {
                         throw new Error(`voice_http_${res.status}`);
@@ -2206,6 +2609,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const reqId = dbg.request_id || 'N/A';
                     ui.addLogEntry(`> BIO: Fuente=${data.identity_source || 'desconocida'}, Perfil=${data.profile_id || 'N/A'}, Nombre=${data.nombre || 'N/A'}, Sim=${sim}, Top=${topName}(${topSim}), Req=${reqId}`);
                 } catch (bioErr) {
+                    if (!isClassicVoiceCurrent(generation)) return;
                     // A failed voice request returns to passive mode without retrying.
                     console.warn('[VOICE API]', bioErr);
                     ui.addLogEntry(t('voice_transcription_unavailable'));
@@ -2213,8 +2617,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
             } else {
-                data = await getLlamaResponses(transcript);
+                data = await getLlamaResponses(transcript, () => isClassicVoiceCurrent(generation));
             }
+            if (!isClassicVoiceCurrent(generation)) return;
             if (data.profile_id) saveProfile(data.profile_id, data.nombre);
             const rawResponse = data.response || "No tengo respuesta.";
             const sanitized = sanitizeJarvisReply(rawResponse);
@@ -2227,16 +2632,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Si no hay oraciones, habla el texto directo
                 ui.addLogEntry('> TTS: Sin oraciones, hablando texto directo.');
                 speak(cleanText, () => {
+                    if (!isClassicVoiceCurrent(generation)) return;
                     if (data.should_listen) startActiveListening(true, { forceFromProcessing: true });
                     else startPassiveListening();
                 });
             } else {
                 speakSentenceChain(sentences, 0, () => {
+                    if (!isClassicVoiceCurrent(generation)) return;
                     if (data.should_listen) startActiveListening(true, { forceFromProcessing: true });
                     else startPassiveListening();
                 });
             }
         } catch (e) {
+            if (!isClassicVoiceCurrent(generation)) return;
             console.warn('[VOICE PROCESSING]', e);
             ui.addLogEntry(t('voice_transcription_unavailable'));
             startPassiveListening();
@@ -2244,6 +2652,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function speak(text, onFinished) {
+        if (!isClassicVoiceCurrent()) return;
         if (!text) {
             addLogEntry(t('tts_empty'));
             return onFinished?.();
@@ -2257,6 +2666,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const speakToken = ++activeSpeakToken;
         addLogEntry(`> TTS: speak() token=${speakToken}, isSpeaking=${isSpeaking}, texto="${text.substring(0, 40)}..."`);
         isSpeaking = true;
+        reactor.setState('speaking');
         wakeWordCooldownUntil = Date.now() + 3000;
         animateWaves(true);
         addLogEntry(`> J.A.R.V.I.S.: "${text}"`);
@@ -2286,6 +2696,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const contentType = response.headers.get('content-type');
             if (!contentType || !contentType.includes('audio')) throw new Error('CORRUPT_BLOB_OR_JSON_ERROR');
             const blob = await response.blob();
+            if (speakToken !== activeSpeakToken || !isClassicVoiceCurrent()) return;
             const audio = new Audio(URL.createObjectURL(blob));
             currentAudio = audio;
             addLogEntry(`> TTS: Audio cargado (${blob.size} bytes), reproduciendo...`);
@@ -2295,6 +2706,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (currentAudio && currentAudio.src && currentAudio.src.startsWith('blob:')) URL.revokeObjectURL(currentAudio.src);
                 currentAudio = null;
                 isSpeaking = false;
+                reactor.setState('idle');
                 animateWaves(false);
                 if (errKind === 'timeout') ttsBackoffUntil = Date.now() + 12000;
                 wakeWordCooldownUntil = Date.now() + (ok ? 1400 : 4000);
@@ -2314,6 +2726,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         } catch (error) {
+            if (speakToken !== activeSpeakToken || !isClassicVoiceCurrent()) return;
             const msg = isTimeout ? 'tts_timeout' : String(error?.message || 'tts_error');
             if (!isTimeout && (speakToken !== activeSpeakToken || msg.includes('tts_interrupted') || msg.toLowerCase().includes('abort'))) return;
             const retryable = msg.includes('tts_timeout') || msg.includes('tts_http_429') || msg.includes('tts_busy');
@@ -2343,12 +2756,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CARGAR NOTICIAS ---
     let newsPollAttempts = 0;
+    let deferredNewsPending = false;
+    let newsRequestInFlight = false;
 
     /**
      * Versión background: no bloquea el arranque, solo lee si está listo.
      * Máximo 3 intentos rápidos, si no está listo lo ignora.
      */
     async function loadNewsBackground() {
+        if (newsRequestInFlight) return;
         const today = new Date().toISOString().split('T')[0];
         const briefingKey = `briefing_fecha_${currentLang}`;
         const alreadyRead = localStorage.getItem(briefingKey);
@@ -2356,9 +2772,15 @@ document.addEventListener('DOMContentLoaded', () => {
             addLogEntry("> Briefing ya emitido hoy. Modo centinela.");
             return;
         }
+        newsRequestInFlight = true;
         try {
-            const data = await API.fetchNews();
+            const data = await API.fetchNews({ automatic: true });
+            if (data.deferred) {
+                deferredNewsPending = true;
+                return;
+            }
             if (data.listo && data.resumen) {
+                deferredNewsPending = false;
                 localStorage.setItem(briefingKey, today);
                 const oraciones = splitForTts(data.resumen);
                 speakSentenceChain([t('briefing_intro')], 0, () => {
@@ -2367,6 +2789,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             // Si no está listo, no bloquea — se lee en otro momento
         } catch (e) { /* silencioso en background */ }
+        finally { newsRequestInFlight = false; }
     }
 
     /**
@@ -2387,7 +2810,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         try {
-            const data = await API.fetchNews();
+            const data = await API.fetchNews({ automatic: true });
+            if (data.deferred) {
+                deferredNewsPending = true;
+                startPassiveListening();
+                return;
+            }
             if (data.listo && data.resumen) {
                 localStorage.setItem(briefingKey, today);
                 const oraciones = splitForTts(data.resumen);
@@ -2419,6 +2847,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (hudPollTimer) {
             clearInterval(hudPollTimer);
             hudPollTimer = null;
+        }
+        if (reminderPollTimer) {
+            clearInterval(reminderPollTimer);
+            reminderPollTimer = null;
         }
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             mediaRecorder.stream.getTracks().forEach(t => t.stop());

@@ -1,0 +1,31 @@
+{
+  "id": "jarvis-mobile-pwa",
+  "name": "J.A.R.V.I.S. Móvil",
+  "short_name": "JARVIS",
+  "description": "Chat y voz privados con J.A.R.V.I.S. a través de tu VPN.",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#05080c",
+  "theme_color": "#05080c",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/media/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Abrir chat",
+      "short_name": "Chat",
+      "description": "Abrir el chat móvil de JARVIS",
+      "url": "/mobile",
+      "icons": [{ "src": "/media/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}

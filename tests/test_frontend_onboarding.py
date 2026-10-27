@@ -44,9 +44,11 @@ const payload = onboarding.buildProviderPayload('groq', 'q'.repeat(24), true);
 if (payload.provider !== 'groq' || payload.api_key.length !== 24 || !payload.save_local) process.exit(5);
 const stored = onboarding.persistableOnboardingState('completed', 'success');
 if ('api_key' in stored || stored.version !== 2) process.exit(6);
-if (!onboarding.firstCommandCompletes('succeeded')) process.exit(7);
-if (!onboarding.firstCommandCompletes('duplicate')) process.exit(8);
-if (onboarding.firstCommandCompletes('failed')) process.exit(9);
+if (!onboarding.firstCommandCompletes('responded')) process.exit(7);
+if (!onboarding.firstCommandCompletes('verified')) process.exit(8);
+for (const outcome of ['succeeded', 'duplicate', 'accepted', 'executed', 'failed', 'unavailable']) {
+  if (onboarding.firstCommandCompletes(outcome)) process.exit(9);
+}
 if (onboarding.transitionOnboarding('provider', 'configured') !== 'command') process.exit(10);
 if (onboarding.transitionOnboarding('command', 'command_failed') !== 'command') process.exit(11);
 if (onboarding.transitionOnboarding('command', 'skip') !== 'dismissed') process.exit(12);
@@ -68,8 +70,55 @@ for (const secret of ['short', 'x\\nsecret', 'é'.repeat(20), 'x'.repeat(513)]) 
   try { onboarding.buildProviderPayload('gemini', secret, true); process.exit(3); }
   catch (error) { if (error.message !== 'invalid_key_format') process.exit(4); }
 }
-try { onboarding.buildProviderPayload('groq', 'q'.repeat(24), false); process.exit(5); }
+try { onboarding.buildProviderPayload('groq', 'short', false); process.exit(5); }
+catch (error) { if (error.message !== 'invalid_key_format') process.exit(6); }
+try { onboarding.buildProviderPayload('groq', 'q'.repeat(24), false); process.exit(7); }
 catch (error) { if (error.message !== 'invalid_request') process.exit(6); }
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required")
+def test_modal_waits_for_visible_app_shell_before_blocking_boot_controls():
+    main_uri = json.dumps((ROOT / "src/frontend/static/js/main.js").as_uri())
+    _run_node(
+        f"""
+import {{ readFileSync }} from 'node:fs';
+const source = readFileSync(new URL({main_uri}), 'utf8');
+const start = source.indexOf('    function renderOnboarding(');
+const end = source.indexOf('    function showOnboardingError(', start);
+const classList = (items = []) => {{
+  const values = new Set(items);
+  return {{
+    contains: name => values.has(name),
+    add: name => values.add(name),
+    remove: name => values.delete(name),
+    toggle: (name, active) => active ? values.add(name) : values.delete(name),
+  }};
+}};
+let modalOpens = 0;
+const dom = {{
+  app: {{ classList: classList(['hidden']) }},
+  onboardingStages: [],
+  onboardingRail: {{
+    open: false, classList: classList(['hidden']),
+    showModal() {{ this.open = true; modalOpens++; }},
+    close() {{ this.open = false; }},
+    setAttribute() {{}}, removeAttribute() {{}},
+  }},
+}};
+const createRenderer = new Function(
+  'dom', 'ONBOARDING_STAGES', 'document', 't', 'prefillFirstCommand', 'syncSetupAffordance',
+  'let onboardingStage; ' + source.slice(start, end) + '; return renderOnboarding;'
+);
+const render = createRenderer(dom, onboarding.ONBOARDING_STAGES, {{getElementById: () => null}}, key => key, () => {{}}, () => {{}});
+render('welcome');
+if (dom.onboardingRail.open || modalOpens !== 0) throw new Error('A hidden modal blocks the loader');
+dom.app.classList.remove('hidden');
+render('welcome');
+if (!dom.onboardingRail.open || modalOpens !== 1) throw new Error('Pending onboarding did not open after boot');
+render('hidden');
+if (dom.onboardingRail.open) throw new Error('Finished onboarding still blocks the UI');
 """
     )
 
@@ -77,7 +126,8 @@ catch (error) { if (error.message !== 'invalid_request') process.exit(6); }
 def test_onboarding_markup_is_progressive_private_and_accessible():
     html = (ROOT / "src/frontend/templates/index.html").read_text(encoding="utf-8")
 
-    assert html.count('id="onboarding-rail"') == 1
+    assert html.count('<dialog id="onboarding-rail"') == 1
+    assert 'aria-modal="true"' in html
     for stage in ("welcome", "provider", "command", "success"):
         assert f'data-onboarding-stage="{stage}"' in html
     for element_id in (
@@ -85,15 +135,20 @@ def test_onboarding_markup_is_progressive_private_and_accessible():
         "onboarding-skip",
         "onboarding-continue",
         "onboarding-api-key",
-        "onboarding-save-local",
         "onboarding-back",
         "onboarding-configure",
         "onboarding-command-back",
+        "onboarding-command-form",
+        "onboarding-command-input",
+        "onboarding-command-submit",
         "onboarding-use-suggestion",
         "complete-setup-action",
         "replay-onboarding-action",
     ):
         assert f'id="{element_id}"' in html
+    assert 'id="onboarding-save-local"' not in html
+    assert 'class="onboarding-storage-notice"' in html
+    assert "onboarding-kicker" not in html
     assert 'type="password"' in html
     assert 'autocomplete="off"' in html
     assert 'spellcheck="false"' in html
@@ -121,11 +176,13 @@ def test_onboarding_copy_and_adaptive_css_are_complete():
         assert i18n.count(f'"{key}"') == 2
     for contract in (
         ".onboarding-rail",
+        ".onboarding-rail::backdrop",
         ".provider-options",
         ".onboarding-button",
         "min-height: 44px",
         "@media (max-width: 600px)",
         "@media (prefers-reduced-motion: reduce)",
+        "max-height: calc(100svh - 32px)",
     ):
         assert contract in css
 
@@ -150,6 +207,13 @@ def test_frontend_integrates_setup_without_persisting_or_echoing_secrets():
     assert "dom.onboardingApiKey.value = ''" in main
     assert "jarvis:command-outcome" in main
     assert "firstCommandCompletes(event.detail?.outcome)" in main
+    assert "dom.onboardingRail.showModal()" in main
+    assert "dom.onboardingRail.close()" in main
+    assert "dom.onboardingRail?.addEventListener('cancel'" in main
+    assert "dom.onboardingCommandForm?.addEventListener('submit'" in main
+    assert "dom.onboardingSaveLocal" not in main
+    assert "dom.onboardingCommandInput.value" in main
+    assert "dom.onboardingApiKey.setAttribute('aria-invalid', 'true')" in main
     assert "getUserMedia" not in main.split("async function configureOnboardingProvider", 1)[1].split(
         "async function initializeOnboarding", 1
     )[0]

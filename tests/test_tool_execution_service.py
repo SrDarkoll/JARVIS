@@ -11,7 +11,12 @@ from core.command_pipeline.execution import (
     ToolPolicyBlockedError,
     validate_plan_operations,
 )
-from core.command_pipeline.models import ActionStep, CommandRequest, ReceiptStatus
+from core.command_pipeline.models import (
+    ActionStep,
+    CommandRequest,
+    ReceiptStatus,
+    ToolExecutionResult,
+)
 
 
 def _request(
@@ -44,9 +49,86 @@ def test_executor_replays_completed_operation_without_invoking_twice() -> None:
 
     assert calls == ["called"]
     assert first.status is ReceiptStatus.SUCCEEDED
+    assert first.verified is False
     assert second.status is ReceiptStatus.DUPLICATE
     assert second.result == "playing"
     assert first.status is ReceiptStatus.SUCCEEDED
+
+
+@pytest.mark.parametrize(
+    "first_status",
+    [ReceiptStatus.BLOCKED, ReceiptStatus.UNAVAILABLE, ReceiptStatus.FAILED, ReceiptStatus.ACCEPTED],
+)
+def test_replay_does_not_turn_a_non_success_into_duplicate(first_status) -> None:
+    calls = []
+
+    def invoke(_request, _step):
+        calls.append("called")
+        if first_status is ReceiptStatus.BLOCKED:
+            raise ToolPolicyBlockedError()
+        if first_status is ReceiptStatus.UNAVAILABLE:
+            raise LookupError("unavailable")
+        if first_status is ReceiptStatus.FAILED:
+            raise RuntimeError("failed")
+        return ToolExecutionResult(
+            result="queued",
+            accepted=True,
+            user_message="Task queued.",
+        )
+
+    service = ToolExecutionService(invoke)
+    request = _request(request_id=f"replay-{first_status.value}")
+    step = ActionStep("step-1", "example_tool")
+
+    first = service.execute(request, step)
+    replay = service.execute(request, step)
+
+    assert calls == ["called"]
+    assert first.status is first_status
+    assert replay.status is first_status
+    assert replay.verified is False
+
+
+def test_executor_preserves_explicit_verified_postcondition() -> None:
+    service = ToolExecutionService(
+        lambda _request, _step: ToolExecutionResult(
+            result={"reminder_id": "rem-1"},
+            user_message="Reminder stored.",
+            verified=True,
+            diagnostic_code="reminder_persisted",
+        )
+    )
+
+    receipt = service.execute(
+        _request(),
+        ActionStep(step_id="step-verified", tool_name="poner_recordatorio"),
+    )
+
+    assert receipt.status is ReceiptStatus.SUCCEEDED
+    assert receipt.result == {"reminder_id": "rem-1"}
+    assert receipt.user_message == "Reminder stored."
+    assert receipt.verified is True
+    assert receipt.diagnostic_code == "reminder_persisted"
+
+
+def test_executor_preserves_explicit_async_acceptance() -> None:
+    service = ToolExecutionService(
+        lambda _request, _step: ToolExecutionResult(
+            result={"job_id": "job-1"},
+            user_message="Job accepted.",
+            accepted=True,
+            diagnostic_code="job_accepted",
+        )
+    )
+
+    receipt = service.execute(
+        _request(),
+        ActionStep(step_id="step-accepted", tool_name="background_job"),
+    )
+
+    assert receipt.status is ReceiptStatus.ACCEPTED
+    assert receipt.verified is False
+    assert receipt.diagnostic_code == "job_accepted"
 
 
 def test_executor_coalesces_concurrent_attempts() -> None:

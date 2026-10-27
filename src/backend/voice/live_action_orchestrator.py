@@ -18,6 +18,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.command_pipeline.models import ExecutionReceipt, ReceiptStatus
+from core.command_pipeline.task_context import (
+    ActionExecutionView,
+    ContextResolutionError,
+    ContextualActionPermit,
+    TaskContext,
+    contextual_execution_scope,
+)
 from core.runtime_logger import log_error, log_warning
 from core.unified_log import write_log
 
@@ -36,8 +43,10 @@ class ActionState(enum.StrEnum):
     COMPLETED_AFTER_CANCELLATION = "completed_after_cancellation"
     COMPLETED_AFTER_TIMEOUT = "completed_after_timeout"
     FAILED = "failed"
+    PARTIAL = "partial"
     WAITING_CONFIRMATION = "waiting_confirmation"
     SUCCEEDED = "succeeded"
+    ACCEPTED = "accepted"
     DUPLICATE = "duplicate"
     CONFIRMATION_REQUIRED = "confirmation_required"
     BLOCKED = "blocked"
@@ -63,6 +72,11 @@ class ActionItem:
     execution_may_continue: bool = False
     worker_completed_at: float | None = None
     receipt: ExecutionReceipt | None = None
+    user_text: str = field(default="", repr=False)
+    language: str = ""
+    context_ref: str = ""
+    parent_context_ref: str = ""
+    contextual_permit: ContextualActionPermit | None = field(default=None, repr=False)
     _task: asyncio.Task | None = None
     _worker_task: asyncio.Task | None = None
 
@@ -92,6 +106,8 @@ class ActionItem:
             "receipt_status": self.receipt.status.value if self.receipt else "",
             "diagnostic_code": self.receipt.diagnostic_code if self.receipt else "",
             "verified": self.receipt.verified if self.receipt else False,
+            "action_ref": self.context_ref,
+            "parent_action_ref": self.parent_context_ref,
         }
 
 
@@ -305,20 +321,148 @@ class LiveActionOrchestrator:
         emit_json: Callable[[dict[str, Any]], Any] | None = None,
         diagnostics: LiveDiagnosticsCollector | None = None,
         invoke_tool: Callable[[str, dict[str, Any], str, str, str], Any] | None = None,
-        action_timeout_seconds: float = 15.0,
+        action_timeout_seconds: float | None = None,
+        language: str = "es",
     ) -> None:
         self.session_id = session_id
         self.profile_id = profile_id
+        self.language = language
         self.emit_json = emit_json
         self.diagnostics = diagnostics or LiveDiagnosticsCollector()
         self._invoke_tool = invoke_tool
-        self.action_timeout_seconds = max(0.01, float(action_timeout_seconds))
+        self._custom_action_timeout = action_timeout_seconds is not None
+        self.action_timeout_seconds = max(0.01, float(15.0 if action_timeout_seconds is None else action_timeout_seconds))
         self.current_plan: LiveActionPlan | None = None
         self._lock = asyncio.Lock()
         self._execution_lock = asyncio.Lock()
         self._action_counter = 0
         self._plans: dict[str, LiveActionPlan] = {}
         self._worker_tasks: set[asyncio.Task] = set()
+        self.task_context = TaskContext(session_id, profile_id, self._context_execution_view)
+        self._context_lock = asyncio.Lock()
+        self._context_calls: dict[str, tuple[str, ActionItem | str]] = {}
+
+    def _context_execution_view(self, action_id: str) -> ActionExecutionView | None:
+        action = next((
+            item for plan in tuple(self._plans.values()) for item in plan.actions if item.action_id == action_id
+        ), None)
+        if action is None:
+            return None
+        return ActionExecutionView(
+            action.state.value, action.receipt.status if action.receipt else None,
+            bool(action.receipt and action.receipt.verified),
+            action.execution_may_continue or bool(action._worker_task and not action._worker_task.done()),
+            action.receipt.diagnostic_code if action.receipt else "",
+        )
+
+    @staticmethod
+    def _context_action_response(action: ActionItem) -> str:
+        payload = live_tool_response(action.receipt) if action.receipt else {
+            "ok": False, "state": action.state.value,
+            "message": "La accion sigue pendiente o en ejecucion.",
+            "diagnostic_code": action.error or "context_action_still_running", "verified": False,
+        }
+        if action.context_ref:
+            payload["action_ref"] = action.context_ref
+        payload["action_state"] = action.state.value
+        payload["execution_may_continue"] = action.execution_may_continue
+        if action.state in {ActionState.COMPLETED_AFTER_CANCELLATION, ActionState.COMPLETED_AFTER_TIMEOUT}:
+            payload["outcome_state"] = payload["state"]
+            payload["cancellation_requested"] = bool(action.cancellation_reason)
+            if action.state is ActionState.COMPLETED_AFTER_CANCELLATION:
+                prefix = (
+                    "La cancelación se solicitó después de iniciar; la herramienta terminó: "
+                    if not action.language.startswith("en")
+                    else "Cancellation was requested after starting; the tool finished: "
+                )
+                payload["message"] = prefix + str(payload["message"])
+        return json.dumps(payload, ensure_ascii=False)
+
+    async def execute_contextual_call(
+        self, call_id: str, operation: str, reference: str, turn_id: int, *,
+        user_text: str, allowed_tools: set[str], send_response_fn: Callable[[str, str], Any],
+        changes: dict[str, Any] | None = None, replacement_tool: str = "", language: str = "",
+    ) -> None:
+        fingerprint = json.dumps([operation, reference, turn_id, changes, replacement_tool], sort_keys=True)
+        existing = False
+        async with self._context_lock:
+            cached = self._context_calls.get(call_id)
+            if cached:
+                if cached[0] != fingerprint:
+                    raise ContextResolutionError("context_call_conflict")
+                action_or_response = cached[1]
+                existing = True
+            else:
+                if len(self._context_calls) >= 512:
+                    raise ContextResolutionError("context_capacity_reached")
+                record = self.task_context.resolve_reference(reference, turn_id)
+                target = replacement_tool or (record.tool_name if record else "")
+                if operation not in {"cancel", "status"} and target not in allowed_tools:
+                    raise ContextResolutionError("context_tool_unavailable")
+                resolved = self.task_context.prepare(
+                    operation, reference, turn_id, changes=changes, replacement_tool=replacement_tool,
+                )
+                if operation == "status":
+                    action = next((
+                        item for plan in self._plans.values() for item in plan.actions
+                        if item.action_id == resolved.action_id
+                    ), None)
+                    if action is None:
+                        raise ContextResolutionError("context_reference_unavailable")
+                    payload = json.loads(self._context_action_response(action))
+                    retained = self.task_context.get_record(resolved.parent_ref)
+                    payload["followup_available"] = bool(retained and retained.continuation_turn == turn_id)
+                    action_or_response = json.dumps(payload, ensure_ascii=False)
+                elif operation == "cancel":
+                    action = next((
+                        item for plan in self._plans.values() for item in plan.actions
+                        if item.action_id == resolved.action_id
+                    ), None)
+                    if action is None:
+                        raise ContextResolutionError("context_reference_unavailable")
+                    await self.cancel_actions_by_call_ids([action.call_id], reason="user_contextual_cancellation")
+                    state = action.state.value
+                    message = (
+                        "La cancelacion esta solicitada; el proceso iniciado aun puede terminar."
+                        if action.execution_may_continue
+                        else "La accion pendiente se cancelo." if state == "cancelled"
+                        else "La accion ya habia terminado; cancelar no deshace su efecto."
+                    )
+                    action_or_response = json.dumps({
+                        "ok": state == "cancelled", "state": state, "message": message,
+                        "diagnostic_code": "context_cancellation_requested", "verified": False,
+                        "action_ref": resolved.parent_ref,
+                    })
+                else:
+                    plan = self.enqueue_batch([
+                        {"id": call_id, "name": resolved.tool_name, "args": resolved.arguments},
+                    ], user_text=user_text, language=language, turn_id=turn_id,
+                        parent_ref=resolved.parent_ref, permit=resolved.permit)
+                    action_or_response = plan.actions[0]
+                self._context_calls[call_id] = (fingerprint, action_or_response)
+        if isinstance(action_or_response, ActionItem) and not existing:
+            await self.execute_action(action_or_response, send_response_fn)
+            return
+        response = (
+            self._context_action_response(action_or_response)
+            if isinstance(action_or_response, ActionItem) else action_or_response
+        )
+        sent = send_response_fn(call_id, response)
+        if asyncio.iscoroutine(sent):
+            await sent
+
+    def _action_timeout_for(self, action: ActionItem) -> float:
+        if self._custom_action_timeout or action.name not in {
+            "reproducir_en_spotify", "reproducir_mix_spotify", "agregar_a_cola_spotify",
+        }:
+            return self.action_timeout_seconds
+        from core import jarvis_config
+
+        desktop_budget = (
+            3 * jarvis_config.SPOTIFY_DESKTOP_START_TIMEOUT
+            + 4 * jarvis_config.SPOTIFY_DESKTOP_ACTION_TIMEOUT
+        )
+        return max(self.action_timeout_seconds, min(120.0, desktop_budget))
 
     def _register_plan(self, plan: LiveActionPlan) -> LiveActionPlan:
         self._plans[plan.plan_id] = plan
@@ -378,7 +522,10 @@ class LiveActionOrchestrator:
             self.current_plan.actions.append(item)
         return item
 
-    def enqueue_batch(self, function_calls: list[dict[str, Any]]) -> LiveActionPlan:
+    def enqueue_batch(
+        self, function_calls: list[dict[str, Any]], *, user_text: str = "", language: str = "",
+        turn_id: int = 0, parent_ref: str = "", permit: ContextualActionPermit | None = None,
+    ) -> LiveActionPlan:
         """Enqueue a batch of sequential function calls from Gemini Live into a unified plan."""
         actions: list[ActionItem] = []
         for fc in function_calls:
@@ -390,13 +537,31 @@ class LiveActionOrchestrator:
                 args=fc.get("args") or {},
                 call_id=fc.get("id", ""),
                 state=ActionState.PENDING,
+                user_text=user_text,
+                language=language or self.language,
+                parent_context_ref=parent_ref,
+                contextual_permit=permit,
             )
             actions.append(item)
 
-        return self._register_plan(LiveActionPlan(actions=actions))
+        plan = self._register_plan(LiveActionPlan(actions=actions))
+        if turn_id:
+            try:
+                for action in actions:
+                    action.context_ref = self.task_context.record_action(
+                        action.action_id, action.name, action.args, turn_id, parent_ref=parent_ref,
+                    )
+            except ContextResolutionError:
+                for action in actions:
+                    action.state = ActionState.CANCELLED
+                plan.is_active = False
+                raise
+        return plan
 
-    async def cancel_pending_actions(self, reason: str = "user_barge_in") -> list[ActionItem]:
-        """Instantly cancels all pending and running actions in the current plan."""
+    async def cancel_pending_actions(
+        self, reason: str = "user_barge_in", *, include_running: bool = True,
+    ) -> list[ActionItem]:
+        """Cancel unstarted work and optionally request cancellation of active workers."""
         cancelled: list[ActionItem] = []
         async with self._lock:
             active_plans = self.active_plans()
@@ -418,7 +583,7 @@ class LiveActionOrchestrator:
                         cancelled.append(action)
                         plan_changed = True
                         self.diagnostics.record_cancellation()
-                    elif action.state == ActionState.RUNNING:
+                    elif include_running and action.state in {ActionState.RUNNING, ActionState.TIMED_OUT}:
                         action.state = ActionState.CANCELLATION_REQUESTED
                         action.cancellation_reason = reason
                         action.execution_may_continue = bool(
@@ -427,6 +592,9 @@ class LiveActionOrchestrator:
                         cancelled.append(action)
                         plan_changed = True
                         self.diagnostics.record_cancellation()
+
+                    if action.state in {ActionState.CANCELLED, ActionState.CANCELLATION_REQUESTED}:
+                        self.task_context.close_action(action.action_id)
                 self._refresh_plan_activity(plan)
                 if plan_changed:
                     changed_plans.append(plan)
@@ -440,11 +608,60 @@ class LiveActionOrchestrator:
                 write_log(
                     "LIVE_ACTION_CANCELLATION_REQUESTED",
                     f"Cancellation requested for {len(cancelled)} action(s) due to {reason}",
-                    cancelled_actions=[a.to_dict() for a in cancelled],
+                    cancelled_action_ids=[a.action_id for a in cancelled],
                     profile_id=self.profile_id,
                 )
                 for plan in changed_plans:
                     await self._notify_plan_updated(plan)
+
+        return cancelled
+
+    async def cancel_actions_by_call_ids(
+        self,
+        call_ids: list[str] | set[str] | tuple[str, ...],
+        reason: str = "provider_tool_call_cancellation",
+        *, include_running: bool = True,
+    ) -> list[ActionItem]:
+        """Cancel only provider calls named by Gemini's cancellation event."""
+        targets = {str(call_id or "").strip() for call_id in call_ids}
+        targets.discard("")
+        if not targets:
+            return []
+
+        cancelled: list[ActionItem] = []
+        async with self._lock:
+            changed_plans: list[LiveActionPlan] = []
+            for plan in self.active_plans():
+                plan_changed = False
+                for action in plan.actions:
+                    if action.call_id not in targets:
+                        continue
+                    if action.state in {
+                        ActionState.PENDING,
+                        ActionState.WAITING_CONFIRMATION,
+                        ActionState.CONFIRMATION_REQUIRED,
+                    }:
+                        action.state = ActionState.CANCELLED
+                        action.cancellation_reason = reason
+                        action.completed_at = time.time()
+                    elif include_running and action.state in {ActionState.RUNNING, ActionState.TIMED_OUT}:
+                        action.state = ActionState.CANCELLATION_REQUESTED
+                        action.cancellation_reason = reason
+                        action.execution_may_continue = bool(
+                            action._worker_task and not action._worker_task.done()
+                        )
+                    else:
+                        continue
+                    self.task_context.close_action(action.action_id)
+                    cancelled.append(action)
+                    plan_changed = True
+                    self.diagnostics.record_cancellation()
+                self._refresh_plan_activity(plan)
+                if plan_changed:
+                    changed_plans.append(plan)
+
+            for plan in changed_plans:
+                await self._notify_plan_updated(plan)
 
         return cancelled
 
@@ -474,14 +691,15 @@ class LiveActionOrchestrator:
 
                 print(
                     f"\n[LIVE ACTION ORCHESTRADOR] ▶️ EJECUTANDO [{action.action_id}]: "
-                    f"{action.name}(args={action.args})",
+                    f"{action.name}",
                     flush=True,
                 )
                 write_log(
                     "LIVE_ACTION_START",
                     f"Executing {action.name}",
                     action_id=action.action_id,
-                    args=action.args,
+                    argument_names=sorted(str(name)[:64] for name in action.args),
+                    argument_chars=len(str(action.args)),
                     call_id=action.call_id,
                     profile_id=self.profile_id,
                 )
@@ -507,13 +725,10 @@ class LiveActionOrchestrator:
                 try:
                     result = await asyncio.wait_for(
                         asyncio.shield(worker_task),
-                        timeout=self.action_timeout_seconds,
+                        timeout=self._action_timeout_for(action),
                     )
                     receipt = self._coerce_receipt(action, result)
                     action.receipt = receipt
-                    presentation = live_tool_response(receipt)
-                    tool_result = json.dumps(presentation, ensure_ascii=False)
-
                     dur_ms = (time.perf_counter() - start_mono) * 1000.0
                     if action.state in {
                         ActionState.CANCELLATION_REQUESTED,
@@ -523,10 +738,6 @@ class LiveActionOrchestrator:
                         action.result = receipt.user_message
                         action.completed_at = action.completed_at or time.time()
                         action.execution_may_continue = False
-                        tool_result = (
-                            f"La cancelación de '{action.name}' se solicitó después de iniciar; "
-                            f"la herramienta terminó: {receipt.user_message}"
-                        )
                     else:
                         action.state = ActionState(live_action_state(receipt))
                         action.result = receipt.user_message
@@ -538,9 +749,11 @@ class LiveActionOrchestrator:
                         action.execution_may_continue = False
                         self.diagnostics.record_tool_latency(dur_ms)
 
+                    tool_result = self._context_action_response(action)
+
                     print(
                         f"[LIVE ACTION ORCHESTRADOR] ✅ FINALIZADO [{action.action_id}]: "
-                        f"{action.name} ({dur_ms:.1f}ms) -> {tool_result[:100]}\n",
+                        f"{action.name} ({dur_ms:.1f}ms) | estado={action.state.value}\n",
                         flush=True,
                     )
                     write_log(
@@ -548,7 +761,7 @@ class LiveActionOrchestrator:
                         f"Completed {action.name}",
                         action_id=action.action_id,
                         duration_ms=dur_ms,
-                        result=tool_result,
+                        result_chars=len(str(tool_result or "")),
                         state=action.state.value,
                         profile_id=self.profile_id,
                     )
@@ -603,6 +816,7 @@ class LiveActionOrchestrator:
                         flush=True,
                     )
 
+            self.task_context.touch_action(action.action_id)
             self._refresh_plan_activity(plan)
             await self._notify_plan_updated(plan)
 
@@ -612,6 +826,12 @@ class LiveActionOrchestrator:
         return tool_result
 
     def _invoke_tool_sync(self, action: ActionItem) -> Any:
+        from utils.jarvis_i18n import language_scope
+
+        with language_scope(action.language or self.language), contextual_execution_scope(action.contextual_permit):
+            return self._invoke_localized_tool(action)
+
+    def _invoke_localized_tool(self, action: ActionItem) -> Any:
         invoker = self._invoke_tool
         if invoker is None:
             from core.brain.tool_manager import execute_tool_receipt
@@ -619,16 +839,16 @@ class LiveActionOrchestrator:
             return execute_tool_receipt(
                 action.name,
                 dict(action.args),
-                f"Live voice command: {action.name}",
+                action.user_text or f"Live voice command: {action.name}",
                 "gemini_live",
                 self.profile_id,
                 f"live-{self.session_id}",
-                action.action_id,
+                action.call_id or action.action_id,
             )
         return invoker(
             action.name,
             dict(action.args),
-            f"Live voice command: {action.name}",
+            action.user_text or f"Live voice command: {action.name}",
             "gemini_live",
             self.profile_id,
         )
@@ -648,7 +868,7 @@ class LiveActionOrchestrator:
             status=ReceiptStatus.SUCCEEDED,
             result=result,
             user_message=message,
-            verified=True,
+            verified=False,
             diagnostic_code="",
         )
 
@@ -660,6 +880,10 @@ class LiveActionOrchestrator:
                 if action._worker_task is not None and not action._worker_task.done():
                     return True
         return False
+
+    @property
+    def has_active_workers(self) -> bool:
+        return any(not task.done() for task in self._worker_tasks)
 
     def _worker_finished(
         self,
@@ -674,6 +898,7 @@ class LiveActionOrchestrator:
             return
 
         action.worker_completed_at = time.time()
+        self.task_context.touch_action(action.action_id)
 
         try:
             result = worker_task.result()

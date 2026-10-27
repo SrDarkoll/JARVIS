@@ -33,6 +33,39 @@ def _run_node_live_voice_assertions(assertions: str) -> None:
 
 
 @pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_failed_typed_delivery_is_visible_without_terminating_the_voice_session():
+    _run_node_live_voice_assertions("""
+const view = liveVoice.liveVoiceErrorView({code: 'live_text_not_delivered'}, key => key);
+if (view.terminal || view.code !== 'live_text_not_delivered') process.exit(1);
+globalThis.window = {location: {protocol: 'http:', host: 'localhost:5002'}};
+globalThis.WebSocket = {OPEN: 1};
+const client = new liveVoice.LiveVoiceClient();
+if (client.sendUserText('otra vez') !== false) process.exit(2);
+let calls = 0;
+client.ws = {readyState: 1, bufferedAmount: 0, send() { calls++; }};
+client.inputPaused = false;
+if (client.sendUserText('Iamramidev') !== true || calls !== 1) process.exit(3);
+""")
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_live_voice_ticket_url_never_contains_device_token_or_profile_override():
+    _run_node_live_voice_assertions(
+        """
+const url = new URL(liveVoice.buildLiveVoiceSocketUrl(
+    { protocol: 'https:', host: 'jarvis.tail123.ts.net' },
+    { language: 'es', profileId: 'telegram_user', mode: 'gemini_live', websocketTicket: 'one-use-ticket' }
+));
+if (url.protocol !== 'wss:') process.exit(1);
+if (url.searchParams.get('ws_ticket') !== 'one-use-ticket') process.exit(2);
+if (url.searchParams.has('profile_id')) process.exit(3);
+if (url.searchParams.has('device_token')) process.exit(4);
+if (url.searchParams.get('lang') !== 'es') process.exit(5);
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
 def test_barge_in_detector_triggers_only_when_assistant_speaking():
     _run_node_live_voice_assertions(
         """
@@ -372,6 +405,86 @@ player.interrupt();
 
 
 @pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_provider_completion_does_not_override_audio_still_playing():
+    _run_node_live_voice_assertions(
+        """
+const player = { isPlaying: true, interrupt() {}, enqueuePcmChunk() {} };
+const client = new liveVoice.LiveVoiceClient({ player });
+const states = [];
+client.onStateChange = state => states.push(state);
+client.handleWsMessage({data: JSON.stringify({type: 'state_change', state: 'listening'})});
+client.handleWsMessage({data: JSON.stringify({type: 'turn_complete'})});
+if (states.some(state => state !== 'speaking')) throw new Error(JSON.stringify(states));
+player.isPlaying = false;
+client.handleWsMessage({data: JSON.stringify({type: 'turn_complete'})});
+if (states.at(-1) !== 'listening') throw new Error('Playback completion was ignored');
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_reconnect_discards_stale_playback_and_preserves_input_pause():
+    _run_node_live_voice_assertions(
+        """
+let interruptions = 0;
+const player = { isPlaying: true, interrupt() { this.isPlaying = false; interruptions++; } };
+const client = new liveVoice.LiveVoiceClient({ player });
+client.handleWsMessage({data: JSON.stringify({type: 'session_reconnecting'})});
+if (interruptions !== 1 || !client.audioSendPaused) throw new Error('Stale audio survived reconnect');
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_cancelled_audio_end_event_cannot_hide_reconnecting_state():
+    _run_node_live_voice_assertions(
+        """
+class FakeAudioContext {
+    constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
+    createBuffer(_channels, samples, rate) { return { duration: samples / rate, getChannelData() { return { set() {} }; } }; }
+    createBufferSource() {
+        return { connect() {}, disconnect() {}, start() {},
+            stop() { queueMicrotask(() => this.onended?.()); } };
+    }
+}
+globalThis.window = { AudioContext: FakeAudioContext };
+const client = new liveVoice.LiveVoiceClient();
+const states = [];
+client.onStateChange = state => states.push(state);
+client.player.enqueuePcmChunk(new ArrayBuffer(48000));
+client.handleWsMessage({data: JSON.stringify({type: 'session_reconnecting'})});
+await new Promise(resolve => setTimeout(resolve, 180));
+if (states.at(-1) !== 'reconnecting') throw new Error(JSON.stringify(states));
+if (!client.audioSendPaused) throw new Error('Input must stay paused');
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_default_playback_buffer_keeps_a_normal_burst_without_cutting_sentences():
+    _run_node_live_voice_assertions(
+        """
+const sources = [];
+class FakeAudioContext {
+    constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
+    createBuffer(_channels, samples, rate) { return { duration: samples / rate, getChannelData() { return { set() {} }; } }; }
+    createBufferSource() {
+        const source = { stopped: false, connect() {}, disconnect() {}, start() {}, stop() { this.stopped = true; } };
+        sources.push(source); return source;
+    }
+}
+globalThis.window = { AudioContext: FakeAudioContext };
+const player = new liveVoice.AudioBufferQueuePlayer();
+for (let index = 0; index < 8; index++) player.enqueuePcmChunk(new ArrayBuffer(48000));
+if (sources.some(source => source.stopped)) throw new Error('A normal generated response was truncated');
+if (player.nextPlayTime !== 8) throw new Error('Speech was not scheduled continuously');
+player.interrupt();
+if (player.activeSources.length !== 0) throw new Error('Barge-in did not clear lookahead audio');
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
 def test_live_voice_errors_map_to_stable_copy_without_raw_details():
     _run_node_live_voice_assertions(
         """
@@ -389,3 +502,114 @@ const degraded = liveVoice.liveVoiceErrorView({ code: 'live_audio_transport_degr
 if (degraded.terminal) process.exit(5);
 """
     )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_provider_transcription_prevents_duplicate_browser_recognition():
+    _run_node_live_voice_assertions(
+        """
+let recognitionStarts = 0;
+class FakeRecognition {
+    start() { recognitionStarts += 1; }
+    stop() {}
+}
+globalThis.window = {
+    location: { protocol: 'http:', host: 'localhost:5002' },
+    SpeechRecognition: FakeRecognition,
+};
+globalThis.WebSocket = { OPEN: 1 };
+const capture = {
+    audioContext: null, mediaStream: null, captureNode: null,
+    async prime() {}, async start() {}, async stop() {},
+};
+const client = new liveVoice.LiveVoiceClient({ capture });
+client.ws = { readyState: 1, bufferedAmount: 0, send() {} };
+client.isConnected = true;
+client.activeMode = 'gemini_live';
+client.serverInputTranscriptionEnabled = true;
+await client.startStreaming();
+if (recognitionStarts !== 0 || client.rec) process.exit(1);
+await client.disconnect();
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_hybrid_mode_keeps_browser_transcription_fallback():
+    _run_node_live_voice_assertions(
+        """
+let recognitionStarts = 0;
+class FakeRecognition {
+    start() { recognitionStarts += 1; }
+    stop() {}
+}
+globalThis.window = {
+    location: { protocol: 'http:', host: 'localhost:5002' },
+    SpeechRecognition: FakeRecognition,
+};
+globalThis.WebSocket = { OPEN: 1 };
+const capture = {
+    audioContext: null, mediaStream: null, captureNode: null,
+    async prime() {}, async start() {}, async stop() {},
+};
+const client = new liveVoice.LiveVoiceClient({ capture });
+client.ws = { readyState: 1, bufferedAmount: 0, send() {} };
+client.isConnected = true;
+client.activeMode = 'hybrid_stream';
+await client.startStreaming();
+if (recognitionStarts !== 1 || !client.rec) process.exit(1);
+await client.disconnect();
+"""
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_live_transcript_commit_and_provider_config_contracts():
+    _run_node_live_voice_assertions(
+        """
+if (liveVoice.shouldCommitLiveTranscript({ is_final: false })) process.exit(1);
+if (!liveVoice.shouldCommitLiveTranscript({ is_final: true })) process.exit(2);
+if (liveVoice.shouldCommitLiveTranscript({})) process.exit(3);
+
+globalThis.window = { location: { protocol: 'http:', host: 'localhost:5002' } };
+const client = new liveVoice.LiveVoiceClient();
+client.handleWsMessage({ data: JSON.stringify({
+    type: 'session_ready',
+    mode: 'gemini_live',
+    input_transcription_enabled: false,
+    output_transcription_enabled: true,
+    browser_transcription_required: true,
+}) });
+if (client.serverInputTranscriptionEnabled !== false) process.exit(4);
+if (client.serverOutputTranscriptionEnabled !== true) process.exit(5);
+if (client.browserTranscriptionRequired !== true) process.exit(6);
+"""
+    )
+
+
+def test_live_voice_frontend_loads_backend_runtime_limits():
+    api_source = (ROOT / "src/frontend/static/js/modules/api.js").read_text(
+        encoding="utf-8"
+    )
+    main_source = (ROOT / "src/frontend/static/js/main.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "async fetchLiveVoiceStatus()" in api_source
+    assert "await API.fetchLiveVoiceStatus()" in main_source
+    assert "inputChunkMs: liveStatus.input_chunk_ms" in main_source
+    assert "maxPlaybackQueueMs: liveStatus.max_playback_queue_ms" in main_source
+    assert "maxConsecutiveAudioDrops: liveStatus.max_consecutive_audio_drops" in main_source
+    assert "shouldCommitLiveTranscript(data)" in main_source
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is required for frontend checks")
+def test_classic_live_microphone_handoff_runtime_regressions():
+    result = subprocess.run(
+        [NODE, "--test", "tests/frontend_live_voice_lifecycle.cjs"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

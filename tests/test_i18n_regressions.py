@@ -335,6 +335,27 @@ def test_voice_name_introduction_is_not_simple_question():
     assert normalizar_nombre_invitado("My name is Daniel.") == "Daniel"
 
 
+def test_voice_spanish_intents_keep_accents_and_identity_routing():
+    _ensure_backend_path()
+    from voice import service as voice_service  # pyright: ignore[reportMissingImports]
+
+    assert voice_service._es_presentacion_nombre_voz("Me llamo José Ángel.")
+    assert not voice_service._es_pregunta_simple_voz("Me llamo José Ángel.")
+    assert voice_service._es_pregunta_simple_voz("¿Qué día es hoy?")
+    assert voice_service._clasificar_peticion_voz("¿Quién soy?")["mode"] == "identity_query"
+    assert voice_service._clasificar_peticion_voz("¿Cómo te llamas?")["mode"] == "fast_info"
+    assert voice_service._clasificar_peticion_voz("Envía un mensaje a Ana")["mode"] == "secure"
+
+
+def test_voice_service_source_contains_no_mojibake_literals():
+    service_path = os.path.join(ROOT, "src", "backend", "voice", "service.py")
+    with open(service_path, encoding="utf-8") as source_file:
+        source = source_file.read()
+
+    for marker in ("Ã", "Â", "â€”", "�"):
+        assert marker not in source
+
+
 def test_spotify_playback_message_is_localized():
     _ensure_backend_path()
     from modules.spotify import messages as spotify_messages

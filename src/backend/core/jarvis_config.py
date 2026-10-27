@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -31,6 +32,10 @@ class RuntimeFeatures:
     briefing_enabled: bool
     telegram_enabled: bool
     monitoring_enabled: bool
+    computer_use_enabled: bool
+    proactive_tools_enabled: bool
+    cognitive_memory_enabled: bool
+    action_plans_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -55,15 +60,26 @@ class LiveVoiceConfig:
     stable_connection_seconds: float
     context_compression_enabled: bool
     session_resumption_enabled: bool
+    context_compression_trigger_tokens: int
+    context_compression_target_tokens: int
+    input_transcription_enabled: bool
+    output_transcription_enabled: bool
     recent_turns: int
     context_char_limit: int
     input_chunk_ms: int
     max_playback_queue_ms: int
     max_consecutive_audio_drops: int
     auto_fallback_enabled: bool
+    model_configuration_error: str = ""
+    response_timeout_seconds: float = 20.0
+
+    @property
+    def provider_preview(self) -> bool:
+        return self.model not in _STABLE_LIVE_MODELS
 
 
-_LIVE_MODELS = {"gemini-3.1-flash-live-preview"}
+_DEFAULT_LIVE_MODEL = "gemini-3.8-live"
+_STABLE_LIVE_MODELS = {"gemini-3.8-live", "gemini-3.8-live-extended-thinking"}
 _LIVE_VOICES = {"Aoede", "Charon", "Fenrir", "Kore", "Puck"}
 
 
@@ -147,11 +163,18 @@ def resolve_live_voice_config(
     source = os.environ if env is None else env
     raw_model = str(
         source.get("JARVIS_GEMINI_LIVE_MODEL")
-        or "gemini-3.1-flash-live-preview"
+        or _DEFAULT_LIVE_MODEL
     ).strip()
-    model = raw_model.removeprefix("models/")
-    if model not in _LIVE_MODELS:
-        model = "gemini-3.1-flash-live-preview"
+    model = raw_model.removeprefix("models/") or _DEFAULT_LIVE_MODEL
+    valid_model = (
+        len(model) <= 128
+        and re.fullmatch(r"gemini-[a-z0-9]+(?:[.-][a-z0-9]+)*", model) is not None
+        and re.search(r"-live(?:-|$)", model) is not None
+        and not {"transcribe", "translate", "tts"}.intersection(model.split("-"))
+    )
+    model_error = "" if valid_model else "gemini_live_model_invalid"
+    if model_error:
+        model = _DEFAULT_LIVE_MODEL
 
     voice_name = str(
         source.get("JARVIS_GEMINI_LIVE_VOICE") or "Charon"
@@ -159,8 +182,24 @@ def resolve_live_voice_config(
     if voice_name not in _LIVE_VOICES:
         voice_name = "Charon"
 
+    compression_trigger_tokens = _read_int(
+        source,
+        "JARVIS_LIVE_COMPRESSION_TRIGGER_TOKENS",
+        25_000,
+        8_000,
+        100_000,
+    )
+    compression_target_tokens = _read_int(
+        source,
+        "JARVIS_LIVE_COMPRESSION_TARGET_TOKENS",
+        8_000,
+        2_000,
+        compression_trigger_tokens,
+    )
+
     return LiveVoiceConfig(
         model=model,
+        model_configuration_error=model_error,
         voice_name=voice_name,
         setup_timeout_seconds=_read_float(
             source,
@@ -168,6 +207,9 @@ def resolve_live_voice_config(
             10.0,
             2.0,
             30.0,
+        ),
+        response_timeout_seconds=_read_float(
+            source, "JARVIS_LIVE_RESPONSE_TIMEOUT_SECONDS", 20.0, 5.0, 90.0,
         ),
         max_reconnect_attempts=_read_int(
             source,
@@ -197,8 +239,24 @@ def resolve_live_voice_config(
             1.0,
             30.0,
         ),
-        context_compression_enabled=True,
+        context_compression_enabled=_read_bool(
+            source,
+            "JARVIS_LIVE_CONTEXT_COMPRESSION_ENABLED",
+            True,
+        ),
         session_resumption_enabled=False,
+        context_compression_trigger_tokens=compression_trigger_tokens,
+        context_compression_target_tokens=compression_target_tokens,
+        input_transcription_enabled=_read_bool(
+            source,
+            "JARVIS_LIVE_INPUT_TRANSCRIPTION_ENABLED",
+            True,
+        ),
+        output_transcription_enabled=_read_bool(
+            source,
+            "JARVIS_LIVE_OUTPUT_TRANSCRIPTION_ENABLED",
+            True,
+        ),
         recent_turns=_read_int(
             source,
             "JARVIS_LIVE_RECENT_TURNS",
@@ -223,9 +281,9 @@ def resolve_live_voice_config(
         max_playback_queue_ms=_read_int(
             source,
             "JARVIS_LIVE_PLAYBACK_QUEUE_MS",
-            2000,
+            15000,
             250,
-            5000,
+            30000,
         ),
         max_consecutive_audio_drops=_read_int(
             source,
@@ -261,6 +319,26 @@ def resolve_runtime_features(env: Mapping[str, str] | None = None) -> RuntimeFea
         briefing_enabled=_read_bool(source, "JARVIS_BRIEFING_ENABLED", optional_default),
         telegram_enabled=_read_bool(source, "JARVIS_TELEGRAM_ENABLED", optional_default),
         monitoring_enabled=_read_bool(source, "JARVIS_MONITORING_ENABLED", optional_default),
+        computer_use_enabled=_read_bool(
+            source,
+            "JARVIS_COMPUTER_USE_ENABLED",
+            optional_default,
+        ),
+        proactive_tools_enabled=_read_bool(
+            source,
+            "JARVIS_PROACTIVE_TOOLS_ENABLED",
+            optional_default,
+        ),
+        cognitive_memory_enabled=_read_bool(
+            source,
+            "JARVIS_COGNITIVE_MEMORY_ENABLED",
+            optional_default,
+        ),
+        action_plans_enabled=_read_bool(
+            source,
+            "JARVIS_ACTION_PLANS_ENABLED",
+            optional_default,
+        ),
     )
 
 
@@ -337,6 +415,10 @@ PLUGINS_ENABLED = RUNTIME_FEATURES.plugins_enabled
 BRIEFING_ENABLED = RUNTIME_FEATURES.briefing_enabled
 TELEGRAM_ENABLED = RUNTIME_FEATURES.telegram_enabled
 MONITORING_ENABLED = RUNTIME_FEATURES.monitoring_enabled
+COMPUTER_USE_ENABLED = RUNTIME_FEATURES.computer_use_enabled
+PROACTIVE_TOOLS_ENABLED = RUNTIME_FEATURES.proactive_tools_enabled
+COGNITIVE_MEMORY_ENABLED = RUNTIME_FEATURES.cognitive_memory_enabled
+ACTION_PLANS_ENABLED = RUNTIME_FEATURES.action_plans_enabled
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("JARVIS_GROQ_MODEL", "qwen/qwen3.6-27b")
 GROQ_VISION_MODEL = os.getenv("JARVIS_GROQ_VISION_MODEL", "qwen/qwen3.6-27b")

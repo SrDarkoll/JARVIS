@@ -96,6 +96,13 @@ def test_tool_manager_exposes_typed_receipt_entrypoint(monkeypatch):
     assert captured["step"].step_id == "step-live"
 
 
+def test_legacy_tool_value_uses_public_message_instead_of_structured_metadata():
+    from core.brain import tool_manager
+
+    receipt = _receipt(ReceiptStatus.PARTIAL, result={"routine": "work", "receipts": []})
+    assert tool_manager._receipt_value(receipt) == "controlled message"
+
+
 @pytest.mark.parametrize(
     ("receipt", "expected_state"),
     [
@@ -104,6 +111,7 @@ def test_tool_manager_exposes_typed_receipt_entrypoint(monkeypatch):
         (_receipt(ReceiptStatus.BLOCKED, "tool_policy_blocked"), ActionState.BLOCKED),
         (_receipt(ReceiptStatus.UNAVAILABLE), ActionState.UNAVAILABLE),
         (_receipt(ReceiptStatus.FAILED), ActionState.FAILED),
+        (_receipt(ReceiptStatus.PARTIAL), ActionState.PARTIAL),
     ],
 )
 def test_live_orchestrator_preserves_receipt_state(receipt, expected_state):
@@ -146,4 +154,68 @@ def test_live_orchestrator_marks_confirmation_as_waiting_not_completed():
         assert action.requires_confirmation is True
         assert action not in orchestrator.current_plan.completed_actions()
 
+    asyncio.run(run())
+
+
+def test_live_orchestrator_uses_provider_call_id_for_exactly_once_receipt(monkeypatch):
+    from core.brain import tool_manager
+
+    captured = {}
+
+    def execute_tool_receipt(*_args):
+        captured["request_id"] = _args[-2]
+        captured["step_id"] = _args[-1]
+        return _receipt(ReceiptStatus.SUCCEEDED, verified=True)
+
+    monkeypatch.setattr(tool_manager, "execute_tool_receipt", execute_tool_receipt)
+    orchestrator = LiveActionOrchestrator(session_id="stable-session")
+    action = orchestrator.enqueue_action("obtener_clima", {}, "provider-call-42")
+
+    orchestrator._invoke_tool_sync(action)
+
+    assert captured == {
+        "request_id": "live-stable-session",
+        "step_id": "provider-call-42",
+    }
+
+
+@pytest.mark.parametrize("tool_name", ["reproducir_en_spotify", "reproducir_mix_spotify", "agregar_a_cola_spotify"])
+def test_spotify_live_action_budget_covers_desktop_startup_and_verification(monkeypatch, tool_name):
+    from core import jarvis_config
+
+    monkeypatch.setattr(jarvis_config, "SPOTIFY_DESKTOP_START_TIMEOUT", 20.0)
+    monkeypatch.setattr(jarvis_config, "SPOTIFY_DESKTOP_ACTION_TIMEOUT", 8.0)
+
+    async def run():
+        timeouts = []
+        real_wait_for = asyncio.wait_for
+
+        async def tracked_wait_for(awaitable, *, timeout):
+            timeouts.append(timeout)
+            return await real_wait_for(awaitable, timeout=timeout)
+
+        monkeypatch.setattr(asyncio, "wait_for", tracked_wait_for)
+        orchestrator = LiveActionOrchestrator(session_id="spotify-time-budget", invoke_tool=lambda *_args: _receipt(ReceiptStatus.SUCCEEDED))
+        action = orchestrator.enqueue_action(tool_name, {}, "spotify-budget")
+        await orchestrator.execute_action(action, lambda *_args: None)
+        assert timeouts and 86 <= timeouts[0] <= 120
+        assert action.state is ActionState.SUCCEEDED
+    asyncio.run(run())
+
+
+def test_explicit_live_action_timeout_is_preserved_for_spotify(monkeypatch):
+    async def run():
+        timeouts = []
+        real_wait_for = asyncio.wait_for
+
+        async def tracked_wait_for(awaitable, *, timeout):
+            timeouts.append(timeout)
+            return await real_wait_for(awaitable, timeout=timeout)
+
+        monkeypatch.setattr(asyncio, "wait_for", tracked_wait_for)
+        orchestrator = LiveActionOrchestrator(session_id="custom-time-budget", action_timeout_seconds=0.1,
+                                             invoke_tool=lambda *_args: _receipt(ReceiptStatus.SUCCEEDED))
+        action = orchestrator.enqueue_action("reproducir_en_spotify", {}, "custom-budget")
+        await orchestrator.execute_action(action, lambda *_args: None)
+        assert timeouts == [0.1]
     asyncio.run(run())

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -10,6 +13,23 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _desktop_bind() -> tuple[str, int]:
+    """Resolve the desktop URL from the same .env the backend uses."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT_DIR / ".env")
+    except (ImportError, OSError):
+        pass
+    raw_host = str(os.getenv("JARVIS_HOST", "localhost") or "localhost").strip() or "localhost"
+    try:
+        port = int(str(os.getenv("JARVIS_PORT", "5002") or "5002").strip())
+    except (TypeError, ValueError):
+        port = 5002
+    ui_host = "localhost" if raw_host in {"0.0.0.0", "::", "127.0.0.1", "localhost"} or ":" in raw_host else raw_host
+    return ui_host, port
 
 
 def _skip_venv_reexec() -> bool:
@@ -87,11 +107,29 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 
-def is_backend_running(url):
+def is_backend_running(url, *, expected_nonce: str | None = None):
     try:
-        response = requests.get(f"{url}/api/status", timeout=1)
-        return response.status_code == 200
-    except requests.RequestException:
+        response = requests.get(f"{url}/api/health", timeout=1)
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        if not isinstance(payload, dict):
+            return False
+        if (
+            payload.get("status") != "online"
+            or payload.get("service") != "jarvis"
+            or payload.get("api_version") != 1
+            or not str(payload.get("instance_id") or "").strip()
+        ):
+            return False
+        if expected_nonce:
+            expected_hash = hashlib.sha256(
+                expected_nonce.encode("utf-8")
+            ).hexdigest()
+            supplied_hash = str(payload.get("startup_nonce_sha256") or "")
+            return hmac.compare_digest(supplied_hash, expected_hash)
+        return True
+    except (requests.RequestException, TypeError, ValueError):
         return False
 
 
@@ -99,31 +137,37 @@ def start_app():
     # 1. Route configuration
     root_dir = os.path.dirname(os.path.abspath(__file__))
     backend_script = os.path.join(root_dir, "src", "backend", "jarvis_backend.py")
-    cleanup_dir = None
+    cleanup_dirs: set[str] = set()
+
+    def register_temporary_storage(path: str | None) -> None:
+        if path:
+            cleanup_dirs.add(os.path.abspath(path))
 
     def cleanup_temporary_storage():
-        nonlocal cleanup_dir
-        if not cleanup_dir:
-            return
-        temporary_dir = cleanup_dir
-        cleanup_dir = None
-        shutil.rmtree(temporary_dir, ignore_errors=True)
+        while cleanup_dirs:
+            temporary_dir = cleanup_dirs.pop()
+            shutil.rmtree(temporary_dir, ignore_errors=True)
 
     try:
         try:
             from core.desktop_session import load_desktop_session
 
-            desktop_session = load_desktop_session(port=5002)
+            ui_host, ui_port = _desktop_bind()
+            desktop_session = load_desktop_session(port=ui_port)
             url = desktop_session.origin
             webview_storage_dir = desktop_session.webview_storage_dir
-            cleanup_dir = getattr(desktop_session, "cleanup_dir", None)
+            register_temporary_storage(
+                getattr(desktop_session, "cleanup_dir", None)
+            )
         except Exception:
             print(
                 "[SYSTEM] Persistent desktop session unavailable; "
                 "using temporary storage."
             )
-            url = "http://localhost:5002"
+            ui_host, ui_port = _desktop_bind()
+            url = f"http://{ui_host}:{ui_port}"
             cleanup_dir = tempfile.mkdtemp(prefix="jarvis-desktop-emergency-")
+            register_temporary_storage(cleanup_dir)
             try:
                 os.chmod(cleanup_dir, 0o700)
             except OSError:
@@ -136,16 +180,20 @@ def start_app():
         backend_proc = None
         if not is_backend_running(url):
             print("[SYSTEM] Starting backend server...")
+            startup_nonce = secrets.token_urlsafe(32)
+            backend_env = os.environ.copy()
+            backend_env["JARVIS_STARTUP_NONCE"] = startup_nonce
             # Inherit stdout/stderr so startup diagnostics remain visible.
             backend_proc = subprocess.Popen(
                 [sys.executable, backend_script],
-                cwd=root_dir
+                cwd=root_dir,
+                env=backend_env,
             )
 
             # Wait up to 90s because local ML models can be heavy.
             attempts = 0
             while attempts < 90:
-                if is_backend_running(url):
+                if is_backend_running(url, expected_nonce=startup_nonce):
                     print("[SYSTEM] Server ready.")
                     break
                 time.sleep(1)
@@ -197,6 +245,7 @@ def start_app():
             if "0x800700AA" in str(exc) or "recurso solicitado" in str(exc) or "EBWebView" in str(exc):
                 print("[SYSTEM] Default webview storage locked; using fresh isolated storage...")
                 fallback_storage = tempfile.mkdtemp(prefix="jarvis-webview-isolated-")
+                register_temporary_storage(fallback_storage)
                 webview.start(
                     gui=gui_engine,
                     debug=False,

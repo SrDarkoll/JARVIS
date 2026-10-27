@@ -133,31 +133,8 @@ class MonitoringService:
             obs_event("healthcheck_scheduler_error", error=str(e)[:200])
 
     def _check_reminders_task(self):
-        """Scheduled task to check pending reminders."""
-        ahora = datetime.now()
-        reminders = services.get_reminders()
-        pendientes = []
-        try:
-            for r in reminders:
-                if ahora >= r["cuando"]:
-                    msg = f"Administrator, reminder: {r['texto']}."
-                    if self._telegram_manager:
-                        # Lanzar envío en hilo independiente para no bloquear el scheduler
-                        threading.Thread(
-                            target=self._telegram_manager.send_message_sync,
-                            args=(msg,),
-                            daemon=True,
-                        ).start()
-                else:
-                    pendientes.append(r)
-
-            if len(pendientes) != len(reminders):
-                from core import jarvis_state
-
-                with jarvis_state.recordatorios_lock:
-                    jarvis_state._recordatorios[:] = pendientes
-        except Exception as e:
-            print(f"[SCHEDULER] Error in reminders: {e}")
+        """Compatibility shim; stable reminder delivery is owned by the HUD."""
+        return None
 
     def _daily_briefing_task(self):
         """Scheduled task for daily briefing (Cron)."""
@@ -212,13 +189,6 @@ class MonitoringService:
                     "interval",
                     seconds=HEARTBEAT_INTERVALO,
                     id="healthcheck",
-                    replace_existing=True,
-                )
-                self._scheduler.add_job(
-                    self._check_reminders_task,
-                    "interval",
-                    seconds=20,
-                    id="reminders",
                     replace_existing=True,
                 )
                 self._scheduler.add_job(

@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from api.api_routes import api_bp, init_api_routes
+from core.security.browser_profile import configure_profile_sessions
 from modules.memory.models import CognitiveNode, NodeType, ProceduralSkill, SkillStep, SynapseEdge
 from modules.memory.service import unified_memory
 from quart import Quart
@@ -12,6 +13,7 @@ from quart import Quart
 @pytest.fixture
 def memory_test_app():
     app = Quart(__name__)
+    configure_profile_sessions(app)
     init_api_routes(services=None, browser_mode="test", root_dir=".")
     app.register_blueprint(api_bp)
     return app
@@ -21,6 +23,8 @@ def test_memory_graph_endpoint_empty_and_populated(memory_test_app, monkeypatch)
     async def _run():
         client = memory_test_app.test_client()
         test_profile = "graph_test_profile"
+        async with client.session_transaction() as browser_session:
+            browser_session["profile_id"] = test_profile
 
         # Mock list_cognitive_nodes and list_skills
         node1 = CognitiveNode(
@@ -80,6 +84,33 @@ def test_memory_graph_endpoint_empty_and_populated(memory_test_app, monkeypatch)
     asyncio.run(_run())
 
 
+def test_memory_graph_cannot_read_a_different_profile(memory_test_app, monkeypatch):
+    async def _run():
+        client = memory_test_app.test_client()
+        captured_profiles = []
+        async with client.session_transaction() as browser_session:
+            browser_session["profile_id"] = "active-profile"
+        monkeypatch.setattr(
+            unified_memory.store,
+            "list_cognitive_nodes",
+            lambda profile_id, limit: captured_profiles.append(profile_id) or [],
+        )
+        monkeypatch.setattr(
+            unified_memory.store,
+            "list_skills",
+            lambda profile_id, limit: captured_profiles.append(profile_id) or [],
+        )
+
+        res = await client.get("/api/memory/graph?profile_id=other-profile")
+        data = await res.get_json()
+
+        assert res.status_code == 200
+        assert data["profile_id"] == "active-profile"
+        assert captured_profiles == ["active-profile", "active-profile"]
+
+    asyncio.run(_run())
+
+
 def test_memory_graph_limit_clamping_and_fallback(memory_test_app, monkeypatch):
     async def _run():
         client = memory_test_app.test_client()
@@ -110,3 +141,23 @@ def test_memory_graph_limit_clamping_and_fallback(memory_test_app, monkeypatch):
 
     asyncio.run(_run())
 
+
+def test_memory_graph_hides_storage_error_details(memory_test_app, monkeypatch):
+    async def _run():
+        client = memory_test_app.test_client()
+        monkeypatch.setattr(
+            unified_memory.store,
+            "list_cognitive_nodes",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("database_password=super-secret")
+            ),
+        )
+
+        res = await client.get("/api/memory/graph")
+        data = await res.get_json()
+
+        assert res.status_code == 500
+        assert data == {"ok": False, "error": "memory_graph_unavailable"}
+        assert "super-secret" not in (await res.get_data(as_text=True))
+
+    asyncio.run(_run())

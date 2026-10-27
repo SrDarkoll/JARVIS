@@ -306,3 +306,93 @@ def test_launcher_uses_unique_emergency_storage_and_cleans_it(
     assert created[0] not in output
     assert "private path must not be logged" not in output
 
+
+def test_backend_probe_requires_jarvis_identity_and_matching_nonce(monkeypatch):
+    import hashlib
+
+    import start_app
+
+    requested_urls = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    payload = {
+        "status": "online",
+        "service": "jarvis",
+        "api_version": 1,
+        "instance_id": "instance-1",
+        "startup_nonce_sha256": hashlib.sha256(b"expected-nonce").hexdigest(),
+    }
+    monkeypatch.setattr(
+        start_app.requests,
+        "get",
+        lambda url, timeout: requested_urls.append(url) or Response(payload),
+    )
+
+    assert start_app.is_backend_running("http://localhost:5002") is True
+    assert start_app.is_backend_running(
+        "http://localhost:5002",
+        expected_nonce="expected-nonce",
+    ) is True
+    assert start_app.is_backend_running(
+        "http://localhost:5002",
+        expected_nonce="wrong-nonce",
+    ) is False
+    assert requested_urls == ["http://localhost:5002/api/health"] * 3
+
+    payload["service"] = "unrelated-service"
+    assert start_app.is_backend_running("http://localhost:5002") is False
+
+
+def test_launcher_cleans_locked_webview_fallback_storage(monkeypatch, tmp_path):
+    import start_app
+
+    fake_window = _FakeWindow()
+    storage = tmp_path / "persistent-webview"
+    storage.mkdir()
+    session = desktop_session.DesktopSession(
+        origin="http://localhost:5002",
+        webview_storage_dir=str(storage),
+        session_file=str(tmp_path / "desktop_session.json"),
+    )
+    created = []
+    real_mkdtemp = start_app.tempfile.mkdtemp
+
+    def local_mkdtemp(*, prefix):
+        path = real_mkdtemp(prefix=prefix, dir=tmp_path)
+        created.append(path)
+        return path
+
+    starts = 0
+
+    def start_then_close(**_kwargs):
+        nonlocal starts
+        starts += 1
+        if starts == 1:
+            raise RuntimeError("0x800700AA")
+        fake_window.events.closed.handler()
+
+    monkeypatch.setattr(desktop_session, "load_desktop_session", lambda **_kwargs: session)
+    monkeypatch.setattr(start_app, "is_backend_running", lambda _url: True)
+    monkeypatch.setattr(start_app.tempfile, "mkdtemp", local_mkdtemp)
+    monkeypatch.setattr(start_app.webview, "create_window", lambda *_a, **_kw: fake_window)
+    monkeypatch.setattr(start_app.webview, "start", start_then_close)
+    monkeypatch.setattr(
+        start_app.os,
+        "_exit",
+        lambda _code: (_ for _ in ()).throw(_ExitCalled()),
+    )
+
+    with pytest.raises(_ExitCalled):
+        start_app.start_app()
+
+    assert len(created) == 1
+    assert not Path(created[0]).exists()
+

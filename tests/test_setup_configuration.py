@@ -27,6 +27,9 @@ def test_provider_payload_accepts_only_bounded_gemini_or_groq_keys():
         with pytest.raises(SetupConfigurationError, match="invalid_key_format"):
             validate_provider_setup("groq", key, True)
 
+    with pytest.raises(SetupConfigurationError, match="invalid_key_format"):
+        validate_provider_setup("groq", "short", False)
+
     with pytest.raises(SetupConfigurationError, match="invalid_request"):
         validate_provider_setup("groq", "q" * 24, False)
 

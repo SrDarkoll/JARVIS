@@ -1,6 +1,7 @@
 import logging
 import threading
 
+import pytest
 from modules.spotify.desktop.controller import SpotifyDesktopController
 from modules.spotify.desktop.models import (
     AutomationState,
@@ -180,6 +181,77 @@ def test_verified_candidate_reports_success():
     assert result.artist == "Vicentico"
     assert result.states[-1] is AutomationState.COMPLETE
     assert uia.activated == ["expected"]
+
+
+def test_identified_track_without_playback_state_is_not_confirmed():
+    uia = FakeUIA([expected_candidate()], now_playing=("No Te Apartes de Mí", "Vicentico"))
+    uia.player_state = None
+    clock = FakeClock()
+
+    result = make_controller(FakeWindowAdapter(), uia, clock=clock).play(request())
+
+    assert not result.ok
+    assert result.message_key == "spotify_playback_not_verified"
+    assert uia.control_calls == []
+
+
+def test_warm_window_waits_for_lazy_accessibility_search():
+    class LazySearch(FakeUIA):
+        attempts = 0
+
+        def search(self, handle, query):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise RuntimeError("spotify_search_unavailable")
+            super().search(handle, query)
+
+    uia = LazySearch([expected_candidate()], now_playing=("No Te Apartes de Mí", "Vicentico"))
+    clock = FakeClock()
+    result = make_controller(FakeWindowAdapter(), uia, clock=clock).play(request())
+    assert result.ok
+    assert uia.attempts == 3
+
+
+def test_existing_spotify_window_can_still_be_loading_after_restore():
+    clock = FakeClock()
+
+    class RestoringUIA(FakeUIA):
+        def search(self, handle, query):
+            if clock.monotonic() < 3.0:
+                raise RuntimeError("spotify_search_unavailable")
+            super().search(handle, query)
+
+    uia = RestoringUIA([expected_candidate()], now_playing=("No Te Apartes de Mí", "Vicentico"))
+    controller = SpotifyDesktopController(FakeWindowAdapter(), uia, start_timeout=5, action_timeout=1,
+                                          playback_stability=0, monotonic=clock.monotonic, sleep=clock.sleep)
+    result = controller.play(request())
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert uia.searches == [request().query]
+    assert 3 <= clock.value < 5
+
+
+def test_warm_search_resubmits_once_when_only_suggestions_are_visible():
+    class SuggestionsOnly(FakeUIA):
+        def read_candidates(self, _handle):
+            return [expected_candidate()] if len(self.searches) >= 2 else []
+
+    uia = SuggestionsOnly([], now_playing=("No Te Apartes de Mí", "Vicentico"))
+    clock = FakeClock()
+
+    result = make_controller(FakeWindowAdapter(), uia, action_timeout=2, clock=clock).play(request())
+
+    assert result.ok
+    assert uia.searches == [request().query, request().query]
+
+
+def test_no_results_do_not_cause_unbounded_search_resubmission():
+    uia = FakeUIA([])
+    clock = FakeClock()
+
+    result = make_controller(FakeWindowAdapter(), uia, action_timeout=3, clock=clock).play(request())
+
+    assert result.status is DesktopResultStatus.NOT_FOUND
+    assert len(uia.searches) <= 2
 
 
 def test_ambiguous_results_are_returned_without_clicking():
@@ -440,6 +512,192 @@ def test_transient_playback_is_not_reported_as_stable_success():
     assert result.message_key == "spotify_playback_not_verified"
 
 
+class SettlingPlaybackUIA(FakeUIA):
+    def __init__(self, states):
+        super().__init__(
+            [expected_candidate()],
+            now_playing=("No Te Apartes de M\u00ed", "Vicentico"),
+        )
+        self.states = iter(states)
+        self.last_state = states[-1]
+        self.samples = []
+
+    def playback_state(self, _handle):
+        self.last_state = next(self.states, self.last_state)
+        self.samples.append(self.last_state)
+        return self.last_state
+
+    def control(self, _handle, action):
+        self.control_calls.append(action)
+        return True
+
+
+@pytest.mark.parametrize(
+    ("states", "timeout", "stability", "minimum_elapsed"),
+    [
+        (["paused", "paused", "playing"], 8, 5.5, 5.9),
+        (["paused", "paused", "playing", "playing", None, "playing"], 2, 0.4, 1.4),
+        (["paused", "paused", "playing", "playing", "paused", "playing"], 2, 0.4, 1.4),
+    ],
+    ids=["delayed-resume", "unknown-resets-stability", "pause-resets-stability"],
+)
+def test_playback_settle_observes_single_resume_until_continuously_playing(
+    states, timeout, stability, minimum_elapsed
+):
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA(states)
+
+    result = make_controller(
+        FakeWindowAdapter(), uia, clock=clock,
+        action_timeout=timeout, playback_stability=stability,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert uia.samples[:3] == ["paused", "paused", "playing"]
+    assert uia.control_calls == ["resume"]
+    assert clock.value >= minimum_elapsed - 1e-9
+    assert clock.value <= timeout
+
+
+def test_playback_settle_persistent_pause_expires_without_repeated_toggles():
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA(["paused"])
+
+    result = make_controller(FakeWindowAdapter(), uia, clock=clock).play(request())
+
+    assert result.status is DesktopResultStatus.FAILED
+    assert result.message_key == "spotify_playback_not_verified"
+    assert clock.value == pytest.approx(1)
+    assert uia.control_calls == ["resume"]
+
+
+def test_playback_settle_does_not_extend_deadline_for_late_playback():
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA(["paused"] * 4 + ["playing"])
+
+    result = make_controller(
+        FakeWindowAdapter(), uia, clock=clock, playback_stability=0.5,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.FAILED
+    assert clock.value == pytest.approx(1)
+    assert uia.control_calls == ["resume"]
+
+
+def test_playback_settle_rejects_a_track_change_after_identity_verification(monkeypatch):
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA(["paused", "playing"])
+
+    def advance(seconds):
+        clock.value += seconds
+        if clock.value >= 0.4:
+            uia.playing = ("Another Track", "Another Artist")
+
+    monkeypatch.setattr(clock, "sleep", advance)
+    result = make_controller(
+        FakeWindowAdapter(), uia, clock=clock, playback_stability=0.4,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.FAILED
+    assert result.message_key == "spotify_playback_not_verified"
+    assert uia.control_calls == ["resume"]
+
+
+def test_playback_settle_observes_cancellation_after_accepted_resume(monkeypatch):
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA(["paused", "paused", "playing"])
+
+    def advance(seconds):
+        clock.value += seconds
+        if clock.value >= 0.4:
+            controller._next_generation()
+
+    monkeypatch.setattr(clock, "sleep", advance)
+    controller = make_controller(FakeWindowAdapter(), uia, clock=clock)
+
+    result = controller.play(request())
+
+    assert result.status is DesktopResultStatus.CANCELLED
+    assert uia.control_calls == ["resume"]
+    assert clock.value == pytest.approx(0.4)
+
+
+def test_readonly_playback_verification_can_finish_after_focus_changes(monkeypatch):
+    clock = FakeClock()
+    windows = FakeWindowAdapter()
+    uia = SettlingPlaybackUIA(["paused", "playing"])
+
+    def advance(seconds):
+        clock.value += seconds
+        if clock.value >= 0.4:
+            windows.focused = False
+
+    monkeypatch.setattr(clock, "sleep", advance)
+    result = make_controller(
+        windows, uia, clock=clock, playback_stability=0.4,
+    ).play(request())
+
+    assert result.status is DesktopResultStatus.SUCCESS
+    assert uia.control_calls == ["resume"]
+    assert clock.value >= 0.6 - 1e-9
+
+
+def test_playback_settle_never_sends_resume_after_focus_is_lost():
+    windows = FakeWindowAdapter()
+
+    class FocusChangingUIA(SettlingPlaybackUIA):
+        def playback_state(self, handle):
+            windows.focused = False
+            return super().playback_state(handle)
+
+    uia = FocusChangingUIA(["paused"])
+    result = make_controller(windows, uia).play(request())
+    assert result.status is DesktopResultStatus.FAILED
+    assert uia.control_calls == []
+
+
+def test_background_playback_verification_still_rejects_a_changed_track(monkeypatch):
+    clock = FakeClock()
+    windows = FakeWindowAdapter()
+    uia = SettlingPlaybackUIA(["playing"])
+
+    def advance(seconds):
+        clock.value += seconds
+        windows.focused = False
+        if clock.value >= 0.4:
+            uia.playing = ("Another Track", "Another Artist")
+
+    monkeypatch.setattr(clock, "sleep", advance)
+    result = make_controller(windows, uia, clock=clock, playback_stability=0.6).play(request())
+    assert result.status is DesktopResultStatus.FAILED
+    assert uia.control_calls == []
+
+
+@pytest.mark.parametrize("stage", ["identity", "playback_state"])
+def test_playback_settle_logs_the_failed_stage_without_track_metadata(stage, monkeypatch):
+    from modules.spotify.desktop import controller as controller_module
+
+    records = []
+    monkeypatch.setattr(
+        controller_module, "write_log",
+        lambda category, message, **context: records.append((category, message, context)),
+    )
+    clock = FakeClock()
+    uia = SettlingPlaybackUIA([None])
+    if stage == "identity":
+        uia.playing = ("Another Track", "Another Artist")
+
+    result = make_controller(FakeWindowAdapter(), uia, clock=clock).play(request())
+
+    assert result.status is DesktopResultStatus.FAILED
+    assert (
+        "SPOTIFY", "Desktop playback verification", {"stage": stage, "reason": "timeout"}
+    ) in records
+    assert uia.control_calls == []
+    for metadata in (request().query, expected_candidate().title, "Vicentico", "Another Track"):
+        assert metadata not in str(records)
+
+
 def test_lock_is_released_after_exception():
     class FailingUIA(FakeUIA):
         def search(self, _handle, _query):
@@ -547,7 +805,11 @@ def test_controller_writes_sanitized_matching_diagnostics(monkeypatch):
                 "candidate_count": 1,
                 "top_score": 1.0,
             },
-        )
+        ),
+        (
+            "SPOTIFY", "Desktop playback result",
+            {"status": "success", "code": "spotify_playback_started", "stage": "complete"},
+        ),
     ]
     assert "No Te Apartes" not in str(records)
 

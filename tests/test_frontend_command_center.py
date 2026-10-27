@@ -34,11 +34,17 @@ if (!command.commandStateView('processing', t).busy) process.exit(3);
 if (command.commandStateView('unknown', t).key !== 'command_state_idle') process.exit(4);
 if (command.microphoneRecoveryView('permission_denied', t).hidden) process.exit(5);
 if (!command.microphoneRecoveryView('', t).hidden) process.exit(6);
-if (!command.isSuccessfulCommandOutcome('succeeded')) process.exit(7);
-if (!command.isSuccessfulCommandOutcome('duplicate')) process.exit(8);
-if (command.isSuccessfulCommandOutcome('failed')) process.exit(9);
-if (command.isSuccessfulCommandOutcome('partial')) process.exit(10);
-if (!command.isSuccessfulCommandOutcome(undefined)) process.exit(11);
+for (const outcome of ['responded', 'accepted', 'executed', 'verified', 'duplicate', 'succeeded']) {
+  if (!command.isSuccessfulCommandOutcome(outcome)) process.exit(7);
+}
+if (command.isSuccessfulCommandOutcome('failed')) process.exit(8);
+if (command.isSuccessfulCommandOutcome('partial')) process.exit(9);
+if (command.isSuccessfulCommandOutcome('unavailable')) process.exit(10);
+if (command.isSuccessfulCommandOutcome(undefined)) process.exit(11);
+if (command.commandDoneText({ type: 'done', text: 'canonical result' }, 'tokens') !== 'canonical result') process.exit(12);
+if (command.commandDoneText({ type: 'done', response: 'legacy result' }, 'tokens') !== 'legacy result') process.exit(13);
+if (command.commandDoneText({ type: 'done' }, 'token fallback') !== 'token fallback') process.exit(14);
+if (command.commandDoneText({ type: 'status', text: 'planning' }, 'unchanged') !== 'unchanged') process.exit(15);
 """)
 
 
