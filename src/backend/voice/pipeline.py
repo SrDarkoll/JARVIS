@@ -395,7 +395,7 @@ def es_alias_owner(nombre: str) -> bool:
 # =========================================================
 
 
-def cancel_pending_voice_registration(ip: str = None) -> int:
+def cancel_pending_voice_registration(ip: str | None = None) -> int:
     """Cancela registros pendientes. Si ip=None, cancela TODOS."""
     if ip:
         return 1 if _VOICE_SESSION_STORE.cancel(ip) else 0

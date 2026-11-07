@@ -2,6 +2,8 @@
 Security Routes: security policy, proactive alerts, quick control.
 """
 
+from typing import Any
+
 from core import jarvis_state
 from core.jarvis_observability import obs_snapshot
 from core.security.browser_profile import can_manage_browser_profiles, get_browser_profile_id
@@ -9,15 +11,15 @@ from quart import Blueprint, jsonify, request
 
 security_bp = Blueprint("security", __name__)
 
-# Injected dependencies
-_security_snapshot = None
-_proactive_snapshot = None
-_actualizar_security_policy = None
-_ejecutar_accion_control = None
-SECURITY_POLICY = None
-PROACTIVE_STATE = None
-PROACTIVE_LOCK = None
-jarvis_brain = None
+# Injected by init_security_routes() before the blueprint serves requests.
+_security_snapshot: Any = None
+_proactive_snapshot: Any = None
+_actualizar_security_policy: Any = None
+_ejecutar_accion_control: Any = None
+SECURITY_POLICY: Any = None
+PROACTIVE_STATE: Any = None
+PROACTIVE_LOCK: Any = None
+jarvis_brain: Any = None
 
 
 class SecurityRoutesConfig:

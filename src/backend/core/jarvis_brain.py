@@ -3,13 +3,36 @@ Fachada de compatibilidad para el Cerebro de J.A.R.V.I.S.
 Delega toda la lógica a los módulos en core.brain.*
 """
 
+from typing import TYPE_CHECKING, Any
+
 from core import jarvis_state
 from core.brain import brain_state
+
+if TYPE_CHECKING:
+    # Static view of the lazy re-exports below; runtime imports stay deferred.
+    from core.brain.llm_engine import init_brain
+    from core.brain.processor import (
+        necesita_tools,
+        procesar_mensaje,
+        process_command,
+        stream_procesar_mensaje_events,
+    )
+    from core.brain.prompts import get_system_msg
+
+__all__ = [
+    "DEFAULT_PROFILE_ID",
+    "get_system_msg",
+    "init_brain",
+    "necesita_tools",
+    "procesar_mensaje",
+    "process_command",
+    "stream_procesar_mensaje_events",
+]
 
 DEFAULT_PROFILE_ID = jarvis_state.DEFAULT_PROFILE_ID
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "init_brain":
         from core.brain.llm_engine import init_brain
 
