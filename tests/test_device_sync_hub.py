@@ -142,6 +142,27 @@ def test_pairing_invalid_attempts_are_throttled_per_source_and_pin(tmp_path):
     assert hub.claim_pairing_pin(pin, "phone", requester_key="other-client") is not None
 
 
+def test_pairing_global_failure_cap_defeats_source_rotation(tmp_path):
+    """Rotating requester identity and guessed PINs must not allow unbounded guessing."""
+    from core.device_sync.sync_hub import MAX_GLOBAL_PAIRING_FAILURES
+
+    hub = DeviceSyncHub(str(tmp_path))
+    pin, _expires_at = hub.generate_pairing_pin(created_by_profile="owner")
+    wrong = "ZZZZZZ" if pin != "ZZZZZZ" else "YYYYYY"
+
+    for attempt in range(MAX_GLOBAL_PAIRING_FAILURES):
+        guess = f"{wrong[:4]}{attempt:02d}"
+        assert hub.claim_pairing_pin(guess, "phone", requester_key=f"spoofed-{attempt}") is None
+
+    # The cap invalidates every outstanding PIN, even for a fresh source.
+    assert hub.claim_pairing_pin(pin, "phone", requester_key="fresh-client") is None
+
+    # Once the window passes, the owner can issue a new PIN and pairing works again.
+    hub._pin_failures_global.clear()
+    new_pin, _ = hub.generate_pairing_pin(created_by_profile="owner")
+    assert hub.claim_pairing_pin(new_pin, "phone", requester_key="fresh-client") is not None
+
+
 def test_websocket_ticket_is_one_use_and_bound_to_one_path(tmp_path):
     hub = DeviceSyncHub(str(tmp_path))
     pin, _expires_at = hub.generate_pairing_pin(created_by_profile="owner")
