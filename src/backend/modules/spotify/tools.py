@@ -1,10 +1,13 @@
 """LangChain tool adapters for the Spotify service."""
 
+from core import jarvis_state
 from core.command_pipeline.models import ReceiptStatus, ToolExecutionResult
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 from modules.spotify import service
 from modules.spotify.desktop import DesktopResultStatus
+from modules.spotify.intent import remember_music_attempt
 
 
 def _outcome_metadata(
@@ -55,10 +58,38 @@ def _playback_result(outcome: service.SpotifyServicePlaybackOutcome) -> ToolExec
     )
 
 
-@tool
-def reproducir_en_spotify(cancion: str) -> ToolExecutionResult:
-    """Play music using a cached Spotify API session or Spotify Desktop."""
-    return _playback_result(service._play_outcome(cancion))
+_TITLE_HELP = (
+    "Solo el título real, sin relleno como 'pon', 'la canción' o 'en Spotify'. "
+    "Corrige errores obvios de transcripción con tu conocimiento musical."
+)
+_ARTIST_HELP = (
+    "Artista o banda, corregido (p. ej. 'Dana' -> 'Danna Paola'). Pásalo siempre "
+    "que el usuario lo diga o lo sepas con certeza; vacío si no."
+)
+
+
+class _TrackArgs(BaseModel):
+    cancion: str = Field(description=_TITLE_HELP)
+    artista: str = Field(default="", description=_ARTIST_HELP)
+
+
+@tool(args_schema=_TrackArgs)
+def reproducir_en_spotify(cancion: str, artista: str = "") -> ToolExecutionResult:
+    """Reproduce AHORA en Spotify; pasa título y artista por separado. Si hay coincidencias ambiguas, revisa choices y reintenta con el artista."""
+    clean_artist = str(artista or "").strip()
+    if clean_artist:
+        outcome = service._play_outcome(cancion, artist=clean_artist)
+    else:
+        outcome = service._play_outcome(cancion)
+    # A failed or ambiguous attempt opens a short window in which the user's
+    # correction ("la de Danna Paola") is accepted as a follow-up request.
+    remember_music_attempt(
+        jarvis_state.get_active_profile_id(),
+        str(cancion or ""),
+        clean_artist,
+        succeeded=bool(outcome.ok or outcome.accepted),
+    )
+    return _playback_result(outcome)
 
 
 @tool
@@ -73,10 +104,12 @@ def controlar_reproduccion(accion: str) -> ToolExecutionResult:
     return _mutation_result(service._control_outcome(accion))
 
 
-@tool
-def agregar_a_cola_spotify(cancion: str) -> ToolExecutionResult:
-    """Añade una canción a la cola de reproducción de Spotify sin interrumpir lo que suena actualmente."""
-    return _mutation_result(service._queue_outcome(cancion))
+@tool(args_schema=_TrackArgs)
+def agregar_a_cola_spotify(cancion: str, artista: str = "") -> ToolExecutionResult:
+    """Añade a la COLA de Spotify sin interrumpir; solo si el usuario pide la cola explícitamente."""
+    clean_artist = str(artista or "").strip()
+    query = f"{str(cancion or '').strip()} {clean_artist}".strip() if clean_artist else cancion
+    return _mutation_result(service._queue_outcome(query))
 
 
 @tool

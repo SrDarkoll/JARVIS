@@ -287,7 +287,18 @@ def _parse_spotify_desktop_query(song: str) -> tuple[str, str]:
     return title.lower(), artist.lower()
 
 
-def _spotify_desktop_request(song: str) -> SpotifyRequest:
+def _spotify_desktop_request(song: str, artist: str = "") -> SpotifyRequest:
+    explicit_artist = " ".join(str(artist or "").split()).lower()
+    if explicit_artist:
+        # The caller (usually the LLM) already separated title and artist; do not
+        # re-split the title on connectors such as "de", which songs often contain.
+        title = _PREFIJOS_SPOTIFY.sub("", str(song or "")).strip().lower()
+        return SpotifyRequest(
+            raw=f"{song} {artist}".strip(),
+            query=f"{title} {explicit_artist}".strip(),
+            title=title,
+            artist=explicit_artist,
+        )
     title, artist = _parse_spotify_desktop_query(song)
     natural_query = " ".join(part for part in (title, artist) if part).strip()
     if not natural_query:
@@ -300,12 +311,12 @@ def _spotify_desktop_request(song: str) -> SpotifyRequest:
     )
 
 
-def _spotify_desktop_result(song: str) -> SpotifyDesktopResult:
-    return _get_desktop_controller().play(_spotify_desktop_request(song))
+def _spotify_desktop_result(song: str, artist: str = "") -> SpotifyDesktopResult:
+    return _get_desktop_controller().play(_spotify_desktop_request(song, artist))
 
 
-def _spotify_play_desktop_outcome(song: str) -> SpotifyServicePlaybackOutcome:
-    result = _spotify_desktop_result(song)
+def _spotify_play_desktop_outcome(song: str, artist: str = "") -> SpotifyServicePlaybackOutcome:
+    result = _spotify_desktop_result(song, artist) if artist else _spotify_desktop_result(song)
     profile_id = jarvis_state.get_active_profile_id()
     if result.status is DesktopResultStatus.SUCCESS:
         pending_spotify_selections.clear(profile_id)
@@ -509,8 +520,15 @@ def _spotify_control_desktop(action: str) -> str:
     return _spotify_control_desktop_outcome(action).message
 
 
-def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
+def _play_outcome(song: str, artist: str = "") -> SpotifyServicePlaybackOutcome:
     clean_song = str(song or "").strip()
+    clean_artist = " ".join(str(artist or "").split())
+
+    def desktop() -> SpotifyServicePlaybackOutcome:
+        if clean_artist:
+            return _spotify_play_desktop_outcome(clean_song, clean_artist)
+        return _spotify_play_desktop_outcome(clean_song)
+
     if not clean_song:
         return SpotifyServicePlaybackOutcome(
             _spotify_text("Tell me what to play.", "Dime que deseas reproducir."),
@@ -521,13 +539,13 @@ def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
         )
     pending_spotify_selections.clear(jarvis_state.get_active_profile_id())
     if SPOTIFY_PLAYBACK_MODE == "desktop":
-        return _spotify_play_desktop_outcome(clean_song)
+        return desktop()
     if SPOTIFY_PLAYBACK_MODE == "auto" and (
         _spotify_api_temporarily_blocked("play") or not _spotify_has_valid_cached_token()
     ):
-        return _spotify_play_desktop_outcome(clean_song)
+        return desktop()
 
-    api_result = _spotify_play_api(clean_song)
+    api_result = _spotify_play_api(f"{clean_song} {clean_artist}".strip())
     if api_result.ok:
         _spotify_api_clear_capability_failure("play")
         set_last_media_source(
@@ -546,7 +564,7 @@ def _play_outcome(song: str) -> SpotifyServicePlaybackOutcome:
         )
     if api_result.capability_failure:
         _spotify_api_mark_capability_failure("play")
-        return _spotify_play_desktop_outcome(clean_song)
+        return desktop()
     return SpotifyServicePlaybackOutcome(
         api_result.message, ok=False, provider="api", diagnostic_code="spotify_api_playback_failed",
         status=DesktopResultStatus.FAILED,

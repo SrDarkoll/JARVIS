@@ -554,3 +554,75 @@ def test_always_mode_propagates_provider_error_without_candidate() -> None:
 
     with pytest.raises(LLMUnavailableError):
         orchestrator.process(_request())
+
+
+def _music_candidate(request_id: str = "request-1") -> ActionPlan:
+    return ActionPlan(
+        request_id=request_id,
+        source=PlanSource.DETERMINISTIC,
+        steps=(
+            ActionStep(
+                step_id="music-1",
+                tool_name="reproducir_en_spotify",
+                arguments={"cancion": "mi primer dia sin ti"},
+            ),
+        ),
+    )
+
+
+def test_hybrid_music_candidate_is_reasoned_by_the_llm_first() -> None:
+    reasoned = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.GROQ,
+        steps=(
+            ActionStep(
+                step_id="groq-1",
+                tool_name="reproducir_en_spotify",
+                arguments={"cancion": "El primer día sin ti", "artista": "Danna Paola"},
+            ),
+        ),
+    )
+    groq = FakeGroqPlanner(reasoned)
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(_music_candidate()),
+        groq=groq,
+        executor=executor,
+    )
+
+    orchestrator.process(_request())
+
+    assert len(groq.calls) == 1
+    assert groq.calls[0][2] is not None  # the regex plan is passed as advisory candidate
+    assert executor.calls == [("request-1", "groq-1", "reproducir_en_spotify")]
+
+
+def test_hybrid_music_candidate_falls_back_when_reasoning_is_down() -> None:
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(_music_candidate()),
+        groq=ErrorGroqPlanner(LLMServiceError()),
+        executor=executor,
+    )
+
+    orchestrator.process(_request())
+
+    assert executor.calls == [("request-1", "music-1", "reproducir_en_spotify")]
+
+
+def test_hybrid_non_music_candidate_still_skips_the_llm() -> None:
+    weather = ActionPlan(
+        request_id="request-1",
+        source=PlanSource.DETERMINISTIC,
+        steps=(ActionStep(step_id="w-1", tool_name="obtener_clima", arguments={"ciudad": "Matamoros"}),),
+    )
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(weather),
+        groq=FailingGroqPlanner(),
+        executor=executor,
+    )
+
+    orchestrator.process(_request())
+
+    assert executor.calls == [("request-1", "w-1", "obtener_clima")]
