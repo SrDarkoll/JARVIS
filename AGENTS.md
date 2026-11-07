@@ -125,7 +125,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-1894 passed, 1 skipped
+1991 passed, 1 skipped
 ```
 
 Python syntax/import compilation:
@@ -143,6 +143,13 @@ node --check src\frontend\static\js\modules\hud.js
 node --check src\frontend\static\js\modules\live-voice.js
 node --check src\frontend\static\js\modules\recognition-policy.js
 node --check src\frontend\static\js\modules\voice-capabilities.js
+```
+
+Pre-commit hooks (ruff, `node --check`, runtime-file guard):
+
+```powershell
+pre-commit install
+pre-commit run --all-files
 ```
 
 Patch hygiene:
@@ -274,6 +281,16 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 
 - Add or update tests before changing security-sensitive behavior.
 - Critical backend routes must not rely only on loopback detection when an untrusted `Origin` or `Referer` is present.
+- Request-trust predicates live in `src/backend/core/security/request_gate.py`
+  as pure functions; `jarvis_backend.py` only binds them to the live request.
+  Loopback trust requires both a loopback peer and a loopback `Host` header
+  (DNS-rebinding defense). A present-but-opaque `Origin` such as `null` is
+  untrusted, never treated as absent. Without `Origin`/`Referer`,
+  `Sec-Fetch-Site: cross-site|same-site` is denied; non-browser local clients
+  without fetch metadata fall through to the token/loopback policy.
+- Pairing PIN claims are bounded by a source-independent global failure cap
+  (`MAX_GLOBAL_PAIRING_FAILURES`); reaching it invalidates outstanding PINs.
+  Never rely on client-supplied identity headers as the only rate-limit key.
 - If `JARVIS_API_TOKEN` is absent, trusted local browser origins may still be allowed, but hostile origins should receive a controlled 403.
 - Authorization and explicit user confirmation are separate concepts. Do not treat an authorized source as confirmation for destructive or sensitive actions.
 - Do not add terminal execution or arbitrary file writing back to the default
@@ -313,6 +330,18 @@ under `desktop/`, and LangChain adapters in `modules/spotify/tools.py`.
 - Public-IP geolocation is opt-in through
   `JARVIS_IP_GEOLOCATION_ENABLED=true`. Keep providers HTTPS-only, preserve
   single-flight behavior, and cache failures for a cooldown period.
+
+## Naming Notes
+
+Legacy identifiers and LLM tool names are Spanish (`invocar_tool`,
+`buscar_en_internet`). Do not rename tool names: planners, prompts, and
+tests match on them. Write new internal code identifiers in English and keep
+Spanish only for tool names and user-facing strings routed through
+`utils/jarvis_i18n.py`.
+
+`core/service_container.py` freezes its attribute set after `__init__`;
+declare a new dependency slot there before assigning it, and add it to
+`ServiceContainer.REQUIRED` if startup should warn when it stays unset.
 
 ## Linting Notes
 
