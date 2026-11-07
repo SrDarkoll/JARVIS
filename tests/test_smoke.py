@@ -396,6 +396,77 @@ def test_local_index_bootstrap_cookie_authenticates_protected_http_route(monkeyp
     assert protected_response.status_code == 400
 
 
+@pytest.mark.parametrize("path", ["/api/reminders", "/api/profiles", "/api/memory/graph"])
+def test_loopback_trust_rejects_foreign_host_header_dns_rebinding(monkeypatch, path):
+    """A rebinding page reaches 127.0.0.1 with its own Host and no Origin/Referer."""
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_REMOTE_BASE_URL", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get(
+        path,
+        headers={"Host": "attacker.example:5002"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code in (401, 403)
+
+
+@pytest.mark.parametrize("host", ["localhost:5002", "127.0.0.1:5002", "[::1]:5002", "localhost"])
+def test_loopback_trust_still_allows_local_host_header(monkeypatch, host):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_REMOTE_BASE_URL", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get(
+        "/api/reminders",
+        headers={"Host": host},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code not in (401, 403)
+
+
+def test_local_host_header_helper_rejects_foreign_and_malformed_hosts():
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    assert jarvis_backend._is_local_host_header("localhost:5002")
+    assert jarvis_backend._is_local_host_header("127.0.0.1")
+    assert jarvis_backend._is_local_host_header("[::1]:5002")
+    assert not jarvis_backend._is_local_host_header("attacker.example:5002")
+    assert not jarvis_backend._is_local_host_header("localhost.attacker.example")
+    assert not jarvis_backend._is_local_host_header("user@localhost")
+    assert not jarvis_backend._is_local_host_header("")
+
+
+@pytest.mark.parametrize(
+    "extra_headers",
+    [
+        {"Tailscale-User-Login": "someone@example.com"},
+        {"Origin": "https://jarvis.tailnet.ts.net"},
+    ],
+)
+def test_index_does_not_issue_local_cookie_to_remote_proxy_request(monkeypatch, extra_headers):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setenv("JARVIS_API_TOKEN", "local-cookie-secret")
+    monkeypatch.setenv("JARVIS_REMOTE_BASE_URL", "https://jarvis.tailnet.ts.net")
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get(
+        "/",
+        headers={"Host": "localhost:5002", **extra_headers},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    cookies = response.headers.getlist("Set-Cookie")
+    assert not any("jarvis_local_auth=" in cookie for cookie in cookies)
+
+
 def test_interactive_route_allows_valid_token_from_non_browser_client(monkeypatch):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
 

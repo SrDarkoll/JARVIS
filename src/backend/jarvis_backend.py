@@ -585,6 +585,38 @@ def _is_loopback(addr: str | None) -> bool:
     return bool(ipv4_mapped and ipv4_mapped.is_loopback)
 
 
+def _is_local_host_header(host_value: str | None) -> bool:
+    """True only when the Host header names a loopback address.
+
+    Loopback peer trust must not extend to foreign Host names: a DNS-rebinding
+    page reaches 127.0.0.1 with its own hostname and can omit Origin/Referer on
+    same-origin GET requests.
+    """
+    raw = str(host_value or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(f"//{raw}")
+        hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
+        if parsed.username or parsed.password:
+            return False
+        parsed.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if hostname in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_trusted_local_peer(remote_addr: str | None, host_value: str | None) -> bool:
+    return _is_loopback(remote_addr) and _is_local_host_header(host_value)
+
+
 def _normalize_origin(value: str | None) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -726,7 +758,7 @@ async def _require_token_for_critical_routes():
         master_token_valid=is_valid_raw_api_token(request.headers.get("X-JARVIS-API-TOKEN")),
         local_cookie_valid=is_valid_local_ui_cookie(request.cookies.get(LOCAL_UI_AUTH_COOKIE)),
         device_token_valid=_has_valid_device_token_for_api_path(),
-        local_loopback=_is_loopback(request.remote_addr),
+        local_loopback=_is_trusted_local_peer(request.remote_addr, request.host),
         remote_proxy=_is_remote_proxy_request(),
         remote_base_configured=_remote_base_configured(),
         local_browser_origin=_is_local_browser_origin_header(
@@ -762,7 +794,11 @@ async def _require_token_for_websocket_routes():
     if _has_valid_websocket_token():
         return None
 
-    if configured_api_token() or _is_remote_websocket_proxy_request() or not _is_loopback(websocket.remote_addr):
+    if (
+        configured_api_token()
+        or _is_remote_websocket_proxy_request()
+        or not _is_trusted_local_peer(websocket.remote_addr, websocket.headers.get("Host", ""))
+    ):
         obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
         return _websocket_auth_error("Invalid or missing token.", 401)
     if _remote_base_configured() and not _is_local_browser_origin_header(
@@ -779,7 +815,7 @@ async def _initialize_browser_profile():
     if request.method == "OPTIONS" or request.path.startswith("/static/"):
         return None
     if not _is_remote_proxy_request() and (
-        (_is_loopback(request.remote_addr) and _is_trusted_browser_origin())
+        (_is_trusted_local_peer(request.remote_addr, request.host) and _is_trusted_browser_origin())
         or _has_valid_api_token()
     ):
         ensure_browser_profile()
