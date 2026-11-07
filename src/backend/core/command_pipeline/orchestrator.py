@@ -23,6 +23,13 @@ EventCallback = Callable[[dict[str, Any]], None]
 MessageFactory = Callable[[CommandRequest, list[Any]], list[Any]]
 
 _DIRECT_RESPONSE_REPLACEABLE_TOOLS = frozenset({"buscar_en_internet"})
+# Free-form media requests are where regex extraction misreads the user most
+# (filler words, STT errors, artist vs. title). In HYBRID mode the LLM reasons
+# over them first, with the deterministic plan as advisory candidate and as the
+# fallback when reasoning is unavailable.
+_REASONED_CANDIDATE_TOOLS = frozenset(
+    {"reproducir_en_spotify", "reproducir_mix_spotify", "agregar_a_cola_spotify", "reproducir_en_youtube"}
+)
 
 
 class CommandOrchestrator:
@@ -116,7 +123,11 @@ class CommandOrchestrator:
 
         if self._reasoning_mode is ReasoningMode.OFFLINE:
             return candidate or self._offline_plan(request)
-        if self._reasoning_mode is ReasoningMode.HYBRID and candidate is not None:
+        if (
+            self._reasoning_mode is ReasoningMode.HYBRID
+            and candidate is not None
+            and not any(step.tool_name in _REASONED_CANDIDATE_TOOLS for step in candidate.steps)
+        ):
             return candidate
 
         send(

@@ -152,7 +152,12 @@ def _recargar_plugins_runtime() -> str:
         return f"Error reloading plugins: {e}"
 
 
-def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = "router") -> bool:
+def _tool_permitida_por_contexto(
+    tool_name: str,
+    user_input: str,
+    source: str = "router",
+    args: dict | None = None,
+) -> bool:
     """Anti-hallucination guard: blocks critical tools if user context does not request them."""
     import re
 
@@ -171,6 +176,10 @@ def _tool_permitida_por_contexto(tool_name: str, user_input: str, source: str = 
 
         if tool_name == "reproducir_mix_spotify":
             return bool(_extract_spotify_mix_request(user_input))
+        if args is not None:
+            from modules.spotify.intent import music_request_grounded
+
+            return music_request_grounded(user_input, args, profile_id=jarvis_state.get_active_profile_id())
         return bool(_extract_music_request(user_input))
 
     if source in {"auth_resume", "routine", "control_panel", "router", "router_dynamic", "router_directo", "gemini_live", "live_voice"}:
@@ -426,7 +435,7 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         if contextual_decision is False:
             raise ToolContextInvalidError()
         if contextual_decision is None and not (
-            _tool_permitida_por_contexto(policy_tool_name, user_input, source)
+            _tool_permitida_por_contexto(policy_tool_name, user_input, source, args)
             or _matches_requested_spotify_selection(request, step)
         ):
             outcome = "blocked"
@@ -439,13 +448,14 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         guard_fn = getattr(security_manager, "_security_guard", None)
         if callable(guard_fn):
             try:
-                allowed, reason = guard_fn(
+                guard_result: Any = guard_fn(
                     policy_tool_name,
                     args,
                     user_input,
                     source,
                     profile_id=profile_id,
                 )
+                allowed, reason = guard_result
             except Exception as exc:
                 outcome = "blocked"
                 result_preview = f"security_guard_failed:{type(exc).__name__}"

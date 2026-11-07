@@ -1,0 +1,26 @@
+# Install once:  pip install pre-commit && pre-commit install
+# Local hooks reuse the project's pinned tools (requirements-dev.txt) and Node,
+# so no hook repositories are downloaded.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (backend)
+        entry: python -m ruff check
+        language: system
+        types: [python]
+        files: ^src/backend/
+
+      - id: node-check
+        name: node --check (frontend)
+        # node --check validates only its first argument; loop over every file.
+        entry: bash -c 'for f in "$@"; do node --check "$f" || exit 1; done' --
+        language: system
+        files: ^src/frontend/static/.*\.js$
+
+      - id: no-env-or-runtime-state
+        name: block .env, logs, and runtime databases
+        entry: forbidden runtime file staged; see AGENTS.md
+        language: fail
+        files: (^|/)(\.env|.*\.db|.*\.sqlite3?|log\.txt)$
+        exclude: ^\.env\.example$

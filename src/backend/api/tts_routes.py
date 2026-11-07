@@ -5,6 +5,7 @@ The engine instance is injected via init_tts_routes().
 
 import re
 import time as _time
+from collections.abc import Callable
 
 from core.jarvis_observability import obs_event
 from quart import Blueprint, jsonify, make_response, request
@@ -15,7 +16,7 @@ _tts_engine = None
 _tts_lock = None
 _tts_api_lock = None
 _tts_max_chars = 420
-_synthesize_audio = None
+_synthesize_audio: Callable[[str], bytes] | None = None
 
 
 class TTSRoutesConfig:

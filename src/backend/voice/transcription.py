@@ -7,7 +7,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from core.jarvis_config import SpeechToTextConfig
 from core.runtime_logger import log_warning
@@ -220,9 +220,10 @@ class TranscriptionCoordinator:
 
     def snapshot(self) -> dict[str, bool | str]:
         groq_configured = bool(self.groq is not None and getattr(self.groq, "configured", True))
-        local_snapshot = (
-            self.local.snapshot()
-            if self.local is not None and hasattr(self.local, "snapshot")
+        local_snapshot_fn = getattr(self.local, "snapshot", None)
+        local_snapshot: dict[str, Any] = (
+            cast(dict[str, Any], local_snapshot_fn())
+            if callable(local_snapshot_fn)
             else {"enabled": self.local is not None, "state": "not_loaded"}
         )
         return {

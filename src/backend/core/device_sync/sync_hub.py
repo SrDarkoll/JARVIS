@@ -31,6 +31,9 @@ MAX_SUBSCRIBER_QUEUE = 100
 MAX_PAIRING_FAILURES = 5
 PAIRING_FAILURE_WINDOW_SECONDS = 600.0
 MAX_PAIRING_FAILURE_KEYS = 4096
+# Source keys can be spoofed (identity headers) and guessed PINs each get a
+# fresh bucket, so a source-independent cap bounds total guessing per window.
+MAX_GLOBAL_PAIRING_FAILURES = 20
 WEBSOCKET_TICKET_TTL_SECONDS = 30.0
 MAX_WEBSOCKET_TICKETS = 1024
 WEBSOCKET_TICKET_PATHS = frozenset({"/api/sync/ws", "/api/voice/stream"})
@@ -81,6 +84,7 @@ class DeviceSyncHub:
         self._subscribers: dict[str, set[_Subscription]] = {}
         self._pin_failures_by_source: dict[str, deque[float]] = {}
         self._pin_failures_by_code: dict[str, deque[float]] = {}
+        self._pin_failures_global: deque[float] = deque()
         self._websocket_tickets: dict[str, _WebSocketTicket] = {}
 
         # Persistent storage setup. Runtime paths are injectable so tests and
@@ -206,12 +210,20 @@ class DeviceSyncHub:
             self._trim_failure_bucket(source_bucket, now)
         if pin_bucket is not None:
             self._trim_failure_bucket(pin_bucket, now)
+        self._trim_failure_bucket(self._pin_failures_global, now)
+        if len(self._pin_failures_global) >= MAX_GLOBAL_PAIRING_FAILURES:
+            return True
         return bool(
             (source_bucket and len(source_bucket) >= MAX_PAIRING_FAILURES)
             or (pin_bucket and len(pin_bucket) >= MAX_PAIRING_FAILURES)
         )
 
     def _record_pairing_failure(self, source_key: str, pin_key: str, now: float) -> None:
+        self._trim_failure_bucket(self._pin_failures_global, now)
+        self._pin_failures_global.append(now)
+        if len(self._pin_failures_global) >= MAX_GLOBAL_PAIRING_FAILURES:
+            # Fail closed: an outstanding PIN may be under a distributed guess.
+            self._active_pins.clear()
         for key, buckets in (
             (source_key, self._pin_failures_by_source),
             (pin_key, self._pin_failures_by_code),

@@ -72,7 +72,8 @@ def _client():
     ("origin", "expected"),
     [
         (None, 401),
-        ("null", 401),
+        # An opaque Origin is rejected by the origin gate before token policy.
+        ("null", 403),
         (REMOTE_URL, 401),
         (LOCAL_ORIGIN, 200),
     ],

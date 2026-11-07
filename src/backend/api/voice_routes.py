@@ -9,6 +9,7 @@ import os
 import sys
 import urllib.parse
 from dataclasses import dataclass
+from typing import Any
 
 from core.jarvis_config import resolve_live_voice_config
 from core.runtime_logger import log_warning
@@ -184,10 +185,11 @@ def build_live_voice_status(
     }
 
 
-async def _read_audio_payload(min_bytes: int = 1):
+async def _read_audio_payload(min_bytes: int = 1) -> tuple[bytes, Any]:
+    """Return ``(audio, None)`` or ``(b"", error_response)``."""
     content_length = request.content_length
     if content_length is not None and int(content_length) > MAX_AUDIO_BYTES:
-        return None, (
+        return b"", (
             jsonify(
                 {
                     "ok": False,
@@ -197,9 +199,10 @@ async def _read_audio_payload(min_bytes: int = 1):
             413,
         )
 
-    audio_bytes = await request.get_data()
-    if len(audio_bytes or b"") > MAX_AUDIO_BYTES:
-        return None, (
+    raw = await request.get_data(as_text=False)
+    audio_bytes = raw if isinstance(raw, bytes) else b""
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        return b"", (
             jsonify(
                 {
                     "ok": False,
@@ -208,8 +211,8 @@ async def _read_audio_payload(min_bytes: int = 1):
             ),
             413,
         )
-    if min_bytes and len(audio_bytes or b"") < min_bytes:
-        return None, (
+    if min_bytes and len(audio_bytes) < min_bytes:
+        return b"", (
             jsonify({"ok": False, "error": "Insufficient audio. Please speak more clearly."}),
             400,
         )

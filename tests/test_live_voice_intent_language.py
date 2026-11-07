@@ -58,6 +58,47 @@ def test_live_setup_explicitly_configures_complete_automatic_speech_turns(monkey
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    ("profile", "start", "end", "silence_ms"),
+    [
+        # Default: background voices/music must not open a turn on their own.
+        (None, "START_SENSITIVITY_LOW", "END_SENSITIVITY_LOW", 700),
+        ("balanced", "START_SENSITIVITY_LOW", "END_SENSITIVITY_LOW", 700),
+        # Crowded room: close the turn as soon as the user's own voice drops.
+        ("noisy", "START_SENSITIVITY_LOW", "END_SENSITIVITY_HIGH", 450),
+        # Quiet room, soft voice: previous behaviour.
+        ("sensitive", "START_SENSITIVITY_HIGH", "END_SENSITIVITY_LOW", 700),
+        ("bogus", "START_SENSITIVITY_LOW", "END_SENSITIVITY_LOW", 700),
+    ],
+)
+def test_live_vad_profile_controls_turn_detection(monkeypatch, profile, start, end, silence_ms):
+    if profile is None:
+        monkeypatch.delenv("JARVIS_LIVE_VAD_PROFILE", raising=False)
+    else:
+        monkeypatch.setenv("JARVIS_LIVE_VAD_PROFILE", profile)
+
+    async def run():
+        messages = []
+
+        class Socket:
+            async def send(self, payload):
+                messages.append(json.loads(payload))
+
+        session = LiveSession("vad-profile", lambda _text: None, lambda _data: None)
+        streamer = GeminiLiveStreamer(session, api_key="fake")
+        streamer._ws = Socket()
+        monkeypatch.setattr(streamer, "_get_function_declarations", lambda: [])
+        monkeypatch.setattr(streamer, "_build_live_system_instruction", lambda *_args: "Español")
+        await streamer._send_setup()
+        await session.close()
+        return messages[0]["setup"]["realtimeInputConfig"]["automaticActivityDetection"]
+
+    detection = asyncio.run(run())
+    assert detection["startOfSpeechSensitivity"] == start
+    assert detection["endOfSpeechSensitivity"] == end
+    assert detection["silenceDurationMs"] == silence_ms
+
+
 @pytest.mark.parametrize("source", ["gemini_live", "live_voice", "planner"])
 def test_live_music_guard_requires_the_real_music_request(source):
     assert not tool_manager._tool_permitida_por_contexto("reproducir_en_spotify", "solo quiero hablar contigo", source)

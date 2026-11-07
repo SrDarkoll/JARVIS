@@ -33,7 +33,6 @@ if os.getenv("JARVIS_TEST_MODE") != "1":
     install_console_capture()
 
 import asyncio
-import ipaddress
 import tempfile
 import threading
 import time as _time
@@ -74,6 +73,7 @@ from core.jarvis_config import (
 from core.jarvis_observability import obs_event, obs_inc, obs_snapshot
 from core.jarvis_state import recordatorios_lock as reminders_lock
 from core.runtime_logger import log_error, log_warning
+from core.security import request_gate
 from core.security.api_auth import (
     LOCAL_UI_AUTH_COOKIE,
     configured_api_token,
@@ -517,7 +517,6 @@ app.register_blueprint(status_bp)
 app.register_blueprint(language_bp)
 app.register_blueprint(sync_bp)
 
-_LOOPBACK_NAMES = {"localhost"}
 _CRITICAL_API_PATHS = {
     "/api/auth_status",
     "/api/control/quick",
@@ -567,70 +566,47 @@ _ORIGIN_PROTECTED_API_PATHS = {
 _PUBLIC_API_PATHS = {"/api/health", "/api/sync/pair/claim"}
 
 
-def _is_loopback(addr: str | None) -> bool:
-    raw = str(addr or "").strip().lower()
-    if raw in _LOOPBACK_NAMES:
-        return True
-    if os.getenv("JARVIS_TEST_MODE") == "1" and (
-        raw == "<local>" or raw.startswith("__test_")
-    ):
-        return True
-    try:
-        parsed = ipaddress.ip_address(raw)
-    except ValueError:
-        return False
-    if parsed.is_loopback:
-        return True
-    ipv4_mapped = getattr(parsed, "ipv4_mapped", None)
-    return bool(ipv4_mapped and ipv4_mapped.is_loopback)
-
-
-def _normalize_origin(value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    parsed = urlparse(raw)
-    if not parsed.scheme or not parsed.hostname:
-        return ""
-    scheme = parsed.scheme.lower()
-    host = parsed.hostname.lower()
-    port = f":{parsed.port}" if parsed.port else ""
-    return f"{scheme}://{host}{port}"
-
-
-def _is_trusted_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
-    allowed = {origin for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins()) if origin}
-    remote_origin = _normalize_origin(os.getenv("JARVIS_REMOTE_BASE_URL"))
+def _allowed_browser_origins() -> list[str]:
+    origins = list(jarvis_config.get_cors_origins())
+    remote_origin = os.getenv("JARVIS_REMOTE_BASE_URL")
     if remote_origin:
-        allowed.add(remote_origin)
-    origin = _normalize_origin(origin_header)
-    if origin:
-        return origin in allowed
-    referer = _normalize_origin(referer_header)
-    if referer:
-        return referer in allowed
-    return True
+        origins.append(remote_origin)
+    return origins
+
+
+_is_loopback = request_gate.is_loopback
+_is_local_host_header = request_gate.is_local_host_header
+_is_trusted_local_peer = request_gate.is_trusted_local_peer
+
+
+def _is_trusted_origin_header(
+    origin_header: str | None,
+    referer_header: str | None = None,
+    fetch_site: str | None = None,
+) -> bool:
+    return request_gate.is_trusted_origin_header(
+        origin_header,
+        referer_header,
+        allowed_origins=_allowed_browser_origins(),
+        fetch_site=fetch_site,
+    )
 
 
 def _is_trusted_browser_origin() -> bool:
-    return _is_trusted_origin_header(request.headers.get("Origin"), request.headers.get("Referer"))
+    return _is_trusted_origin_header(
+        request.headers.get("Origin"),
+        request.headers.get("Referer"),
+        request.headers.get("Sec-Fetch-Site"),
+    )
 
 
 def _is_local_browser_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
     """True only for an explicit loopback Origin/Referer, never for a missing one."""
-    raw = str(origin_header or referer_header or "").strip()
-    if not raw:
-        return False
-    parsed = urlparse(raw)
-    host = str(parsed.hostname or "").strip().lower().rstrip(".")
-    if not parsed.scheme or not host:
-        return False
-    if host in _LOOPBACK_NAMES:
-        return _is_trusted_origin_header(origin_header, referer_header)
-    try:
-        return ipaddress.ip_address(host).is_loopback and _is_trusted_origin_header(origin_header, referer_header)
-    except ValueError:
-        return False
+    return request_gate.is_local_browser_origin_header(
+        origin_header,
+        referer_header,
+        allowed_origins=_allowed_browser_origins(),
+    )
 
 
 def _remote_base_configured() -> bool:
@@ -726,7 +702,7 @@ async def _require_token_for_critical_routes():
         master_token_valid=is_valid_raw_api_token(request.headers.get("X-JARVIS-API-TOKEN")),
         local_cookie_valid=is_valid_local_ui_cookie(request.cookies.get(LOCAL_UI_AUTH_COOKIE)),
         device_token_valid=_has_valid_device_token_for_api_path(),
-        local_loopback=_is_loopback(request.remote_addr),
+        local_loopback=_is_trusted_local_peer(request.remote_addr, request.host),
         remote_proxy=_is_remote_proxy_request(),
         remote_base_configured=_remote_base_configured(),
         local_browser_origin=_is_local_browser_origin_header(
@@ -753,6 +729,7 @@ async def _require_token_for_websocket_routes():
     origin_trusted = _is_trusted_origin_header(
         websocket.headers.get("Origin"),
         websocket.headers.get("Referer"),
+        websocket.headers.get("Sec-Fetch-Site"),
     )
     if not origin_trusted:
         obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)
@@ -762,7 +739,11 @@ async def _require_token_for_websocket_routes():
     if _has_valid_websocket_token():
         return None
 
-    if configured_api_token() or _is_remote_websocket_proxy_request() or not _is_loopback(websocket.remote_addr):
+    if (
+        configured_api_token()
+        or _is_remote_websocket_proxy_request()
+        or not _is_trusted_local_peer(websocket.remote_addr, websocket.headers.get("Host", ""))
+    ):
         obs_event("ws_token_denied", path=path, ip=websocket.remote_addr)
         return _websocket_auth_error("Invalid or missing token.", 401)
     if _remote_base_configured() and not _is_local_browser_origin_header(
@@ -779,7 +760,7 @@ async def _initialize_browser_profile():
     if request.method == "OPTIONS" or request.path.startswith("/static/"):
         return None
     if not _is_remote_proxy_request() and (
-        (_is_loopback(request.remote_addr) and _is_trusted_browser_origin())
+        (_is_trusted_local_peer(request.remote_addr, request.host) and _is_trusted_browser_origin())
         or _has_valid_api_token()
     ):
         ensure_browser_profile()
@@ -870,17 +851,17 @@ services.security_audit = security_manager._security_audit
 services.security_guard = security_manager._security_guard
 services.security_allow_fallback = security_manager._security_allow_system_browser_fallback
 services.proactive_tool_error = security_manager._proactive_register_tool_error
-services.reminders = services.get_reminders()
-services.reminders_lock = reminders_lock
 services.SRC_DIR = SRC_DIR
 services.ROOT_DIR = ROOT_DIR
 
 # Initialize the brain
 jarvis_brain.init_brain(app)
 
-# Inject dependencies from the brain
-services.invoke_tool = jarvis_brain._invocar_tool
-services.reload_plugins = jarvis_brain._recargar_plugins_runtime
+
+# init_brain() wires services.invocar_tool / recargar_plugins through core_tools.
+_missing_services = services.missing_required()
+if _missing_services:
+    log_warning("service_container_incomplete", missing=",".join(_missing_services))
 
 # Synchronize with core_tools (shim) for legacy plugins if necessary
 core_tools.inject_dependencies({"noticias_cache": services.noticias_cache, "weather_cache": services.weather_cache})

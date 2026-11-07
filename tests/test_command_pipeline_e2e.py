@@ -19,9 +19,20 @@ class InMemoryHistory:
         self.interactions.append((request, response))
 
 
+_REASONED_MEDIA_TOOLS = {
+    "reproducir_en_spotify", "reproducir_mix_spotify", "agregar_a_cola_spotify", "reproducir_en_youtube",
+}
+
+
 class GroqMustNotRun:
-    def plan(self, *_args, **_kwargs):
-        raise AssertionError("deterministic command reached Groq")
+    """Only free-form media requests may reach reasoning; it confirms the candidate."""
+
+    def plan(self, _request, _messages, *, candidate_plan=None):
+        if candidate_plan is None or not any(
+            step.tool_name in _REASONED_MEDIA_TOOLS for step in candidate_plan.steps
+        ):
+            raise AssertionError("deterministic command reached Groq")
+        return candidate_plan
 
 
 @pytest.fixture
