@@ -72,11 +72,23 @@ class LiveVoiceConfig:
     auto_fallback_enabled: bool
     model_configuration_error: str = ""
     response_timeout_seconds: float = 20.0
+    vad_profile: str = "balanced"
 
     @property
     def provider_preview(self) -> bool:
         return self.model not in _STABLE_LIVE_MODELS
 
+
+# Server-side turn detection presets (Gemini Live automaticActivityDetection).
+# balanced: faint background speech/music does not open a turn (default).
+# noisy:    also closes the turn quickly when the user's voice drops, so a
+#           crowded room cannot keep the turn open indefinitely.
+# sensitive: opens a turn on soft speech; best for a quiet room.
+LIVE_VAD_PROFILES: dict[str, dict[str, str | int]] = {
+    "balanced": {"start": "START_SENSITIVITY_LOW", "end": "END_SENSITIVITY_LOW", "silence_ms": 700},
+    "noisy": {"start": "START_SENSITIVITY_LOW", "end": "END_SENSITIVITY_HIGH", "silence_ms": 450},
+    "sensitive": {"start": "START_SENSITIVITY_HIGH", "end": "END_SENSITIVITY_LOW", "silence_ms": 700},
+}
 
 _DEFAULT_LIVE_MODEL = "gemini-3.8-live"
 _STABLE_LIVE_MODELS = {"gemini-3.8-live", "gemini-3.8-live-extended-thinking"}
@@ -197,9 +209,14 @@ def resolve_live_voice_config(
         compression_trigger_tokens,
     )
 
+    vad_profile = str(source.get("JARVIS_LIVE_VAD_PROFILE") or "balanced").strip().lower()
+    if vad_profile not in LIVE_VAD_PROFILES:
+        vad_profile = "balanced"
+
     return LiveVoiceConfig(
         model=model,
         model_configuration_error=model_error,
+        vad_profile=vad_profile,
         voice_name=voice_name,
         setup_timeout_seconds=_read_float(
             source,
