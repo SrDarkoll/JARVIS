@@ -33,7 +33,6 @@ if os.getenv("JARVIS_TEST_MODE") != "1":
     install_console_capture()
 
 import asyncio
-import ipaddress
 import tempfile
 import threading
 import time as _time
@@ -74,6 +73,7 @@ from core.jarvis_config import (
 from core.jarvis_observability import obs_event, obs_inc, obs_snapshot
 from core.jarvis_state import recordatorios_lock as reminders_lock
 from core.runtime_logger import log_error, log_warning
+from core.security import request_gate
 from core.security.api_auth import (
     LOCAL_UI_AUTH_COOKIE,
     configured_api_token,
@@ -517,7 +517,6 @@ app.register_blueprint(status_bp)
 app.register_blueprint(language_bp)
 app.register_blueprint(sync_bp)
 
-_LOOPBACK_NAMES = {"localhost"}
 _CRITICAL_API_PATHS = {
     "/api/auth_status",
     "/api/control/quick",
@@ -567,102 +566,47 @@ _ORIGIN_PROTECTED_API_PATHS = {
 _PUBLIC_API_PATHS = {"/api/health", "/api/sync/pair/claim"}
 
 
-def _is_loopback(addr: str | None) -> bool:
-    raw = str(addr or "").strip().lower()
-    if raw in _LOOPBACK_NAMES:
-        return True
-    if os.getenv("JARVIS_TEST_MODE") == "1" and (
-        raw == "<local>" or raw.startswith("__test_")
-    ):
-        return True
-    try:
-        parsed = ipaddress.ip_address(raw)
-    except ValueError:
-        return False
-    if parsed.is_loopback:
-        return True
-    ipv4_mapped = getattr(parsed, "ipv4_mapped", None)
-    return bool(ipv4_mapped and ipv4_mapped.is_loopback)
-
-
-def _is_local_host_header(host_value: str | None) -> bool:
-    """True only when the Host header names a loopback address.
-
-    Loopback peer trust must not extend to foreign Host names: a DNS-rebinding
-    page reaches 127.0.0.1 with its own hostname and can omit Origin/Referer on
-    same-origin GET requests.
-    """
-    raw = str(host_value or "").strip()
-    if not raw:
-        return False
-    try:
-        parsed = urlparse(f"//{raw}")
-        hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
-        if parsed.username or parsed.password:
-            return False
-        parsed.port  # noqa: B018 - raises ValueError on a malformed port
-    except ValueError:
-        return False
-    if not hostname:
-        return False
-    if hostname in _LOOPBACK_NAMES:
-        return True
-    try:
-        return ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        return False
-
-
-def _is_trusted_local_peer(remote_addr: str | None, host_value: str | None) -> bool:
-    return _is_loopback(remote_addr) and _is_local_host_header(host_value)
-
-
-def _normalize_origin(value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    parsed = urlparse(raw)
-    if not parsed.scheme or not parsed.hostname:
-        return ""
-    scheme = parsed.scheme.lower()
-    host = parsed.hostname.lower()
-    port = f":{parsed.port}" if parsed.port else ""
-    return f"{scheme}://{host}{port}"
-
-
-def _is_trusted_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
-    allowed = {origin for origin in (_normalize_origin(item) for item in jarvis_config.get_cors_origins()) if origin}
-    remote_origin = _normalize_origin(os.getenv("JARVIS_REMOTE_BASE_URL"))
+def _allowed_browser_origins() -> list[str]:
+    origins = list(jarvis_config.get_cors_origins())
+    remote_origin = os.getenv("JARVIS_REMOTE_BASE_URL")
     if remote_origin:
-        allowed.add(remote_origin)
-    origin = _normalize_origin(origin_header)
-    if origin:
-        return origin in allowed
-    referer = _normalize_origin(referer_header)
-    if referer:
-        return referer in allowed
-    return True
+        origins.append(remote_origin)
+    return origins
+
+
+_is_loopback = request_gate.is_loopback
+_is_local_host_header = request_gate.is_local_host_header
+_is_trusted_local_peer = request_gate.is_trusted_local_peer
+
+
+def _is_trusted_origin_header(
+    origin_header: str | None,
+    referer_header: str | None = None,
+    fetch_site: str | None = None,
+) -> bool:
+    return request_gate.is_trusted_origin_header(
+        origin_header,
+        referer_header,
+        allowed_origins=_allowed_browser_origins(),
+        fetch_site=fetch_site,
+    )
 
 
 def _is_trusted_browser_origin() -> bool:
-    return _is_trusted_origin_header(request.headers.get("Origin"), request.headers.get("Referer"))
+    return _is_trusted_origin_header(
+        request.headers.get("Origin"),
+        request.headers.get("Referer"),
+        request.headers.get("Sec-Fetch-Site"),
+    )
 
 
 def _is_local_browser_origin_header(origin_header: str | None, referer_header: str | None = None) -> bool:
     """True only for an explicit loopback Origin/Referer, never for a missing one."""
-    raw = str(origin_header or referer_header or "").strip()
-    if not raw:
-        return False
-    parsed = urlparse(raw)
-    host = str(parsed.hostname or "").strip().lower().rstrip(".")
-    if not parsed.scheme or not host:
-        return False
-    if host in _LOOPBACK_NAMES:
-        return _is_trusted_origin_header(origin_header, referer_header)
-    try:
-        return ipaddress.ip_address(host).is_loopback and _is_trusted_origin_header(origin_header, referer_header)
-    except ValueError:
-        return False
+    return request_gate.is_local_browser_origin_header(
+        origin_header,
+        referer_header,
+        allowed_origins=_allowed_browser_origins(),
+    )
 
 
 def _remote_base_configured() -> bool:
@@ -785,6 +729,7 @@ async def _require_token_for_websocket_routes():
     origin_trusted = _is_trusted_origin_header(
         websocket.headers.get("Origin"),
         websocket.headers.get("Referer"),
+        websocket.headers.get("Sec-Fetch-Site"),
     )
     if not origin_trusted:
         obs_event("ws_origin_denied", path=path, ip=websocket.remote_addr)

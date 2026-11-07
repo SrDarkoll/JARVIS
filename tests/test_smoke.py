@@ -221,6 +221,51 @@ def test_critical_route_rejects_untrusted_origin_on_loopback(monkeypatch):
     assert data.get("error") == "Untrusted origin for critical route."
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        # Form POST from a page with referrerpolicy=no-referrer sends Origin: null.
+        {"Origin": "null"},
+        {"Origin": "not a url"},
+        # A no-cors subresource (img/script) with no-referrer omits Origin and
+        # Referer, but the browser still marks the fetch as cross-site.
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+    ],
+)
+def test_protected_route_rejects_opaque_or_cross_site_browser_request(monkeypatch, headers):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_REMOTE_BASE_URL", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.post(
+        "/api/voice/registro/admin/iniciar",
+        headers={"Host": "localhost:5002", **headers},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("fetch_site", ["same-origin", "none"])
+def test_protected_route_allows_same_origin_fetch_metadata_without_origin(monkeypatch, fetch_site):
+    import jarvis_backend  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.delenv("JARVIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_REMOTE_BASE_URL", raising=False)
+    c = _test_client(jarvis_backend.app)
+
+    response = c.get(
+        "/api/reminders",
+        headers={"Host": "localhost:5002", "Sec-Fetch-Site": fetch_site},
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert response.status_code not in (401, 403)
+
+
 @pytest.mark.parametrize("path", ["/api/memory/graph", "/media/private.png"])
 def test_sensitive_read_routes_reject_untrusted_origin(monkeypatch, path):
     import jarvis_backend  # pyright: ignore[reportMissingImports]
