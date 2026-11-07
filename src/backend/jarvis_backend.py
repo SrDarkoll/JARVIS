@@ -851,17 +851,17 @@ services.security_audit = security_manager._security_audit
 services.security_guard = security_manager._security_guard
 services.security_allow_fallback = security_manager._security_allow_system_browser_fallback
 services.proactive_tool_error = security_manager._proactive_register_tool_error
-services.reminders = services.get_reminders()
-services.reminders_lock = reminders_lock
 services.SRC_DIR = SRC_DIR
 services.ROOT_DIR = ROOT_DIR
 
 # Initialize the brain
 jarvis_brain.init_brain(app)
 
-# Inject dependencies from the brain
-services.invoke_tool = jarvis_brain._invocar_tool
-services.reload_plugins = jarvis_brain._recargar_plugins_runtime
+
+# init_brain() wires services.invocar_tool / recargar_plugins through core_tools.
+_missing_services = services.missing_required()
+if _missing_services:
+    log_warning("service_container_incomplete", missing=",".join(_missing_services))
 
 # Synchronize with core_tools (shim) for legacy plugins if necessary
 core_tools.inject_dependencies({"noticias_cache": services.noticias_cache, "weather_cache": services.weather_cache})
