@@ -11,10 +11,34 @@ if TYPE_CHECKING:
     from core.command_pipeline.execution import ToolExecutionService
 
 
+def _log_info(message: str, **ctx: Any) -> None:
+    # Lazy: the runtime logger imports the unified log, which must not load
+    # before the container during early startup.
+    from core.runtime_logger import log_info
+
+    log_info(message, **ctx)
+
+
+def _log_warning(message: str, **ctx: Any) -> None:
+    from core.runtime_logger import log_warning
+
+    log_warning(message, **ctx)
+
+
 class ServiceContainer:
     _instance: ServiceContainer | None = None
     _lock = threading.Lock()
     _initialized: bool = False
+
+    # Wired during backend startup; tools degrade or fail without them.
+    REQUIRED: tuple[str, ...] = (
+        "obs_event",
+        "obs_inc",
+        "reparar_unicode",
+        "security_guard",
+        "invocar_tool",
+        "tool_execution",
+    )
 
     def __new__(cls) -> ServiceContainer:
         with cls._lock:
@@ -58,6 +82,21 @@ class ServiceContainer:
         self.SRC_DIR: str = ""
         self.ROOT_DIR: str = ""
 
+        # Freeze the attribute set: later assignments must target a declared slot.
+        object.__setattr__(self, "_declared", frozenset(vars(self)))
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        declared = getattr(self, "_declared", None)
+        if declared is not None and name not in declared:
+            raise AttributeError(
+                f"ServiceContainer has no dependency slot {name!r}; declare it in __init__ first"
+            )
+        object.__setattr__(self, name, value)
+
+    def missing_required(self) -> list[str]:
+        """Names in REQUIRED that are still unset after wiring."""
+        return sorted(name for name in self.REQUIRED if getattr(self, name, None) is None)
+
     # ─────────────────────────────────────────
     # Protected State Management
     # ─────────────────────────────────────────
@@ -85,7 +124,7 @@ class ServiceContainer:
             jarvis_state.get_active_profile_id(),
         )
         self.log_event("reminder_added", text=text, minutes=minutes)
-        print(f"  [SERVICES] Reminder added for profile {record.profile_id}")
+        _log_info("reminder_added", profile_id=record.profile_id)
         return record
 
     def get_reminders(self, profile_id: str | None = None) -> list[dict]:
@@ -107,15 +146,15 @@ class ServiceContainer:
         if self.obs_event:
             try:
                 self.obs_event(event_type, **payload)
-            except Exception as e:
-                print(f"[WARN container] Log error {event_type}: {e}")
+            except Exception as exc:
+                _log_warning("service_log_event_failed", event_type=event_type, error=type(exc).__name__)
 
     def inc_counter(self, metric: str, amount: int = 1):
         if self.obs_inc:
             try:
                 self.obs_inc(metric, amount)
-            except Exception as e:
-                print(f"[WARN container] Inc error {metric}: {e}")
+            except Exception as exc:
+                _log_warning("service_inc_counter_failed", metric=metric, error=type(exc).__name__)
 
 
 services = ServiceContainer()
