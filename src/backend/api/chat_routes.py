@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from typing import Any
 
 from core import jarvis_brain
 from core.errors import (
@@ -57,15 +58,16 @@ def _rate_limit_response(ip: str, bucket: str):
     return None
 
 
-async def _read_json_payload():
+async def _read_json_payload() -> tuple[dict[str, Any], Any]:
+    """Return ``(payload, None)`` or ``({}, error_response)``."""
     data = await request.get_json(silent=True)
     if data is None:
         raw_body = await request.get_data(cache=True)
         if raw_body and raw_body.strip():
-            return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+            return {}, (jsonify({"error": "Invalid JSON payload"}), 400)
         return {}, None
     if not isinstance(data, dict):
-        return None, (jsonify({"error": "Invalid JSON payload"}), 400)
+        return {}, (jsonify({"error": "Invalid JSON payload"}), 400)
     return data, None
 
 

@@ -39,16 +39,10 @@ exclude = ["**/__pycache__", "**/scratch", "**/.venv", "**/tests"]
 # Gradual-typing baseline. Diagnostics remain enabled for every backend file
 # not listed here. Keep entries file-specific; remove them as modules are typed.
 ignore = [
-    "src/backend/api/api_routes.py",
-    "src/backend/api/chat_routes.py",
-    "src/backend/api/security_routes.py",
     "src/backend/api/status_routes.py",
-    "src/backend/api/tts_routes.py",
-    "src/backend/api/voice_routes.py",
     "src/backend/core/brain/llm_engine.py",
     "src/backend/core/brain/processor.py",
     "src/backend/core/brain/prompts.py",
-    "src/backend/core/brain/tool_manager.py",
     "src/backend/core/core_tools.py",
     "src/backend/core/unified_log.py",
     "src/backend/engines/memory_rag.py",
@@ -67,9 +61,7 @@ ignore = [
     "src/backend/tools/system.py",
     "src/backend/tools/utilities.py",
     "src/backend/voice/identifier.py",
-    "src/backend/voice/pipeline.py",
     "src/backend/voice/service.py",
-    "src/backend/voice/transcription.py",
 ]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"

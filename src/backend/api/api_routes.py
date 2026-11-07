@@ -113,27 +113,37 @@ async def mobile_app():
     return await render_template("mobile.html")
 
 
+def _app_root() -> str:
+    if not _root_dir:
+        raise RuntimeError("api_routes used before init_api_routes()")
+    return str(_root_dir)
+
+
 def _mobile_shell_available() -> bool:
-    return os.path.isfile(os.path.join(_root_dir or "", "src", "frontend", "templates", "mobile.html"))
+    if not _root_dir:
+        return False
+    return os.path.isfile(os.path.join(_app_root(), "src", "frontend", "templates", "mobile.html"))
 
 
 @api_bp.route("/media/<path:filename>", methods=["GET"])
 async def media_files(filename: str):
-    return await send_from_directory(os.path.join(_root_dir, "media"), filename)
+    return await send_from_directory(os.path.join(_app_root(), "media"), filename)
 
 
 @api_bp.route("/manifest.json", methods=["GET"])
 async def manifest_json():
-    return await send_from_directory(os.path.join(_root_dir, "src", "frontend", "static"), "manifest.json")
+    return await send_from_directory(os.path.join(_app_root(), "src", "frontend", "static"), "manifest.json")
 
 
 @api_bp.route("/mobile-manifest.json", methods=["GET"])
 async def mobile_manifest_json():
-    manifest_path = os.path.join(_root_dir or "", "src", "frontend", "static", "mobile-manifest.json")
+    if not _root_dir:
+        return jsonify({"status": "error", "code": "mobile_shell_unavailable"}), 503
+    manifest_path = os.path.join(_app_root(), "src", "frontend", "static", "mobile-manifest.json")
     if not os.path.isfile(manifest_path):
         return jsonify({"status": "error", "code": "mobile_shell_unavailable"}), 503
     return await send_from_directory(
-        os.path.join(_root_dir or "", "src", "frontend", "static"),
+        os.path.join(_app_root(), "src", "frontend", "static"),
         "mobile-manifest.json",
     )
 
@@ -141,7 +151,7 @@ async def mobile_manifest_json():
 @api_bp.route("/sw.js", methods=["GET"])
 async def service_worker():
     response = await make_response(
-        await send_from_directory(os.path.join(_root_dir, "src", "frontend", "static"), "sw.js")
+        await send_from_directory(os.path.join(_app_root(), "src", "frontend", "static"), "sw.js")
     )
     response.headers["Cache-Control"] = "no-cache"
     return response

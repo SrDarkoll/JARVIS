@@ -439,13 +439,14 @@ def _invoke_tool_once(request: CommandRequest, step: ActionStep) -> Any:
         guard_fn = getattr(security_manager, "_security_guard", None)
         if callable(guard_fn):
             try:
-                allowed, reason = guard_fn(
+                guard_result: Any = guard_fn(
                     policy_tool_name,
                     args,
                     user_input,
                     source,
                     profile_id=profile_id,
                 )
+                allowed, reason = guard_result
             except Exception as exc:
                 outcome = "blocked"
                 result_preview = f"security_guard_failed:{type(exc).__name__}"

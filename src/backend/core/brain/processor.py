@@ -45,7 +45,7 @@ from core.media_state import get_last_media_source
 from core.service_container import services
 from core.unified_log import write_conversation
 from engines.memory_rag import rag_motor
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from modules.spotify.followup import (
     SpotifySelectionStatus,
     pending_spotify_selections,
@@ -284,7 +284,9 @@ def _resolve_pending_auth_confirmation(
         action = history_manager._extraer_accion_pendiente_auth(pid, pop=True)
         if not action:
             return None, False
-        tool_name = action.get("tool")
+        tool_name = str(action.get("tool") or "").strip()
+        if not tool_name:
+            return None, False
         args = dict(action.get("args") or {})
         args["_confirmed"] = True
         args["confirmed"] = True
@@ -489,7 +491,7 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
             jarvis_state.DATOS_CURIOSOS = extraer_datos_criticos(user_input, jarvis_state.DATOS_CURIOSOS)
             core_tools.DATOS_CURIOSOS = jarvis_state.DATOS_CURIOSOS
 
-    messages = (
+    messages: list[BaseMessage] = (
         [prompts.get_system_msg(user_input, profile_id=pid)]
         + history_manager._get_history_for_profile(pid)[-10:]
         + [HumanMessage(content=user_input)]

@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import Protocol
 from urllib.parse import urlsplit
+
+
+class HeaderLookup(Protocol):
+    """Read-only header access shared by dicts and werkzeug/Quart ``Headers``."""
+
+    def get(self, key: str, /) -> str | None: ...
+
 
 DEVICE_TOKEN_HTTP_PATHS = frozenset(
     {
@@ -37,7 +44,7 @@ def _authority(host_value: str, *, default_port: int) -> tuple[str, int] | None:
         return None
 
 
-def _origin_matches_remote_base(headers: Mapping[str, str], remote_base_url: str) -> bool:
+def _origin_matches_remote_base(headers: HeaderLookup, remote_base_url: str) -> bool:
     raw_base = str(remote_base_url or "").strip()
     if not raw_base:
         return False
@@ -60,7 +67,7 @@ def _origin_matches_remote_base(headers: Mapping[str, str], remote_base_url: str
 
 
 def is_remote_proxy_request(
-    headers: Mapping[str, str],
+    headers: HeaderLookup,
     request_host: str,
     remote_base_url: str,
 ) -> bool:
