@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,6 +30,11 @@ from modules.computer_use.tools import (
     computer_scroll,
     computer_type,
 )
+
+
+# The engine's SendInput structures exist only on Windows; there is nothing to
+# simulate on other platforms, where computer use is unavailable by design.
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows-only native input engine")
 
 
 @pytest.fixture(autouse=True)

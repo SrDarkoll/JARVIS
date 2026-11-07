@@ -594,6 +594,7 @@ class TestAbrirAplicacion:
         assert out.status is ReceiptStatus.FAILED
         assert out.diagnostic_code == "app_invalid_name"
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows absolute-path semantics")
     @pytest.mark.parametrize("kind", [".exe", ".lnk", ".url", "folder"])
     def test_existing_windows_absolute_local_paths_remain_supported(self, app_environment, tmp_path, kind):
         from core.command_pipeline.models import ReceiptStatus
@@ -611,6 +612,7 @@ class TestAbrirAplicacion:
         assert out.verified is False
         app_environment.launch.assert_called_once_with(str(target))
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows absolute-path semantics")
     def test_missing_windows_absolute_path_has_no_launcher_fallback(self, app_environment, tmp_path):
         from core.command_pipeline.models import ReceiptStatus
 
