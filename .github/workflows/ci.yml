@@ -8,11 +8,13 @@ on:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint + Patch Hygiene
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -24,6 +26,32 @@ jobs:
 
       - name: Run ruff
         run: ruff check src/backend/
+
+      - name: Whitespace check
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+
+  frontend:
+    name: Frontend Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: node --check every frontend script
+        shell: bash
+        run: |
+          set -euo pipefail
+          find src/frontend/static -name '*.js' -print0 | while IFS= read -r -d '' file; do
+            echo "check $file"
+            node --check "$file"
+          done
 
   typecheck:
     name: Type Check
@@ -46,8 +74,8 @@ jobs:
       - name: Run pyright
         run: pyright src/backend/
 
-  test:
-    name: Tests + Coverage
+  dependencies:
+    name: Dependency Audit
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -61,17 +89,70 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install pip-audit==2.10.1
+
+      - name: pip check
+        run: python -m pip check
+
+      - name: pip-audit
+        run: python -m pip_audit -r requirements.txt
+
+  test:
+    name: Tests (Windows, Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ruff targets py311; keep the minimum supported version under test.
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
-        run: pytest -q --cov=src/backend --cov-report=term-missing --cov-report=xml --cov-fail-under=50
+        run: pytest -q --cov=src/backend --cov-report=term-missing --cov-report=xml --cov-fail-under=65
 
-      - name: Upload coverage to GitHub
+      - name: Upload coverage
         uses: actions/upload-artifact@v4
-        if: success() || failure()
+        if: (success() || failure()) && matrix.python-version == '3.12'
         with:
           name: coverage-report
           path: coverage.xml
+
+  test-linux:
+    name: Tests (Linux, degraded platform)
+    runs-on: ubuntu-latest
+    # Non-blocking until the Linux degradation path is verified green in CI.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
 
   compile:
     name: Compile Check
@@ -85,8 +166,5 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
       - name: Compile all Python files
-        run: python -m compileall -q src/backend/
+        run: python -m compileall -q start_app.py src/backend/
