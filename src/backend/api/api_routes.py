@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 
 import psutil
+from core.device_sync.auth import is_remote_proxy_request
 from core.runtime_logger import log_info, log_warning
 from core.security.api_auth import (
     LOCAL_UI_AUTH_COOKIE,
@@ -43,7 +44,15 @@ def _is_loopback_ui_request() -> bool:
     else:
         host = raw_host.split(":", 1)[0]
     peer = str(request.remote_addr or "").strip().lower()
-    return host in _LOOPBACK_HOSTS and peer in _LOOPBACK_PEERS
+    if host not in _LOOPBACK_HOSTS or peer not in _LOOPBACK_PEERS:
+        return False
+    # A reverse proxy (Tailscale Serve) also arrives from loopback and may
+    # rewrite Host; it must never receive the owner-level local UI cookie.
+    return not is_remote_proxy_request(
+        request.headers,
+        request.host,
+        os.getenv("JARVIS_REMOTE_BASE_URL", ""),
+    )
 
 
 def init_api_routes(
