@@ -15,7 +15,7 @@ import time
 import requests as http_requests
 from core.jarvis_config import TELEGRAM_CHAT_ID, TELEGRAM_ENABLED, TELEGRAM_TOKEN
 from core.runtime_logger import log_error, log_warning
-from utils.audio_conversion import convert_to_ogg_opus
+from utils.audio_conversion import convert_to_ogg_opus, convert_to_wav
 from utils.jarvis_i18n import get_current_language, get_whisper_lang
 
 Application = None
@@ -44,6 +44,7 @@ class TelegramManager:
         self._whisper_model = None
         self._tts_engine = None
         self._obs_event = None
+        self._transcriber = None
 
     def _text(self, en: str, es: str) -> str:
         return en if get_current_language().startswith("en") else es
@@ -54,11 +55,29 @@ class TelegramManager:
         except Exception:
             return "en"
 
-    def inject_dependencies(self, brain, whisper_model, tts_engine, obs_event):
+    def inject_dependencies(self, brain, whisper_model, tts_engine, obs_event, *, transcriber=None):
         self._brain = brain
         self._whisper_model = whisper_model
         self._tts_engine = tts_engine
         self._obs_event = obs_event
+        self._transcriber = transcriber
+
+    def _transcribe_voice_file(self, ogg_path: str) -> str:
+        """Transcribe a downloaded Telegram voice note (OGG/Opus)."""
+        if self._transcriber is not None:
+            with open(ogg_path, "rb") as handle:
+                wav_bytes = convert_to_wav(handle.read())
+            result = self._transcriber.transcribe(
+                wav_bytes,
+                "",
+                route_mode="secure",
+                language=self._whisper_language(),
+            )
+            return str(getattr(result, "text", "") or "").strip()
+        segments, _ = self._whisper_model.transcribe(
+            ogg_path, language=self._whisper_language(), vad_filter=True, beam_size=3
+        )
+        return " ".join([s.text for s in segments]).strip()
 
     def _allowed_chat_ids(self) -> set[str]:
         raw = str(TELEGRAM_CHAT_ID or "").strip()
@@ -115,12 +134,20 @@ class TelegramManager:
             )
 
     async def _voz_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not update.message or not update.message.voice or not self._whisper_model:
+        if not update.message or not update.message.voice:
             return
         if not self._chat_allowed(update):
             return
         if self._obs_event:
             self._obs_event("telegram_voice_in")
+        if self._transcriber is None and not self._whisper_model:
+            await update.message.reply_text(
+                self._text(
+                    "I cannot transcribe voice notes right now, Administrator. Send me text instead.",
+                    "No puedo transcribir notas de voz ahora mismo, Administrador. Escríbeme el mensaje.",
+                )
+            )
+            return
 
         try:
             file = await update.message.voice.get_file()
@@ -129,15 +156,9 @@ class TelegramManager:
 
             await file.download_to_drive(ogg_path)
 
-            # Whisper is intensive, we run it in a thread
-            def _transcribir():
-                segments, _ = self._whisper_model.transcribe(
-                    ogg_path, language=self._whisper_language(), vad_filter=True, beam_size=3
-                )
-                return " ".join([s.text for s in segments]).strip()
-
+            # Transcription is intensive, we run it in a thread
             try:
-                text = await asyncio.to_thread(_transcribir)
+                text = await asyncio.to_thread(self._transcribe_voice_file, ogg_path)
             finally:
                 if os.path.exists(ogg_path):
                     os.remove(ogg_path)
@@ -184,6 +205,8 @@ class TelegramManager:
             return
         if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
             log_warning("telegram_not_configured")
+            return
+        if self.thread is not None and self.thread.is_alive():
             return
 
         self.thread = threading.Thread(target=self._run_loop, daemon=True)

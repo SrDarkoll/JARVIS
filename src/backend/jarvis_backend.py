@@ -979,8 +979,28 @@ def _configure_monitoring_service():
     )
 
 
+def _start_telegram_bot(*, enabled: bool) -> None:
+    """Start the inbound Telegram bot (owner chat only) when the feature is on."""
+    if not enabled:
+        return
+    try:
+        from services.telegram_manager import telegram_manager
+
+        telegram_manager.inject_dependencies(
+            jarvis_brain,
+            None,
+            tts_engine,
+            obs_event,
+            transcriber=transcription_service,
+        )
+        telegram_manager.start()
+    except Exception as exc:
+        log_warning("telegram_startup_failed", error=type(exc).__name__)
+
+
 @app.before_serving
 async def _start_monitoring_service():
+    _start_telegram_bot(enabled=jarvis_config.RUNTIME_FEATURES.telegram_enabled)
     try:
         _configure_monitoring_service()
         started = monitoring_service.start_heartbeat()
