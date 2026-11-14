@@ -220,7 +220,7 @@ pytest tests\test_llm_engine_fallback.py -q
 Provider selection, runtime fallback, and status/setup regressions:
 
 ```powershell
-pytest tests\test_llm_engine_fallback.py tests\test_llm_provider_status.py tests\test_processor_pipeline.py tests\test_setup_wizard.py -q
+pytest tests\test_llm_engine_fallback.py tests\test_llm_provider_status.py tests\test_processor_pipeline.py tests\test_setup_wizard.py tests\test_llm_provider_chain.py tests\test_llm_engine_chain.py tests\test_live_delegation.py tests\test_live_delegation_wiring.py -q
 ```
 
 Router/tool routing smoke regression:
