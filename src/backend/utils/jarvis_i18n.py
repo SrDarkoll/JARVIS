@@ -367,6 +367,13 @@ These are real memories. Use them naturally. If the active user is not the {owne
         "log_morning_briefing": "  [SCHEDULER] Launching scheduled morning briefing...",
         "log_ready_to_serve": "Ready to serve.",
         "delegation_tool_out_of_scope": "That action is not available when reasoning is delegated from voice.",
+        "delegation_background_telegram": "I'm still working on that; I'll send you the result on Telegram.",
+        "delegation_background_history": "I'm still working on that; I'll leave the result in the history.",
+        "delegation_unavailable": "I couldn't reason about that right now; try again in a moment.",
+        "delegation_tool_description": (
+            "Delegate a request that needs reasoning, multi-step work or tools to the main assistant. "
+            "Pass the user's request in their own words."
+        ),
     },
     "es": {
         "status_active": "ACTIVO",
@@ -649,5 +656,12 @@ Estas son memorias reales. Úsalas con naturalidad. Si el usuario activo no es e
         "log_morning_briefing": "  [SCHEDULER] Lanzando briefing matutino programado...",
         "log_ready_to_serve": "Listo para servir.",
         "delegation_tool_out_of_scope": "Esa acción no está disponible cuando delego el razonamiento desde la voz.",
+        "delegation_background_telegram": "Sigo trabajando en eso; te mando el resultado por Telegram.",
+        "delegation_background_history": "Sigo trabajando en eso; te dejo el resultado en el historial.",
+        "delegation_unavailable": "No pude razonar eso ahora; inténtalo de nuevo en un momento.",
+        "delegation_tool_description": (
+            "Delega al asistente principal una petición que requiere razonamiento, varios pasos o herramientas. "
+            "Pasa la petición del usuario con sus propias palabras."
+        ),
     },
 }
