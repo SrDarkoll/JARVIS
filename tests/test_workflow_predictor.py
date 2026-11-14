@@ -83,7 +83,20 @@ def test_proactive_reasoner_integrates_predictions():
     assert any("Sugerencia Anticipada" in a.message or "Desarrollo" in a.message for a in alerts)
 
 
-def test_prediction_langchain_tools():
+def test_prediction_langchain_tools(monkeypatch):
+    # Pin the clock to the routine's trigger time: predictions are hour-dependent
+    # and some hours (e.g. 05:xx) have no heuristic, which made CI time-flaky.
+    import datetime as _dt
+
+    from modules.proactive import predictor as predictor_module
+
+    class _FixedDateTime(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 15, 16, 0, tzinfo=tz)
+
+    monkeypatch.setattr(predictor_module, "datetime", _FixedDateTime)
+
     # Register routine tool
     out_learn = aprender_patron_rutina.invoke({
         "nombre_rutina": "Pausa Activa",
