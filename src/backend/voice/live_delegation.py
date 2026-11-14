@@ -8,6 +8,7 @@ import os
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable
+from concurrent.futures import Future
 from datetime import UTC, datetime
 
 from core.command_pipeline.models import (
@@ -33,7 +34,7 @@ _MAX_TIMEOUT = 14.0
 _CACHE_LIMIT = 64
 _HINT_LIMIT = 500
 
-_RECEIPT_CACHE: OrderedDict[tuple[str, str], ExecutionReceipt] = OrderedDict()
+_RECEIPT_CACHE: OrderedDict[tuple[str, str], Future[ExecutionReceipt]] = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 
 _OUTCOME_TO_STATUS = {
@@ -132,14 +133,84 @@ def run_delegated_request(
     session_id: str,
     call_id: str,
 ) -> ExecutionReceipt:
-    """Run one delegated request through the pipeline. Never raises."""
+    """Run one delegated request through the pipeline, once per call id. Never raises."""
     key = (str(session_id), str(call_id))
     with _CACHE_LOCK:
-        cached = _RECEIPT_CACHE.get(key)
-        if cached is not None:
+        existing = _RECEIPT_CACHE.get(key)
+        if existing is not None:
             _RECEIPT_CACHE.move_to_end(key)
-            return cached
+            owner = False
+            future = existing
+        else:
+            owner = True
+            future = Future()
+            _RECEIPT_CACHE[key] = future
+            _evict_completed_locked()
+    if not owner:
+        # No own timeout: the Live layer enforces the action timeout.
+        return future.result()
 
+    receipt = None
+    try:
+        receipt = _execute_delegation(
+            user_text=user_text,
+            hint=hint,
+            profile_id=profile_id,
+            language=language,
+            session_id=session_id,
+            call_id=call_id,
+        )
+    finally:
+        if receipt is None:  # BaseException escaped; still release waiters.
+            receipt = _failed_receipt(
+                f"live-delegation-{session_id}-{call_id}",
+                call_id,
+                language,
+                "delegation_failed",
+                datetime.now(UTC),
+            )
+        future.set_result(receipt)
+    return receipt
+
+
+def _evict_completed_locked() -> None:
+    """Keep the cache bounded; only completed entries are evicted, never in-flight ones."""
+    if len(_RECEIPT_CACHE) <= _CACHE_LIMIT:
+        return
+    for stale in [k for k, f in _RECEIPT_CACHE.items() if f.done()]:
+        if len(_RECEIPT_CACHE) <= _CACHE_LIMIT:
+            break
+        del _RECEIPT_CACHE[stale]
+
+
+def _failed_receipt(
+    request_id: str,
+    call_id: str,
+    language: str,
+    code: str,
+    started_at: datetime,
+) -> ExecutionReceipt:
+    return _receipt(
+        request_id=request_id,
+        call_id=call_id,
+        status=ReceiptStatus.FAILED,
+        message=_text(language, "delegation_unavailable"),
+        diagnostic_code=code,
+        started_at=started_at,
+    )
+
+
+def _execute_delegation(
+    *,
+    user_text: str,
+    hint: str,
+    profile_id: str,
+    language: str,
+    session_id: str,
+    call_id: str,
+) -> ExecutionReceipt:
+    # FAILED receipts are cached intentionally: exact replays of a call_id get the
+    # same outcome; Gemini issues new call_ids for genuine retries.
     request_id = f"live-delegation-{session_id}-{call_id}"
     started_at = datetime.now(UTC)
     try:
@@ -174,30 +245,10 @@ def run_delegated_request(
         )
     except (LLMUnavailableError, LLMServiceError) as exc:
         logger.warning("live_delegation_llm_unavailable: %s", type(exc).__name__)
-        receipt = _receipt(
-            request_id=request_id,
-            call_id=call_id,
-            status=ReceiptStatus.FAILED,
-            message=_text(language, "delegation_unavailable"),
-            diagnostic_code="llm_unavailable",
-            started_at=started_at,
-        )
+        return _failed_receipt(request_id, call_id, language, "llm_unavailable", started_at)
     except Exception as exc:
         logger.warning("live_delegation_failed: %s", type(exc).__name__)
-        receipt = _receipt(
-            request_id=request_id,
-            call_id=call_id,
-            status=ReceiptStatus.FAILED,
-            message=_text(language, "delegation_unavailable"),
-            diagnostic_code="delegation_failed",
-            started_at=started_at,
-        )
-
-    with _CACHE_LOCK:
-        _RECEIPT_CACHE[key] = receipt
-        _RECEIPT_CACHE.move_to_end(key)
-        while len(_RECEIPT_CACHE) > _CACHE_LIMIT:
-            _RECEIPT_CACHE.popitem(last=False)
+        return _failed_receipt(request_id, call_id, language, "delegation_failed", started_at)
     return receipt
 
 

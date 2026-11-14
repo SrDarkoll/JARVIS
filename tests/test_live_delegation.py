@@ -105,6 +105,42 @@ def test_duplicate_call_id_runs_once(monkeypatch) -> None:
     assert first is second
 
 
+def test_concurrent_same_call_id_runs_once(monkeypatch) -> None:
+    import threading
+
+    _fake_registry(monkeypatch, [])
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def slow_process(request):
+        calls.append(request)
+        started.set()
+        assert release.wait(5)
+        return CommandResponse(
+            request_id=request.request_id,
+            text="ok",
+            should_listen=False,
+            outcome=CommandOutcome.RESPONDED,
+        )
+
+    monkeypatch.setattr(processor, "process_command", slow_process)
+    results = []
+    first = threading.Thread(target=lambda: results.append(_call()))
+    first.start()
+    assert started.wait(5)
+    second = threading.Thread(target=lambda: results.append(_call()))
+    second.start()
+    second.join(0.3)
+    assert second.is_alive()  # waiting on the in-flight call
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert len(calls) == 1
+    assert len(results) == 2
+    assert results[0] is results[1]
+
+
 def test_llm_failure_returns_failed_receipt(monkeypatch) -> None:
     _fake_registry(monkeypatch, [])
 
