@@ -53,6 +53,30 @@ def test_scope_excludes_critical_confirmable_and_unregistered() -> None:
     assert scope == frozenset({"obtener_clima"})
 
 
+def test_scope_is_read_only_subset_of_live_allowlist() -> None:
+    from voice.live_gemini import LIVE_VOICE_TOOL_ALLOWLIST
+
+    registry = set(LIVE_VOICE_TOOL_ALLOWLIST)
+    scope = live_delegation.delegated_tool_scope(registry, live_allowlist=LIVE_VOICE_TOOL_ALLOWLIST)
+    for side_effect in ("reproducir_en_spotify", "ajustar_volumen", "abrir_aplicacion"):
+        assert side_effect not in scope
+    assert scope <= live_delegation.DELEGATION_READ_ONLY_LIVE_TOOLS
+    assert "obtener_clima" in scope
+    assert "ver_procesos_pesados" in scope
+
+
+def test_scope_non_owner_profile_keeps_only_public_tools() -> None:
+    names = {"obtener_clima", "ver_procesos_pesados"}
+    allow = {"obtener_clima", "ver_procesos_pesados"}
+    admin = live_delegation.delegated_tool_scope(names, live_allowlist=allow, owner_profile=True)
+    guest = live_delegation.delegated_tool_scope(names, live_allowlist=allow, owner_profile=False)
+    assert "ver_procesos_pesados" in admin
+    assert "ver_procesos_pesados" not in guest
+    assert "obtener_clima" in guest
+    assert live_delegation.is_owner_profile("Admin")
+    assert not live_delegation.is_owner_profile("guest")
+
+
 def test_delegated_request_uses_user_words_and_scope(monkeypatch) -> None:
     _fake_registry(monkeypatch, ["obtener_clima"])
     captured: list[CommandRequest] = []

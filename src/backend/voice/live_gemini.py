@@ -401,8 +401,7 @@ class GeminiLiveStreamer:
 
             tools = core_tools.get_base_tools()
             decls = []
-            profile_id = str(self.session.profile_id or "").strip().lower()
-            owner_profile = profile_id in {"", "default", "admin", "owner", "web_default"}
+            owner_profile = _delegation.is_owner_profile(self.session.profile_id)
             for t in tools:
                 schema = _tool_schema_from_langchain_tool(t)
                 fn = schema.get("function")

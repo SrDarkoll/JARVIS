@@ -28,6 +28,20 @@ DELEGATION_CHANNEL = "live_delegation"
 # Later pieces add their tools here so Live can reach them through delegation.
 DELEGATION_EXTRA_TOOLS: frozenset[str] = frozenset()
 
+# Read-only Live tools: a timed-out delegated plan keeps running in the background
+# while Live accepts new actions, so it must never drive desktop side effects.
+DELEGATION_READ_ONLY_LIVE_TOOLS: frozenset[str] = frozenset({
+    "buscar_en_internet",
+    "buscar_en_wikipedia",
+    "cancion_actual_spotify",
+    "evaluar_expresion_matematica",
+    "listar_ventanas",
+    "obtener_clima",
+    "obtener_deportes_espn",
+    "ver_procesos_pesados",
+})
+OWNER_PROFILE_IDS: frozenset[str] = frozenset({"", "default", "admin", "owner", "web_default"})
+
 _DEFAULT_TIMEOUT = 12.0
 _MIN_TIMEOUT = 3.0
 _MAX_TIMEOUT = 14.0
@@ -73,18 +87,25 @@ def delegation_declaration(language: str) -> dict:
     }
 
 
+def is_owner_profile(profile_id: str) -> bool:
+    return str(profile_id or "").strip().lower() in OWNER_PROFILE_IDS
+
+
 def delegated_tool_scope(
     registry_names: Iterable[str],
     *,
     live_allowlist: Iterable[str],
+    owner_profile: bool = True,
 ) -> frozenset[str]:
     registered = set(registry_names)
-    candidates = (set(live_allowlist) | DELEGATION_EXTRA_TOOLS) & registered
+    candidates = ((set(live_allowlist) & DELEGATION_READ_ONLY_LIVE_TOOLS) | DELEGATION_EXTRA_TOOLS) & registered
     candidates.discard(DELEGATION_TOOL_NAME)
     allowed = set()
     for name in candidates:
         policy = get_tool_policy(name)
         if policy.risk_level == "critical" or policy.requires_confirmation:
+            continue
+        if not owner_profile and policy.risk_level != "public":
             continue
         allowed.add(name)
     return frozenset(allowed)
@@ -222,6 +243,7 @@ def _execute_delegation(
         scope = delegated_tool_scope(
             tool_registry.snapshot().by_name,
             live_allowlist=LIVE_VOICE_TOOL_ALLOWLIST,
+            owner_profile=is_owner_profile(profile_id),
         )
         with language_scope(language):
             request = processor._build_command_request(
