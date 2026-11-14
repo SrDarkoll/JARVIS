@@ -103,6 +103,9 @@ class CommandRequest:
         normalized_text = str(text or "").strip()
         if not normalized_text:
             raise ValueError("command_text_required")
+        if isinstance(allowed_tools, str | bytes):
+            # frozenset("obtener_clima") would silently scope to single characters.
+            raise ValueError("invalid_allowed_tools")
 
         return cls(
             request_id=str(request_id or uuid4()),

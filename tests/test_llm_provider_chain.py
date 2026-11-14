@@ -50,3 +50,30 @@ def test_provider_headers_send_session_only_to_opencode():
     assert provider_headers(go, session_id="abc") == {"User-Agent": "JARVIS/0.1.0", "x-opencode-session": "abc"}
     assert provider_headers(direct, session_id="abc") == {"User-Agent": "JARVIS/0.1.0"}
     assert provider_headers(gemini, session_id="abc") == {}
+
+def test_rejected_base_urls_log_warning_without_url(monkeypatch):
+    from core import llm_providers
+
+    warnings = []
+    monkeypatch.setattr(
+        llm_providers, "log_warning", lambda event, **fields: warnings.append((event, fields))
+    )
+    resolve_llm_provider_config({"DEEPSEEK_API_KEY": "ds", "JARVIS_DEEPSEEK_BASE_URL": "http://secret.example/v1",
+                                 "JARVIS_OLLAMA_BASE_URL": "http://public.example:11434/v1"})
+    assert warnings == [
+        ("llm_provider_url_rejected", {"provider": "deepseek"}),
+        ("llm_provider_url_rejected", {"provider": "ollama"}),
+    ]
+
+    warnings.clear()
+    resolve_llm_provider_config(ALL)
+    resolve_llm_provider_config({"GEMINI_API_KEY": "g"})
+    assert warnings == []
+
+def test_opencode_session_only_for_opencode_deepseek_slots():
+    from core.llm_providers import uses_opencode_session
+
+    assert uses_opencode_session(ProviderSlot("deepseek", "m", "k", "https://opencode.ai/x", 20.0))
+    assert uses_opencode_session(ProviderSlot("deepseek", "m", "k", "https://zen.opencode.ai/x", 20.0))
+    assert not uses_opencode_session(ProviderSlot("deepseek", "m", "k", "https://api.deepseek.com/v1", 20.0))
+    assert not uses_opencode_session(ProviderSlot("gemini", "m", "k", "https://opencode.ai/x", 10.0))

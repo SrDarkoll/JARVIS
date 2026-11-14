@@ -463,3 +463,48 @@ def test_unscoped_request_still_resolves_pending_confirmation(monkeypatch) -> No
         assert history_manager._extraer_accion_pendiente_auth("admin", pop=False) is None
     finally:
         history_manager._extraer_accion_pendiente_auth("admin")
+
+
+def test_scoped_fallback_binds_exactly_scoped_tools(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from core.brain import brain_state
+    from core.command_pipeline.models import CommandRequest
+    from langchain_core.messages import AIMessage
+
+    primary_bound, fallback_bound = [], []
+
+    class FailingBound:
+        def invoke(self, _messages):
+            raise TimeoutError("primary down")
+
+    class AnsweringBound:
+        def invoke(self, _messages):
+            return AIMessage(content="respuesta del respaldo")
+
+    class Primary:
+        def bind_tools(self, tools, **_kwargs):
+            primary_bound.append(sorted(tool.name for tool in tools))
+            return FailingBound()
+
+    class Fallback:
+        def bind_tools(self, tools, **_kwargs):
+            fallback_bound.append(sorted(tool.name for tool in tools))
+            return AnsweringBound()
+
+    tools = {name: SimpleNamespace(name=name) for name in ("a", "b", "c")}
+    registry = SimpleNamespace(tools=tuple(tools.values()), by_name=tools)
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(brain_state, "get_tooling_snapshot", lambda: (object(), Primary(), registry))
+    monkeypatch.setattr(brain_state, "llm_fallbacks", (Fallback(),))
+    monkeypatch.setattr(brain_state, "llm_chain_providers", ("deepseek", "gemini"))
+
+    request = CommandRequest.create(
+        text="hello", profile_id="admin", channel="live_delegation", language="en",
+        allowed_tools={"a", "c", "not_registered"},
+    )
+    plan = processor._RuntimeGroqPlanner().plan(request, [])
+
+    assert primary_bound == [["a", "c"]]
+    assert fallback_bound == [["a", "c"]]
+    assert plan.direct_response == "respuesta del respaldo"

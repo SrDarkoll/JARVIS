@@ -77,6 +77,14 @@ class ToolOperationIntentError(ControlledToolBlockedError):
     message_en = "I did not change the queue or favorites: your message did not request that operation."
 
 
+class ToolOutOfScopeError(ControlledToolBlockedError):
+    """The step's tool is outside the request's ``allowed_tools`` scope."""
+
+    diagnostic_code = "tool_out_of_scope"
+    message_en = "That action is not available for this request."
+    message_es = "Esa accion no esta disponible para esta solicitud."
+
+
 def operation_signature(step: ActionStep) -> str:
     """Return a stable signature for one tool operation."""
     arguments = json.dumps(
@@ -154,6 +162,9 @@ class ToolExecutionService:
 
         started_at = datetime.now(UTC)
         try:
+            # Defense in depth: planners already drop out-of-scope plans.
+            if request.allowed_tools is not None and step.tool_name not in request.allowed_tools:
+                raise ToolOutOfScopeError
             value = self._invoke_once(request, step)
             if isinstance(value, ToolExecutionResult):
                 result = value.result

@@ -339,3 +339,40 @@ def test_executor_evicts_old_completed_receipts_at_cache_bound() -> None:
     assert calls.count("step-0") == 2
     assert replay_after_eviction.status is ReceiptStatus.SUCCEEDED
     assert duplicate_after_refresh.status is ReceiptStatus.DUPLICATE
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("es", "Esa accion no esta disponible para esta solicitud."),
+        ("en", "That action is not available for this request."),
+    ],
+)
+def test_executor_blocks_tools_outside_request_scope(language, expected) -> None:
+    calls: list[str] = []
+    service = ToolExecutionService(lambda _request, step: calls.append(step.tool_name) or "done")
+    request = CommandRequest.create(
+        text="apaga todo", profile_id="admin", channel="live_delegation", language=language,
+        request_id="scoped-1", allowed_tools={"obtener_clima"},
+    )
+
+    blocked = service.execute(request, ActionStep(step_id="step-1", tool_name="controlar_pc", arguments={}))
+    allowed = service.execute(request, ActionStep(step_id="step-2", tool_name="obtener_clima", arguments={}))
+
+    assert calls == ["obtener_clima"]
+    assert blocked.status is ReceiptStatus.BLOCKED
+    assert blocked.diagnostic_code == "tool_out_of_scope"
+    assert blocked.user_message == expected
+    assert blocked.verified is False
+    assert allowed.status is ReceiptStatus.SUCCEEDED
+
+
+def test_executor_scope_empty_blocks_everything_and_none_allows_all() -> None:
+    calls: list[str] = []
+    service = ToolExecutionService(lambda _request, step: calls.append(step.tool_name) or "done")
+    empty = CommandRequest.create(text="x", profile_id="admin", channel="voice", request_id="r-empty", allowed_tools=())
+    step = ActionStep(step_id="step-1", tool_name="obtener_clima", arguments={})
+
+    assert service.execute(empty, step).diagnostic_code == "tool_out_of_scope"
+    assert service.execute(_request("r-open"), step).status is ReceiptStatus.SUCCEEDED
+    assert calls == ["obtener_clima"]

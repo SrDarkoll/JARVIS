@@ -700,3 +700,10 @@ def test_out_of_scope_llm_plan_is_not_executed(language, expected) -> None:
 
     assert executor.calls == []
     assert response.text == expected
+
+
+def test_request_rejects_bare_string_allowed_tools() -> None:
+    with pytest.raises(ValueError, match="invalid_allowed_tools"):
+        CommandRequest.create(text="clima", profile_id="admin", channel="voice", allowed_tools="obtener_clima")
+    request = CommandRequest.create(text="clima", profile_id="admin", channel="voice", allowed_tools=["obtener_clima"])
+    assert request.allowed_tools == frozenset({"obtener_clima"})

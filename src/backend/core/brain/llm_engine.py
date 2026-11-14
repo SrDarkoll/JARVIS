@@ -23,6 +23,7 @@ from core.llm_providers import (
     provider_headers,
     resolve_gemini_vision_model,
     resolve_llm_provider_config,
+    uses_opencode_session,
 )
 from core.llm_session import install_session_id
 from core.runtime_logger import log_warning
@@ -370,7 +371,11 @@ def _build_llm_clients(provider_env: Mapping[str, str]) -> LLMClientSet:
         return LLMClientSet()
 
     chat_open_ai = _load_chat_openai()
-    session_id = install_session_id(RUNTIME_PATHS.home)
+    chain = provider_config.chain
+    # Only opencode.ai DeepSeek slots send the session header; avoid touching disk otherwise.
+    session_id = (
+        install_session_id(RUNTIME_PATHS.home) if any(uses_opencode_session(slot) for slot in chain) else ""
+    )
 
     def create_client(model: str, slot: ProviderSlot):
         kwargs = {
@@ -386,7 +391,6 @@ def _build_llm_clients(provider_env: Mapping[str, str]) -> LLMClientSet:
             kwargs["default_headers"] = headers
         return chat_open_ai(**kwargs)
 
-    chain = provider_config.chain
     primary = create_client(chain[0].model, chain[0])
 
     vision = None

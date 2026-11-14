@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from core.runtime_logger import log_warning
+
 JARVIS_USER_AGENT = "JARVIS/0.1.0"
 SUPPORTED_PROVIDERS = ("deepseek", "gemini", "groq", "ollama")
 OLLAMA_PLACEHOLDER_KEY = "ollama"
@@ -106,13 +108,30 @@ def _deepseek_timeout(source: Mapping[str, str]) -> float:
     return min(max(value, 1.0), 120.0)
 
 
+def _configured_base_url(source: Mapping[str, str], variable: str, default: str, *, provider: str,
+                         allow_private_http: bool) -> str:
+    """Validated base URL; a rejected non-empty value is logged (provider only, never the URL)."""
+    raw = str(source.get(variable) or default).strip()
+    url = _validated_base_url(raw, allow_private_http=allow_private_http)
+    if raw and not url:
+        log_warning("llm_provider_url_rejected", provider=provider)
+    return url
+
+
+def uses_opencode_session(slot: ProviderSlot) -> bool:
+    """True when the slot's requests carry ``x-opencode-session`` (DeepSeek on opencode.ai)."""
+    if slot.provider != "deepseek":
+        return False
+    host = (urlsplit(slot.base_url).hostname or "").lower()
+    return host == "opencode.ai" or host.endswith(".opencode.ai")
+
+
 def provider_headers(slot: ProviderSlot, *, session_id: str) -> dict[str, str]:
     """Extra HTTP headers for a slot; the session id only goes to opencode.ai."""
     if slot.provider != "deepseek":
         return {}
     headers = {"User-Agent": JARVIS_USER_AGENT}
-    host = (urlsplit(slot.base_url).hostname or "").lower()
-    if session_id and (host == "opencode.ai" or host.endswith(".opencode.ai")):
+    if session_id and uses_opencode_session(slot):
         headers["x-opencode-session"] = session_id
     return headers
 
@@ -131,9 +150,10 @@ def resolve_llm_provider_config(
     slots: list[ProviderSlot] = []
 
     deepseek_key = str(source.get("DEEPSEEK_API_KEY") or "").strip()
-    deepseek_url = _validated_base_url(
-        str(source.get("JARVIS_DEEPSEEK_BASE_URL") or _DEFAULT_DEEPSEEK_BASE_URL),
-        allow_private_http=False,
+    # The URL only matters (and is only reported) when DeepSeek has a key.
+    deepseek_url = deepseek_key and _configured_base_url(
+        source, "JARVIS_DEEPSEEK_BASE_URL", _DEFAULT_DEEPSEEK_BASE_URL,
+        provider="deepseek", allow_private_http=False,
     )
     if deepseek_key and deepseek_url:
         slots.append(
@@ -174,8 +194,8 @@ def resolve_llm_provider_config(
             )
         )
 
-    ollama_url = _validated_base_url(
-        str(source.get("JARVIS_OLLAMA_BASE_URL") or ""), allow_private_http=True
+    ollama_url = _configured_base_url(
+        source, "JARVIS_OLLAMA_BASE_URL", "", provider="ollama", allow_private_http=True
     )
     if ollama_url:
         slots.append(

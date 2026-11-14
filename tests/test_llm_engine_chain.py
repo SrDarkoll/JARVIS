@@ -182,3 +182,17 @@ def test_activate_rollback_restores_chain_slots(monkeypatch):
     assert brain_state.llm_fallbacks is previous_fallbacks
     assert brain_state.llm_chain_providers == ("groq",)
     assert services.llm_fallbacks is previous_fallbacks
+
+
+def test_session_id_installed_only_for_opencode_slot(monkeypatch):
+    installs = []
+    _calls, _state = _setup(monkeypatch, env={"GOOGLE_API_KEY": "g" * 24, "GROQ_API_KEY": "q" * 24})
+    monkeypatch.setattr(llm_engine, "install_session_id", lambda home: installs.append(home) or SESSION)
+
+    llm_engine.init_brain(app_ref=None)
+    assert installs == []
+
+    _calls, _state = _setup(monkeypatch, env=_ALL_KEYS)
+    monkeypatch.setattr(llm_engine, "install_session_id", lambda home: installs.append(home) or SESSION)
+    llm_engine.init_brain(app_ref=None)
+    assert len(installs) == 1
