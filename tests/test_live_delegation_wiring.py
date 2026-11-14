@@ -129,19 +129,27 @@ def _patch_slow(monkeypatch, *, telegram, delivered, event):
         return _receipt("resultado")
 
     monkeypatch.setattr(live_delegation, "run_delegated_request", slow)
-    monkeypatch.setattr(live_delegation, "telegram_ready", lambda: telegram)
+    reads = []
 
-    def deliver(text):
-        delivered.append(text)
-        event.set()
-        return True
+    def ready():
+        reads.append(telegram)
+        return telegram
+
+    monkeypatch.setattr(live_delegation, "telegram_ready", ready)
+
+    def deliver(text, *, ready):
+        if ready:
+            delivered.append(text)
+            event.set()
+        return ready
 
     monkeypatch.setattr(live_delegation, "deliver_late_result", deliver)
+    return reads
 
 
 def test_delegation_timeout_reports_background_and_delivers_late(monkeypatch):
     delivered, event = [], threading.Event()
-    _patch_slow(monkeypatch, telegram=True, delivered=delivered, event=event)
+    reads = _patch_slow(monkeypatch, telegram=True, delivered=delivered, event=event)
     orchestrator = LiveActionOrchestrator(session_id="s1", language="es")
     responses = []
     _run_action(orchestrator, _action(), responses)
@@ -152,6 +160,7 @@ def test_delegation_timeout_reports_background_and_delivers_late(monkeypatch):
     assert "Telegram" in payload["message"]
     assert event.wait(2)
     assert delivered == ["resultado"]
+    assert reads == [True]  # readiness decided once, at timeout time
 
 
 def test_late_delegation_result_delivered_after_session_loop_gone(monkeypatch):

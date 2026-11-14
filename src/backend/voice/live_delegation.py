@@ -289,8 +289,9 @@ def late_result_message(language: str, *, telegram_ready: bool) -> str:
     return _text(language, key)
 
 
-def deliver_late_result(text: str) -> bool:
-    if not telegram_ready():
+def deliver_late_result(text: str, *, ready: bool) -> bool:
+    """Send a late result; ``ready`` is the readiness decided once at timeout time."""
+    if not ready:
         return False
     try:
         from services.telegram_manager import telegram_manager

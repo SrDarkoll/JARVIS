@@ -83,6 +83,7 @@ class ActionItem:
     _delegation_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _delegation_receipt: ExecutionReceipt | None = field(default=None, repr=False)
     _delegation_timed_out: bool = field(default=False, repr=False)
+    _delegation_telegram_ready: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = None
     _worker_task: asyncio.Task | None = None
 
@@ -843,12 +844,14 @@ class LiveActionOrchestrator:
 
     def _delegation_background_response(self, action: ActionItem) -> str:
         """Answer Gemini now; the delegated result is delivered once the worker ends."""
+        # Read once: the same value drives both the message and the delivery decision.
         ready = _delegation.telegram_ready()
         with action._delegation_lock:
             action._delegation_timed_out = True
+            action._delegation_telegram_ready = ready
             finished = action._delegation_receipt
         if finished is not None:
-            self._deliver_late_delegation(finished)
+            self._deliver_late_delegation(finished, ready=ready)
         return json.dumps({
             "ok": True,
             "state": "running_in_background",
@@ -860,13 +863,14 @@ class LiveActionOrchestrator:
         }, ensure_ascii=False)
 
     @staticmethod
-    def _deliver_late_delegation(receipt: ExecutionReceipt) -> None:
+    def _deliver_late_delegation(receipt: ExecutionReceipt, *, ready: bool) -> None:
         """Deliver on a daemon thread so it works after the Live loop is gone."""
-        if not _delegation.telegram_ready():
+        if not ready:
             return
         threading.Thread(
             target=_delegation.deliver_late_result,
             args=(receipt.user_message,),
+            kwargs={"ready": ready},
             daemon=True,
         ).start()
 
@@ -900,8 +904,9 @@ class LiveActionOrchestrator:
         with action._delegation_lock:
             action._delegation_receipt = receipt
             timed_out = action._delegation_timed_out
+            ready = action._delegation_telegram_ready
         if timed_out:
-            self._deliver_late_delegation(receipt)
+            self._deliver_late_delegation(receipt, ready=ready)
         return receipt
 
     def _invoke_localized_tool(self, action: ActionItem) -> Any:

@@ -205,14 +205,16 @@ def test_deliver_late_result_sends_text_only(monkeypatch) -> None:
 
     import services.telegram_manager as tm
 
+    def unexpected_read():
+        raise AssertionError("readiness must be decided by the caller")
+
     monkeypatch.setattr(tm, "telegram_manager", FakeManager())
-    monkeypatch.setattr(live_delegation, "telegram_ready", lambda: True)
-    assert live_delegation.deliver_late_result("hola") is True
+    monkeypatch.setattr(live_delegation, "telegram_ready", unexpected_read)
+    assert live_delegation.deliver_late_result("hola", ready=True) is True
     assert sent == [("hola", False)]
 
-    monkeypatch.setattr(live_delegation, "telegram_ready", lambda: False)
     sent.clear()
-    assert live_delegation.deliver_late_result("hola") is False
+    assert live_delegation.deliver_late_result("hola", ready=False) is False
     assert sent == []
 
     class Raising:
@@ -220,8 +222,33 @@ def test_deliver_late_result_sends_text_only(monkeypatch) -> None:
             raise RuntimeError("x")
 
     monkeypatch.setattr(tm, "telegram_manager", Raising())
-    monkeypatch.setattr(live_delegation, "telegram_ready", lambda: True)
-    assert live_delegation.deliver_late_result("hola") is False
+    assert live_delegation.deliver_late_result("hola", ready=True) is False
+
+
+def test_real_send_message_sync_works_without_injected_brain(monkeypatch) -> None:
+    from services import telegram_manager as tm
+
+    posts = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **kwargs):
+        posts.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(tm, "TELEGRAM_TOKEN", "token")
+    monkeypatch.setattr(tm, "TELEGRAM_CHAT_ID", 123)
+    monkeypatch.setattr(tm.http_requests, "post", fake_post)
+    manager = tm.TelegramManager()
+    assert manager._brain is None
+
+    assert manager.send_message_sync("resultado <b>listo</b>", audio=False) is True
+    assert len(posts) == 1
+    url, kwargs = posts[0]
+    assert url.endswith("/sendMessage")
+    assert kwargs["json"] == {"chat_id": 123, "text": "resultado listo"}
 
 
 def test_telegram_ready_reads_config_at_call_time(monkeypatch) -> None:

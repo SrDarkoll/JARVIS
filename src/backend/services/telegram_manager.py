@@ -214,7 +214,11 @@ class TelegramManager:
             from utils.jarvis_text import normalizar_tratamiento_admin
 
             texto_limpio = normalizar_tratamiento_admin((texto or "").strip())
-            texto_para_leer = self._brain._limpiar_metadatos_voz(texto_limpio)
+            # The brain is only injected when the bot is started; outbound sends must not need it.
+            cleaner = getattr(self._brain, "_limpiar_metadatos_voz", None)
+            if cleaner is None:
+                from core.brain.brain_utils import _limpiar_metadatos_voz as cleaner
+            texto_para_leer = cleaner(texto_limpio)
 
             if audio and self._tts_engine:
                 audio_bytes = self._tts_engine.sintetizar(texto_para_leer[:600])
