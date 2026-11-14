@@ -77,7 +77,9 @@ Configured providers form a fallback chain in the fixed order
 `deepseek > gemini > groq > ollama`; `JARVIS_LLM_PROVIDER` moves that provider
 to the front only when it is configured. DeepSeek uses an OpenAI-compatible
 endpoint (`JARVIS_DEEPSEEK_BASE_URL`, default OpenCode Go; `JARVIS_DEEPSEEK_MODEL`,
-`JARVIS_DEEPSEEK_TIMEOUT`). OpenCode Go needs the Global region enabled in
+`JARVIS_DEEPSEEK_TIMEOUT`). **If `JARVIS_LLM_PROVIDER` is set (the setup
+wizard writes it), DeepSeek will not be primary: remove it or set it to
+`deepseek`.** OpenCode Go needs the Global region enabled in
 Settings > Privacy, and it targets coding agents: for heavy use point
 `JARVIS_DEEPSEEK_BASE_URL` at the direct DeepSeek API or OpenCode Zen. Vision
 only uses `gemini` or `groq`. `/api/status` reports the chain as
@@ -86,7 +88,8 @@ provider/model pairs, never keys. For shared machines, LAN
 exposure, or browser access beyond the local trusted UI, prefer setting
 `JARVIS_API_TOKEN`.
 
-Gemini Live exposes the tool `delegar_razonamiento`, which hands a request to
+When DeepSeek is in the provider chain, Gemini Live exposes the tool
+`delegar_razonamiento` (otherwise Live is unchanged), which hands a request to
 the command pipeline (and therefore the provider chain) within
 `JARVIS_LIVE_DELEGATION_TIMEOUT` seconds. Delegated requests can only use the
 read-only subset of the Live allowlist plus future network/system tools;
