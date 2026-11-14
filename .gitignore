@@ -131,3 +131,11 @@ voice_profiles/
 .cache-*
 .spotify_cache
 .spotify_cache/
+
+# Agent workflow scratch and local LLM/runtime state
+.superpowers/
+llm_session_id
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
