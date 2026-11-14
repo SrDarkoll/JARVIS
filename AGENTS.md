@@ -71,11 +71,29 @@ Environment setup:
 Copy-Item .env.example .env
 ```
 
-Minimum real LLM usage requires `GEMINI_API_KEY` or `GROQ_API_KEY`. When both
-are configured, Gemini is primary and Groq is the automatic fallback unless
-`JARVIS_LLM_PROVIDER=groq` reverses the order. For shared machines, LAN
+Minimum real LLM usage requires at least one of `DEEPSEEK_API_KEY`,
+`GEMINI_API_KEY`, `GROQ_API_KEY`, or a local Ollama (`JARVIS_OLLAMA_BASE_URL`).
+Configured providers form a fallback chain in the fixed order
+`deepseek > gemini > groq > ollama`; `JARVIS_LLM_PROVIDER` moves that provider
+to the front only when it is configured. DeepSeek uses an OpenAI-compatible
+endpoint (`JARVIS_DEEPSEEK_BASE_URL`, default OpenCode Go; `JARVIS_DEEPSEEK_MODEL`,
+`JARVIS_DEEPSEEK_TIMEOUT`). OpenCode Go needs the Global region enabled in
+Settings > Privacy, and it targets coding agents: for heavy use point
+`JARVIS_DEEPSEEK_BASE_URL` at the direct DeepSeek API or OpenCode Zen. Vision
+only uses `gemini` or `groq`. `/api/status` reports the chain as
+`Provider chain: deepseek > gemini > groq` and the setup item lists
+provider/model pairs, never keys. For shared machines, LAN
 exposure, or browser access beyond the local trusted UI, prefer setting
 `JARVIS_API_TOKEN`.
+
+Gemini Live exposes the tool `delegar_razonamiento`, which hands a request to
+the command pipeline (and therefore the provider chain) within
+`JARVIS_LIVE_DELEGATION_TIMEOUT` seconds. Delegated requests can only use the
+read-only subset of the Live allowlist plus future network/system tools;
+side-effecting actions (music, volume, apps) stay with Live. A result that
+arrives after the timeout is sent to Telegram when
+`JARVIS_TELEGRAM_ENABLED=true` and `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` are set;
+that flag enables late delegation results without turning off core mode.
 
 `JARVIS_CORE_MODE=true` is the stable default. It keeps chat, local voice input,
 Piper TTS, basic memory, Spotify, base tools, and the web UI while skipping
@@ -125,7 +143,7 @@ pytest -q
 Current verified baseline after the latest security/stability pass:
 
 ```text
-1991 passed, 1 skipped
+2085 passed, 1 skipped
 ```
 
 Python syntax/import compilation:

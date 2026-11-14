@@ -99,11 +99,12 @@ def build_setup_status(
             optional=False,
             label=(llm_config.primary_provider.title() if llm_config.primary_provider else "AI provider"),
             code=(f"{llm_config.primary_provider}_configured" if llm_config.configured else "llm_key_missing"),
-            action="Configure GEMINI_API_KEY or GROQ_API_KEY",
+            action="Configure DEEPSEEK_API_KEY, GEMINI_API_KEY or GROQ_API_KEY",
             primary_provider=llm_config.primary_provider,
             primary_model=llm_config.primary_model,
             fallback_provider=llm_config.fallback_provider,
             fallback_model=llm_config.fallback_model,
+            chain=[{"provider": slot.provider, "model": slot.model} for slot in llm_config.chain],
         ),
         "language": _setup_item(
             configured=language_configured,

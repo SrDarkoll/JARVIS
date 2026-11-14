@@ -10,6 +10,7 @@ def _capabilities(monkeypatch, env: dict[str, str], *, llm=None):
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "GROQ_API_KEY",
+        "DEEPSEEK_API_KEY",
         "JARVIS_LLM_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -44,7 +45,22 @@ def test_status_reports_active_gemini_provider(monkeypatch):
 
     assert capabilities["llm"]["state"] == "available"
     assert capabilities["llm"]["code"] == "gemini_ready"
-    assert capabilities["llm"]["detail"] == "Fallback provider: groq"
+    assert capabilities["llm"]["detail"] == "Provider chain: gemini > groq"
+
+
+def test_status_reports_provider_chain(monkeypatch):
+    capabilities = _capabilities(
+        monkeypatch,
+        {
+            "DEEPSEEK_API_KEY": "ds",
+            "GEMINI_API_KEY": "gem",
+            "GROQ_API_KEY": "grq",
+        },
+        llm=object(),
+    )
+
+    assert capabilities["llm"]["code"] == "deepseek_ready"
+    assert capabilities["llm"]["detail"] == "Provider chain: deepseek > gemini > groq"
 
 
 def test_status_accepts_groq_as_the_only_provider(monkeypatch):

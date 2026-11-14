@@ -244,7 +244,8 @@ def _runtime_capabilities(
 
     llm_config = resolve_llm_provider_config()
     if jarvis_brain.llm is not None:
-        detail = f"Fallback provider: {llm_config.fallback_provider}" if llm_config.fallback_provider else ""
+        chain_names = [slot.provider for slot in llm_config.chain]
+        detail = f"Provider chain: {' > '.join(chain_names)}" if len(chain_names) > 1 else ""
         publish(
             "llm",
             CapabilityState.AVAILABLE,
@@ -263,7 +264,7 @@ def _runtime_capabilities(
             "llm",
             CapabilityState.UNCONFIGURED,
             "llm_key_missing",
-            "Configure GEMINI_API_KEY or GROQ_API_KEY",
+            "Configure DEEPSEEK_API_KEY, GEMINI_API_KEY or GROQ_API_KEY",
         )
 
     from api.voice_routes import build_live_voice_status

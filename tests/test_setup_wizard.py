@@ -1,3 +1,5 @@
+import json
+
 from core.setup_wizard import build_setup_status
 
 
@@ -143,3 +145,20 @@ def test_unconfigured_setup_items_use_matching_diagnostic_codes():
     assert status["items"]["admin_voice"]["code"] == "voice_id_disabled"
     assert status["items"]["telegram"]["code"] == "telegram_unconfigured"
     assert status["items"]["weather_location"]["code"] == ("weather_location_missing")
+
+
+def test_setup_item_lists_chain_without_keys():
+    status = _status(
+        {
+            "DEEPSEEK_API_KEY": "ds",
+            "GEMINI_API_KEY": "gem",
+        }
+    )
+
+    item = status["items"]["llm"]
+    assert item["chain"] == [
+        {"provider": "deepseek", "model": "deepseek-v4.1-flash"},
+        {"provider": "gemini", "model": "gemini-3.5-flash-lite"},
+    ]
+    assert "ds" not in json.dumps(item)
+    assert item["action"] == "Configure DEEPSEEK_API_KEY, GEMINI_API_KEY or GROQ_API_KEY"
