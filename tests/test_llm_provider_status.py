@@ -90,7 +90,7 @@ def test_provider_defaults_use_current_stable_models():
     )
 
     assert config.primary_model == "gemini-3.5-flash-lite"
-    assert config.fallback_model == "qwen/qwen3.6-27b"
+    assert config.fallback_model == "qwen/qwen3.8-27b"
 
 
 def test_gemini_vision_uses_shared_default_and_explicit_overrides():
@@ -118,4 +118,4 @@ def test_provider_rejects_a_gemini_model_in_groq_configuration():
 
     assert config.primary_provider == "gemini"
     assert config.fallback_provider == "groq"
-    assert config.fallback_model == "qwen/qwen3.6-27b"
+    assert config.fallback_model == "qwen/qwen3.8-27b"

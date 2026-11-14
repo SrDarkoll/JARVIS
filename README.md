@@ -171,7 +171,7 @@ The defaults in `.env.example` currently use:
 | `JARVIS_LIVE_COMPRESSION_TARGET_TOKENS` | Tokens retained after provider compression | `8000` |
 | `JARVIS_GEMINI_MODEL` | Standard Gemini text/reasoning model | `gemini-3.5-flash-lite` |
 | `JARVIS_GEMINI_VISION_MODEL` | Gemini vision model | Inherits `JARVIS_GEMINI_MODEL` |
-| `JARVIS_GROQ_MODEL` | Alternate/fallback Groq model | `qwen/qwen3.6-27b` |
+| `JARVIS_GROQ_MODEL` | Alternate/fallback Groq model | `qwen/qwen3.8-27b` |
 | `JARVIS_STT_PROVIDER` | Speech-to-text provider selection | `auto` |
 | `JARVIS_GROQ_STT_MODEL` | Groq STT model | `whisper-large-v3-turbo` |
 | `JARVIS_LOCAL_STT_ENABLED` | Enable local Faster-Whisper fallback | `true` |

@@ -16,7 +16,7 @@ SUPPORTED_PROVIDERS = ("deepseek", "gemini", "groq", "ollama")
 OLLAMA_PLACEHOLDER_KEY = "ollama"
 
 _DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
-_DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
+_DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 _DEFAULT_DEEPSEEK_MODEL = "deepseek-v4.1-flash"
 _DEFAULT_DEEPSEEK_BASE_URL = "https://opencode.ai/inference/go/openai/v1"
 _DEFAULT_DEEPSEEK_TIMEOUT = 20.0

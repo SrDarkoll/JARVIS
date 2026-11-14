@@ -37,7 +37,7 @@ def _setup(monkeypatch, *, vision=False, env=None):
     monkeypatch.setattr(llm_engine, "install_session_id", lambda _home: SESSION)
     monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", env.get("GOOGLE_API_KEY", ""), raising=False)
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", env.get("GROQ_API_KEY", ""))
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.8-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", vision, raising=False)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", False, raising=False)
@@ -76,7 +76,7 @@ def test_init_brain_builds_deepseek_primary_with_chain(monkeypatch):
     }
     assert [m.model for m in brain_state.llm_fallbacks] == [
         "gemini-3.5-flash-lite",
-        "qwen/qwen3.6-27b",
+        "qwen/qwen3.8-27b",
     ]
     assert brain_state.llm_fallback is brain_state.llm_fallbacks[0]
     assert brain_state.llm_chain_providers == ("deepseek", "gemini", "groq")

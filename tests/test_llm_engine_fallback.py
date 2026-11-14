@@ -29,10 +29,10 @@ def test_load_chat_openai_uses_openai_compatible_fallback_on_import_runtime_erro
     )
 
     ChatOpenAI = llm_engine._load_chat_openai()
-    model = ChatOpenAI(model="qwen/qwen3.6-27b", temperature=0, api_key="test-key", base_url="https://example.invalid")
+    model = ChatOpenAI(model="qwen/qwen3.8-27b", temperature=0, api_key="test-key", base_url="https://example.invalid")
 
     assert model is not None
-    assert model.model == "qwen/qwen3.6-27b"
+    assert model.model == "qwen/qwen3.8-27b"
     assert hasattr(model, "invoke")
     assert model.bind_tools([], tool_choice="auto") is not None
     assert warnings == [
@@ -60,7 +60,7 @@ def test_openai_compatible_fallback_invokes_chat_completion(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="qwen/qwen3.6-27b",
+        model="qwen/qwen3.8-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -68,7 +68,7 @@ def test_openai_compatible_fallback_invokes_chat_completion(monkeypatch):
     response = model.invoke([HumanMessage(content="hello")])
 
     assert response.content == "fallback ok"
-    assert calls[0]["model"] == "qwen/qwen3.6-27b"
+    assert calls[0]["model"] == "qwen/qwen3.8-27b"
     assert calls[0]["messages"] == [{"role": "user", "content": "hello"}]
 
 
@@ -88,7 +88,7 @@ def test_openai_compatible_fallback_accepts_string_prompt(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="qwen/qwen3.6-27b",
+        model="qwen/qwen3.8-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -113,7 +113,7 @@ def test_openai_compatible_fallback_accepts_dict_response(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
 
     model = llm_engine._OpenAICompatibleChatOpenAI(
-        model="qwen/qwen3.6-27b",
+        model="qwen/qwen3.8-27b",
         temperature=0,
         api_key="test-key",
         base_url="https://example.invalid",
@@ -177,8 +177,8 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
     monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "")
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
-    monkeypatch.setattr(llm_engine, "GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.8-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", True)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", True)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", True)
@@ -194,10 +194,10 @@ def test_init_brain_configures_groq_as_primary_provider(monkeypatch):
 
     llm_engine.init_brain(app_ref=None)
 
-    assert calls[0]["model"] == "qwen/qwen3.6-27b"
+    assert calls[0]["model"] == "qwen/qwen3.8-27b"
     assert calls[0]["api_key"] == "groq-key"
     assert calls[0]["base_url"] == "https://api.groq.com/openai/v1"
-    assert calls[1]["model"] == "qwen/qwen3.6-27b"
+    assert calls[1]["model"] == "qwen/qwen3.8-27b"
     assert calls[1]["api_key"] == "groq-key"
     assert brain_state.llm_fallback is None
 
@@ -219,7 +219,7 @@ def test_init_brain_configures_gemini_as_primary_and_groq_as_fallback(monkeypatc
     monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "google-key", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.8-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", False, raising=False)
@@ -236,7 +236,7 @@ def test_init_brain_configures_gemini_as_primary_and_groq_as_fallback(monkeypatc
     assert brain_state.llm is not None
     assert brain_state.llm.model == "gemini-3.5-flash-lite"
     assert brain_state.llm_fallback is not None
-    assert brain_state.llm_fallback.model == "qwen/qwen3.6-27b"
+    assert brain_state.llm_fallback.model == "qwen/qwen3.8-27b"
 
 
 def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
@@ -259,7 +259,7 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
     monkeypatch.setattr(llm_engine, "GOOGLE_API_KEY", "", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "")
     monkeypatch.setattr(llm_engine, "GROQ_API_KEY", "groq-key")
-    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.6-27b")
+    monkeypatch.setattr(llm_engine, "GROQ_MODEL", "qwen/qwen3.8-27b")
     monkeypatch.setattr(llm_engine, "VISION_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "PLUGINS_ENABLED", False, raising=False)
     monkeypatch.setattr(llm_engine, "BRIEFING_ENABLED", False, raising=False)
@@ -274,7 +274,7 @@ def test_init_brain_core_mode_skips_optional_initializers(monkeypatch):
 
     llm_engine.init_brain(app_ref=None)
 
-    assert [call["model"] for call in calls] == ["qwen/qwen3.6-27b"]
+    assert [call["model"] for call in calls] == ["qwen/qwen3.8-27b"]
     assert brain_state.llm is not None
     assert brain_state.llm_vision is None
     assert brain_state.llm_fallback is None
