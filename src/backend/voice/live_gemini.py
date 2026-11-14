@@ -22,6 +22,7 @@ from core.llm_providers import resolve_gemini_api_key
 from core.runtime_logger import log_error, log_warning
 from core.unified_log import write_log
 
+from voice import live_delegation as _delegation
 from voice.live_context import LiveContextPolicy, build_live_context, resolve_live_language
 from voice.live_session import LiveSession, LiveSessionState
 from voice.live_task_context import (
@@ -46,6 +47,13 @@ logger = logging.getLogger(__name__)
 GEMINI_LIVE_WS_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+)
+
+DELEGATION_INSTRUCTION = (
+    "Use delegar_razonamiento for requests that need multi-step reasoning, diagnosis, "
+    "comparison or summarizing data, and for anything about the home network, the internet "
+    "connection, or PC and Docker health. Pass a one-sentence summary as peticion. "
+    "Speak the tool's message as returned."
 )
 
 LIVE_VOICE_TOOL_ALLOWLIST = frozenset(
@@ -354,6 +362,8 @@ class GeminiLiveStreamer:
                 "Never claim that a tool succeeded unless its tool response says so. "
                 "Keep spoken replies concise and do not expose hidden reasoning."
             )
+            if _delegation.DELEGATION_TOOL_NAME in tool_names:
+                base_instruction = f"{base_instruction} {DELEGATION_INSTRUCTION}"
             return build_live_context(
                 base_instruction=base_instruction,
                 language=self.session.language,
@@ -385,6 +395,7 @@ class GeminiLiveStreamer:
         """Extract tool declarations from core tools for Gemini Live."""
         try:
             from core import core_tools
+            from core.brain import brain_state
             from core.brain.llm_engine import _tool_schema_from_langchain_tool
             from core.security.tool_policy import get_tool_policy
 
@@ -411,6 +422,8 @@ class GeminiLiveStreamer:
             contextual = context_tool_declaration({declaration["name"] for declaration in decls})
             if contextual:
                 decls.append(contextual)
+            if brain_state.llm is not None:
+                decls.append(_delegation.delegation_declaration(self.session.language))
             return decls
         except Exception as exc:
             log_warning(

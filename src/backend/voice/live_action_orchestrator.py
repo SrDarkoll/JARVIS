@@ -11,10 +11,12 @@ import asyncio
 import enum
 import json
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from core.command_pipeline.models import ExecutionReceipt, ReceiptStatus
@@ -28,6 +30,7 @@ from core.command_pipeline.task_context import (
 from core.runtime_logger import log_error, log_warning
 from core.unified_log import write_log
 
+from voice import live_delegation as _delegation
 from voice.live_tool_execution import live_action_state, live_tool_response
 
 logger = logging.getLogger(__name__)
@@ -77,6 +80,9 @@ class ActionItem:
     context_ref: str = ""
     parent_context_ref: str = ""
     contextual_permit: ContextualActionPermit | None = field(default=None, repr=False)
+    _delegation_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _delegation_receipt: ExecutionReceipt | None = field(default=None, repr=False)
+    _delegation_timed_out: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = None
     _worker_task: asyncio.Task | None = None
 
@@ -452,6 +458,8 @@ class LiveActionOrchestrator:
             await sent
 
     def _action_timeout_for(self, action: ActionItem) -> float:
+        if action.name == _delegation.DELEGATION_TOOL_NAME:
+            return _delegation.delegation_timeout_seconds()
         if self._custom_action_timeout or action.name not in {
             "reproducir_en_spotify", "reproducir_mix_spotify", "agregar_a_cola_spotify",
         }:
@@ -788,6 +796,8 @@ class LiveActionOrchestrator:
                         f"La herramienta {action.name} superó el tiempo de espera y puede "
                         "continuar ejecutándose en segundo plano."
                     )
+                    if action.name == _delegation.DELEGATION_TOOL_NAME:
+                        tool_result = self._delegation_background_response(action)
                     if worker_task.done():
                         self._worker_finished(action, plan, worker_task)
                     log_warning(
@@ -831,7 +841,72 @@ class LiveActionOrchestrator:
         with language_scope(action.language or self.language), contextual_execution_scope(action.contextual_permit):
             return self._invoke_localized_tool(action)
 
+    def _delegation_background_response(self, action: ActionItem) -> str:
+        """Answer Gemini now; the delegated result is delivered once the worker ends."""
+        ready = _delegation.telegram_ready()
+        with action._delegation_lock:
+            action._delegation_timed_out = True
+            finished = action._delegation_receipt
+        if finished is not None:
+            self._deliver_late_delegation(finished)
+        return json.dumps({
+            "ok": True,
+            "state": "running_in_background",
+            "message": _delegation.late_result_message(
+                action.language or self.language, telegram_ready=ready,
+            ),
+            "diagnostic_code": "delegation_running",
+            "verified": False,
+        }, ensure_ascii=False)
+
+    @staticmethod
+    def _deliver_late_delegation(receipt: ExecutionReceipt) -> None:
+        """Deliver on a daemon thread so it works after the Live loop is gone."""
+        if not _delegation.telegram_ready():
+            return
+        threading.Thread(
+            target=_delegation.deliver_late_result,
+            args=(receipt.user_message,),
+            daemon=True,
+        ).start()
+
+    def _run_delegation(self, action: ActionItem) -> ExecutionReceipt:
+        language = action.language or self.language
+        hint = action.args.get("peticion") if isinstance(action.args, dict) else ""
+        if not (action.user_text or "").strip():
+            now = datetime.now(UTC)
+            message = _delegation.unavailable_message(language)
+            return ExecutionReceipt(
+                request_id=f"live-delegation-{self.session_id}-{action.call_id}",
+                step_id=action.call_id or action.action_id,
+                tool_name=action.name,
+                status=ReceiptStatus.FAILED,
+                result=message,
+                user_message=message,
+                verified=False,
+                diagnostic_code="delegation_no_transcript",
+                started_at=now,
+                finished_at=now,
+            )
+        receipt = _delegation.run_delegated_request(
+            user_text=action.user_text,
+            hint=str(hint or ""),
+            profile_id=self.profile_id,
+            language=language,
+            session_id=self.session_id,
+            call_id=action.call_id or action.action_id,
+        )
+        # Worker-side so a late result survives the Live loop cancelling the tracking task.
+        with action._delegation_lock:
+            action._delegation_receipt = receipt
+            timed_out = action._delegation_timed_out
+        if timed_out:
+            self._deliver_late_delegation(receipt)
+        return receipt
+
     def _invoke_localized_tool(self, action: ActionItem) -> Any:
+        if action.name == _delegation.DELEGATION_TOOL_NAME:
+            return self._run_delegation(action)
         invoker = self._invoke_tool
         if invoker is None:
             from core.brain.tool_manager import execute_tool_receipt
@@ -875,7 +950,7 @@ class LiveActionOrchestrator:
     def _has_unfinished_worker(self, *, exclude: ActionItem | None = None) -> bool:
         for plan in self._plans.values():
             for action in plan.actions:
-                if action is exclude:
+                if action is exclude or action.name == _delegation.DELEGATION_TOOL_NAME:
                     continue
                 if action._worker_task is not None and not action._worker_task.done():
                     return True

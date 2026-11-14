@@ -252,6 +252,10 @@ def _execute_delegation(
     return receipt
 
 
+def unavailable_message(language: str) -> str:
+    return _text(language, "delegation_unavailable")
+
+
 def telegram_ready() -> bool:
     from core import jarvis_config
 
