@@ -345,6 +345,8 @@ class LiveActionOrchestrator:
         self._action_counter = 0
         self._plans: dict[str, LiveActionPlan] = {}
         self._worker_tasks: set[asyncio.Task] = set()
+        # Delegation workers already answered as "running in background"; not Live turn work.
+        self._background_delegation_workers: set[asyncio.Task] = set()
         self.task_context = TaskContext(session_id, profile_id, self._context_execution_view)
         self._context_lock = asyncio.Lock()
         self._context_calls: dict[str, tuple[str, ActionItem | str]] = {}
@@ -799,6 +801,8 @@ class LiveActionOrchestrator:
                     )
                     if action.name == _delegation.DELEGATION_TOOL_NAME:
                         tool_result = self._delegation_background_response(action)
+                        if not worker_task.done():
+                            self._background_delegation_workers.add(worker_task)
                     if worker_task.done():
                         self._worker_finished(action, plan, worker_task)
                     log_warning(
@@ -963,7 +967,10 @@ class LiveActionOrchestrator:
 
     @property
     def has_active_workers(self) -> bool:
-        return any(not task.done() for task in self._worker_tasks)
+        return any(
+            not task.done() and task not in self._background_delegation_workers
+            for task in self._worker_tasks
+        )
 
     def _worker_finished(
         self,
@@ -972,6 +979,7 @@ class LiveActionOrchestrator:
         worker_task: asyncio.Task,
     ) -> None:
         self._worker_tasks.discard(worker_task)
+        self._background_delegation_workers.discard(worker_task)
 
         if worker_task.cancelled():
             action.execution_may_continue = True

@@ -66,7 +66,8 @@ _OUTCOME_TO_STATUS = {
 
 
 def _text(language: str, key: str) -> str:
-    lang = "en" if str(language or "").strip().lower().startswith("en") else "es"
+    # Same fallback as the command pipeline: Spanish only for "es*", English otherwise.
+    lang = "es" if str(language or "").strip().lower().startswith("es") else "en"
     return BACKEND_TRANSLATIONS[lang][key]
 
 

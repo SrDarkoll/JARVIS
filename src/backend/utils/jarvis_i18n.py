@@ -371,8 +371,10 @@ These are real memories. Use them naturally. If the active user is not the {owne
         "delegation_background_history": "I'm still working on that; I'll leave the result in the history.",
         "delegation_unavailable": "I couldn't reason about that right now; try again in a moment.",
         "delegation_tool_description": (
-            "Delegate a request that needs reasoning, multi-step work or tools to the main assistant. "
-            "Pass the user's request in their own words."
+            "Delegate to the main assistant only for reasoning, diagnosis, comparison, or looking up "
+            "and summarizing information. Do not delegate actions: handle music, volume, apps, windows, "
+            "reminders and routines yourself with your own tools, and never delegate what you can handle "
+            "directly. Pass the user's request in their own words."
         ),
     },
     "es": {
@@ -660,8 +662,10 @@ Estas son memorias reales. Úsalas con naturalidad. Si el usuario activo no es e
         "delegation_background_history": "Sigo trabajando en eso; te dejo el resultado en el historial.",
         "delegation_unavailable": "No pude razonar eso ahora; inténtalo de nuevo en un momento.",
         "delegation_tool_description": (
-            "Delega al asistente principal una petición que requiere razonamiento, varios pasos o herramientas. "
-            "Pasa la petición del usuario con sus propias palabras."
+            "Delega al asistente principal solo razonamiento, diagnóstico, comparación o la búsqueda y el "
+            "resumen de información. No delegues acciones: encárgate tú de la música, el volumen, las apps, "
+            "las ventanas, los recordatorios y las rutinas con tus propias herramientas, y nunca delegues lo "
+            "que puedas resolver directamente. Pasa la petición del usuario con sus propias palabras."
         ),
     },
 }

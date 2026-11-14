@@ -49,12 +49,24 @@ GEMINI_LIVE_WS_URL = (
     "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 )
 
-DELEGATION_INSTRUCTION = (
-    "Use delegar_razonamiento for requests that need multi-step reasoning, diagnosis, "
-    "comparison or summarizing data, and for anything about the home network, the internet "
-    "connection, or PC and Docker health. Pass a one-sentence summary as peticion. "
-    "Speak the tool's message as returned."
-)
+def build_delegation_instruction(extra_tools: frozenset[str] = _delegation.DELEGATION_EXTRA_TOOLS) -> str:
+    """Live guidance for delegar_razonamiento; network topics only once their tools exist."""
+    parts = [
+        "Use delegar_razonamiento only for reasoning, diagnosis, comparison, or looking up "
+        "and summarizing information.",
+        "Perform actions yourself with your own tools (music, volume, apps, windows, "
+        "reminders, routines) and never delegate what you can handle directly.",
+    ]
+    if extra_tools:
+        parts.append(
+            "Also use it for anything about the home network, the internet connection, "
+            "or PC and Docker health."
+        )
+    parts.append("Pass a one-sentence summary as peticion. Speak the tool's message as returned.")
+    return " ".join(parts)
+
+
+DELEGATION_INSTRUCTION = build_delegation_instruction()
 
 LIVE_VOICE_TOOL_ALLOWLIST = frozenset(
     {
@@ -391,6 +403,10 @@ class GeminiLiveStreamer:
                 policy=LiveContextPolicy(max_chars=self.config.context_char_limit, recent_turns=0),
             )
 
+    def _contextual_allowed_tools(self) -> set[str]:
+        """Tools a contextual retry may target: never the context or delegation tools."""
+        return self._declared_tool_names - {CONTEXT_TOOL_NAME, _delegation.DELEGATION_TOOL_NAME}
+
     def _get_function_declarations(self) -> list[dict]:
         """Extract tool declarations from core tools for Gemini Live."""
         try:
@@ -421,7 +437,8 @@ class GeminiLiveStreamer:
             contextual = context_tool_declaration({declaration["name"] for declaration in decls})
             if contextual:
                 decls.append(contextual)
-            if brain_state.llm is not None:
+            # Ruling R5: without DeepSeek in the chain, Live keeps its pre-delegation behavior.
+            if brain_state.llm is not None and "deepseek" in brain_state.llm_chain_providers:
                 decls.append(_delegation.delegation_declaration(self.session.language))
             return decls
         except Exception as exc:
@@ -1012,7 +1029,7 @@ class GeminiLiveStreamer:
                         continue
                     await self.session.orchestrator.execute_contextual_call(
                         call["id"], **proposal, turn_id=input_turn, user_text=original_text,
-                        allowed_tools=self._declared_tool_names - {CONTEXT_TOOL_NAME},
+                        allowed_tools=self._contextual_allowed_tools(),
                         send_response_fn=self._send_tool_response,
                         language=resolve_live_language(original_text, self.session.language),
                     )

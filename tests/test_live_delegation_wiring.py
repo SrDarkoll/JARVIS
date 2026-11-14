@@ -17,8 +17,10 @@ from voice.live_gemini import (
     DELEGATION_INSTRUCTION,
     LIVE_VOICE_TOOL_ALLOWLIST,
     GeminiLiveStreamer,
+    build_delegation_instruction,
 )
 from voice.live_session import LiveSession
+from voice.live_task_context import CONTEXT_TOOL_NAME
 
 
 def _streamer() -> GeminiLiveStreamer:
@@ -66,12 +68,19 @@ def _run_action(orchestrator, action, responses):
     asyncio.run(_go())
 
 
-def test_declarations_include_delegation_when_brain_configured(monkeypatch):
+def test_declarations_include_delegation_only_with_deepseek_in_chain(monkeypatch):
     streamer = _streamer()
     monkeypatch.setattr(brain_state, "llm", object())
+    monkeypatch.setattr(brain_state, "llm_chain_providers", ("deepseek", "gemini"))
     names = {d["name"] for d in streamer._get_function_declarations()}
     assert DELEGATION_TOOL_NAME in names
+
+    monkeypatch.setattr(brain_state, "llm_chain_providers", ("gemini", "groq"))
+    names = {d["name"] for d in streamer._get_function_declarations()}
+    assert DELEGATION_TOOL_NAME not in names
+
     monkeypatch.setattr(brain_state, "llm", None)
+    monkeypatch.setattr(brain_state, "llm_chain_providers", ())
     names = {d["name"] for d in streamer._get_function_declarations()}
     assert DELEGATION_TOOL_NAME not in names
     assert DELEGATION_TOOL_NAME not in LIVE_VOICE_TOOL_ALLOWLIST
@@ -84,6 +93,36 @@ def test_system_instruction_mentions_delegation_only_when_declared():
     without = streamer._build_live_system_instruction(())
     assert DELEGATION_INSTRUCTION in with_tool
     assert DELEGATION_INSTRUCTION not in without
+
+
+def test_delegation_instruction_keeps_actions_with_live():
+    lowered = DELEGATION_INSTRUCTION.lower()
+    for word in ("reasoning", "diagnosis", "comparison", "summariz"):
+        assert word in lowered
+    for action in ("music", "volume", "apps", "windows", "reminders", "routines"):
+        assert action in lowered
+    assert "never delegate what you can handle directly" in lowered
+
+
+def test_delegation_instruction_mentions_network_only_with_extra_tools():
+    assert DELEGATION_EXTRA_TOOLS == frozenset()
+    assert "network" not in DELEGATION_INSTRUCTION.lower()
+    assert "docker" not in DELEGATION_INSTRUCTION.lower()
+    with_extra = build_delegation_instruction(frozenset({"escanear_red"}))
+    assert "home network" in with_extra
+    assert "Docker" in with_extra
+    assert build_delegation_instruction(frozenset()) == DELEGATION_INSTRUCTION
+
+
+def test_delegation_tool_description_is_read_only_in_both_languages():
+    from utils.jarvis_i18n import BACKEND_TRANSLATIONS
+
+    en = BACKEND_TRANSLATIONS["en"]["delegation_tool_description"].lower()
+    es = BACKEND_TRANSLATIONS["es"]["delegation_tool_description"].lower()
+    for word in ("reasoning", "diagnosis", "comparison", "music", "volume", "reminders", "routines"):
+        assert word in en
+    for word in ("razonamiento", "diagnóstico", "comparación", "música", "volumen", "recordatorios", "rutinas"):
+        assert word in es
 
 
 def test_delegation_action_invokes_run_delegated_request(monkeypatch):
@@ -203,6 +242,58 @@ def test_background_delegation_does_not_block_next_action(monkeypatch):
     assert follow_up.error != "previous_action_still_running"
     assert follow_up.state is not ActionState.FAILED
     assert invoked == ["obtener_clima"]
+
+
+def test_timed_out_delegation_worker_is_not_active_work(monkeypatch):
+    release_delegation, release_tool, tool_started = threading.Event(), threading.Event(), threading.Event()
+    monkeypatch.setattr(live_delegation, "delegation_timeout_seconds", lambda: 0.05)
+    monkeypatch.setattr(live_delegation, "telegram_ready", lambda: False)
+    monkeypatch.setattr(
+        live_delegation, "run_delegated_request",
+        lambda **_kw: (release_delegation.wait(5), _receipt("resultado"))[1],
+    )
+
+    def invoker(name, args, user_text, source, profile_id):
+        tool_started.set()
+        release_tool.wait(5)
+        return "ok"
+
+    orchestrator = LiveActionOrchestrator(session_id="s1", language="es", invoke_tool=invoker)
+    seen = {}
+
+    async def _go():
+        delegation = _action()
+        other = _action(name="obtener_clima", args={}, call_id="c2", user_text="clima")
+        other.action_id = "act-2"
+        orchestrator.enqueue_batch([], user_text="")
+        orchestrator.current_plan.actions.extend([delegation, other])
+        try:
+            await orchestrator.execute_action(delegation, lambda *_a: None)
+            seen["delegation_alive"] = not delegation._worker_task.done()
+            seen["after_timeout"] = orchestrator.has_active_workers
+
+            running = asyncio.create_task(orchestrator.execute_action(other, lambda *_a: None))
+            while not tool_started.is_set():
+                await asyncio.sleep(0.01)
+            seen["with_other_tool"] = orchestrator.has_active_workers
+            release_tool.set()
+            await running
+        finally:
+            release_tool.set()
+            release_delegation.set()
+
+    asyncio.run(_go())
+    assert seen["delegation_alive"] is True
+    assert seen["after_timeout"] is False
+    assert seen["with_other_tool"] is True
+
+
+def test_contextual_calls_cannot_target_delegation(monkeypatch):
+    streamer = _streamer()
+    streamer._declared_tool_names = {"obtener_clima", DELEGATION_TOOL_NAME, CONTEXT_TOOL_NAME}
+    assert CONTEXT_TOOL_NAME not in streamer._contextual_allowed_tools()
+    assert DELEGATION_TOOL_NAME not in streamer._contextual_allowed_tools()
+    assert "obtener_clima" in streamer._contextual_allowed_tools()
 
 
 def test_late_delegation_without_telegram_does_not_send(monkeypatch):

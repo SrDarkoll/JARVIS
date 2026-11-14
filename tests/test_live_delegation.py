@@ -190,6 +190,16 @@ def test_other_exception_returns_delegation_failed(monkeypatch) -> None:
     assert "secret" not in receipt.user_message
 
 
+def test_language_fallback_matches_pipeline() -> None:
+    from core.command_pipeline.orchestrator import CommandOrchestrator
+
+    for language, expected in (("es-MX", "es"), ("es", "es"), ("en", "en"), ("fr", "en"), ("", "en")):
+        assert live_delegation.unavailable_message(language) == BACKEND_TRANSLATIONS[expected]["delegation_unavailable"]
+        request = CommandRequest.create(text="x", profile_id="default", channel="chat", language=language or "en")
+        plan = CommandOrchestrator._out_of_scope_plan(request)
+        assert plan.direct_response == BACKEND_TRANSLATIONS[expected]["delegation_tool_out_of_scope"]
+
+
 def test_late_result_message_by_channel() -> None:
     assert "Telegram" in live_delegation.late_result_message("es", telegram_ready=True)
     assert "historial" in live_delegation.late_result_message("es", telegram_ready=False)
