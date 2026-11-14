@@ -1067,7 +1067,8 @@ def process_command(
         profile_id=request.profile_id,
         channel=request.channel,
     )
-    pending_response = _resolve_pending_confirmation_for_request(request)
+    # Delegated (scoped) text is never explicit user confirmation.
+    pending_response = None if request.allowed_tools is not None else _resolve_pending_confirmation_for_request(request)
     if pending_response is not None:
         _record_pipeline_response(request, pending_response)
         return pending_response

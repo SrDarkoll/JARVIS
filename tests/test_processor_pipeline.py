@@ -416,3 +416,50 @@ def test_runtime_planner_binds_only_allowed_tools(monkeypatch) -> None:
         processor._RuntimeGroqPlanner().plan(request, [])
 
     assert bound_names == [["a"]]
+
+
+def _pending_confirmation_setup(monkeypatch):
+    from core.brain import history_manager, tool_manager
+
+    invoked = []
+    monkeypatch.setattr(
+        tool_manager,
+        "_invocar_tool_entry",
+        lambda tool_name, *_a, **_k: invoked.append(tool_name) or "done",
+    )
+    monkeypatch.setattr(processor, "_record_pipeline_response", lambda *_a, **_k: None)
+    orchestrator = RecordingOrchestrator()
+    monkeypatch.setattr(processor, "_get_command_orchestrator", lambda: orchestrator)
+    history_manager._registrar_accion_pendiente_auth(
+        "admin", "matar_proceso", {"nombre_proceso": "notepad.exe"}, "mata el notepad"
+    )
+    return history_manager, invoked, orchestrator
+
+
+def test_scoped_request_never_resolves_pending_confirmation(monkeypatch) -> None:
+    history_manager, invoked, orchestrator = _pending_confirmation_setup(monkeypatch)
+    try:
+        request = processor._build_command_request(
+            "sí", profile_id="admin", channel="voice", allowed_tools={"obtener_clima"}
+        )
+        response = processor.process_command(request)
+
+        assert invoked == []
+        assert len(orchestrator.calls) == 1
+        assert response.text == "handled:voice"
+        assert history_manager._extraer_accion_pendiente_auth("admin", pop=False) is not None
+    finally:
+        history_manager._extraer_accion_pendiente_auth("admin")
+
+
+def test_unscoped_request_still_resolves_pending_confirmation(monkeypatch) -> None:
+    history_manager, invoked, orchestrator = _pending_confirmation_setup(monkeypatch)
+    try:
+        request = processor._build_command_request("sí", profile_id="admin", channel="chat")
+        processor.process_command(request)
+
+        assert invoked == ["matar_proceso"]
+        assert orchestrator.calls == []
+        assert history_manager._extraer_accion_pendiente_auth("admin", pop=False) is None
+    finally:
+        history_manager._extraer_accion_pendiente_auth("admin")
