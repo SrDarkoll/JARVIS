@@ -15,9 +15,16 @@ from core.jarvis_config import (
     GROQ_MODEL,
     GROQ_VISION_MODEL,
     PLUGINS_ENABLED,
+    RUNTIME_PATHS,
     VISION_ENABLED,
 )
-from core.llm_providers import provider_base_url, resolve_gemini_vision_model, resolve_llm_provider_config
+from core.llm_providers import (
+    ProviderSlot,
+    provider_headers,
+    resolve_gemini_vision_model,
+    resolve_llm_provider_config,
+)
+from core.llm_session import install_session_id
 from core.runtime_logger import log_warning
 from core.service_container import services
 from langchain_core.messages import AIMessage
@@ -222,6 +229,7 @@ class _OpenAICompatibleChatOpenAI:
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        default_headers: dict | None = None,
         _client=None,
         _tools: list | None = None,
         _tool_choice: str | None = None,
@@ -233,6 +241,7 @@ class _OpenAICompatibleChatOpenAI:
         self.api_key = api_key
         self.base_url = base_url
         self.timeout = timeout
+        self.default_headers = dict(default_headers or {})
         self._tools = list(_tools or [])
         self._tool_choice = _tool_choice
         self._extra_body = dict(_extra_body or {})
@@ -248,6 +257,8 @@ class _OpenAICompatibleChatOpenAI:
             client_kwargs["base_url"] = base_url
         if timeout:
             client_kwargs["timeout"] = timeout
+        if self.default_headers:
+            client_kwargs["default_headers"] = self.default_headers
         self._client = OpenAI(**client_kwargs)
 
     def bind_tools(self, tools, tool_choice: str = "auto", **kwargs):
@@ -260,6 +271,7 @@ class _OpenAICompatibleChatOpenAI:
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=self.timeout,
+            default_headers=self.default_headers,
             _client=self._client,
             _tools=list(tools or []),
             _tool_choice=tool_choice,
@@ -338,57 +350,62 @@ class LLMRuntimeCandidate:
     vision: object | None = field(default=None, repr=False)
     primary_provider: str = ""
     fallback_provider: str = ""
+    fallbacks: tuple = field(default=(), repr=False)
+    providers: tuple[str, ...] = ()
 
 
-def _build_llm_clients(provider_env: Mapping[str, str]):
+@dataclass(frozen=True, slots=True)
+class LLMClientSet:
+    """One client per provider slot plus the optional vision client."""
+
+    primary: object | None = field(default=None, repr=False)
+    fallbacks: tuple[object, ...] = field(default=(), repr=False)
+    vision: object | None = field(default=None, repr=False)
+    providers: tuple[str, ...] = ()
+
+
+def _build_llm_clients(provider_env: Mapping[str, str]) -> LLMClientSet:
     provider_config = resolve_llm_provider_config(provider_env)
-    if not provider_config.configured:
-        return None, None, None, "", ""
+    if not provider_config.configured or not provider_config.chain:
+        return LLMClientSet()
 
     chat_open_ai = _load_chat_openai()
+    session_id = install_session_id(RUNTIME_PATHS.home)
 
-    def create_client(model: str, api_key: str, provider: str):
-        return chat_open_ai(
-            model=model,
-            temperature=0,
-            api_key=api_key,
-            base_url=provider_base_url(provider),
-            timeout=10,
-            max_retries=0,
-        )
+    def create_client(model: str, slot: ProviderSlot):
+        kwargs = {
+            "model": model,
+            "temperature": 0,
+            "api_key": slot.api_key,
+            "base_url": slot.base_url,
+            "timeout": slot.timeout,
+            "max_retries": 0,
+        }
+        headers = provider_headers(slot, session_id=session_id)
+        if headers:
+            kwargs["default_headers"] = headers
+        return chat_open_ai(**kwargs)
 
-    primary = create_client(
-        provider_config.primary_model,
-        provider_config.primary_api_key,
-        provider_config.primary_provider,
-    )
+    chain = provider_config.chain
+    primary = create_client(chain[0].model, chain[0])
+
     vision = None
     if VISION_ENABLED:
-        vision_model = (
-            resolve_gemini_vision_model(provider_env)
-            if provider_config.primary_provider == "gemini"
-            else str(provider_env.get("JARVIS_GROQ_VISION_MODEL") or GROQ_VISION_MODEL)
-        )
-        vision = create_client(
-            vision_model,
-            provider_config.primary_api_key,
-            provider_config.primary_provider,
-        )
+        vision_slot = next((slot for slot in chain if slot.provider in {"gemini", "groq"}), None)
+        if vision_slot is not None:
+            vision_model = (
+                resolve_gemini_vision_model(provider_env)
+                if vision_slot.provider == "gemini"
+                else str(provider_env.get("JARVIS_GROQ_VISION_MODEL") or GROQ_VISION_MODEL)
+            )
+            vision = create_client(vision_model, vision_slot)
 
-    fallback = None
-    if provider_config.fallback_provider:
-        fallback = create_client(
-            provider_config.fallback_model,
-            provider_config.fallback_api_key,
-            provider_config.fallback_provider,
-        )
-
-    return (
-        primary,
-        fallback,
-        vision,
-        provider_config.primary_provider,
-        provider_config.fallback_provider,
+    fallbacks = tuple(create_client(slot.model, slot) for slot in chain[1:])
+    return LLMClientSet(
+        primary=primary,
+        fallbacks=fallbacks,
+        vision=vision,
+        providers=tuple(slot.provider for slot in chain),
     )
 
 
@@ -416,17 +433,19 @@ def _rebind_current_tools() -> None:
 def prepare_llm_runtime(env: Mapping[str, str]) -> LLMRuntimeCandidate:
     """Build and validate provider clients without mutating active state."""
 
-    primary, fallback, vision, primary_name, fallback_name = _build_llm_clients(env)
-    if primary is None:
+    clients = _build_llm_clients(env)
+    if clients.primary is None:
         raise LLMReconfigurationError("invalid_provider")
-    if not _validate_llm_candidate(primary):
+    if not _validate_llm_candidate(clients.primary):
         raise LLMReconfigurationError("provider_validation_failed")
     return LLMRuntimeCandidate(
-        primary=primary,
-        fallback=fallback,
-        vision=vision,
-        primary_provider=primary_name,
-        fallback_provider=fallback_name,
+        primary=clients.primary,
+        fallback=clients.fallbacks[0] if clients.fallbacks else None,
+        vision=clients.vision,
+        primary_provider=clients.providers[0] if clients.providers else "",
+        fallback_provider=clients.providers[1] if len(clients.providers) > 1 else "",
+        fallbacks=clients.fallbacks,
+        providers=clients.providers,
     )
 
 
@@ -440,6 +459,9 @@ def activate_llm_runtime(candidate: LLMRuntimeCandidate) -> dict[str, object]:
             "brain_vision": brain_state.llm_vision,
             "primary_provider": brain_state.llm_primary_provider,
             "fallback_provider": brain_state.llm_fallback_provider,
+            "brain_fallbacks": brain_state.llm_fallbacks,
+            "chain_providers": brain_state.llm_chain_providers,
+            "service_fallbacks": getattr(services, "llm_fallbacks", ()),
             "bound": brain_state.llm_with_tools,
             "service_llm": services.llm,
             "service_fallback": getattr(services, "llm_fallback", None),
@@ -448,6 +470,10 @@ def activate_llm_runtime(candidate: LLMRuntimeCandidate) -> dict[str, object]:
         try:
             brain_state.llm = services.llm = candidate.primary
             brain_state.llm_fallback = services.llm_fallback = candidate.fallback
+            brain_state.llm_fallbacks = services.llm_fallbacks = candidate.fallbacks or (
+                (candidate.fallback,) if candidate.fallback is not None else ()
+            )
+            brain_state.llm_chain_providers = candidate.providers
             brain_state.llm_vision = services.llm_vision = candidate.vision
             brain_state.llm_primary_provider = candidate.primary_provider
             brain_state.llm_fallback_provider = candidate.fallback_provider
@@ -455,6 +481,8 @@ def activate_llm_runtime(candidate: LLMRuntimeCandidate) -> dict[str, object]:
         except Exception as exc:
             brain_state.llm = previous["brain_llm"]
             brain_state.llm_fallback = previous["brain_fallback"]
+            brain_state.llm_fallbacks = previous["brain_fallbacks"]
+            brain_state.llm_chain_providers = previous["chain_providers"]
             brain_state.llm_vision = previous["brain_vision"]
             brain_state.llm_primary_provider = previous["primary_provider"]
             brain_state.llm_fallback_provider = previous["fallback_provider"]
@@ -462,6 +490,7 @@ def activate_llm_runtime(candidate: LLMRuntimeCandidate) -> dict[str, object]:
             services.llm = previous["service_llm"]
             services.llm_fallback = previous["service_fallback"]
             services.llm_vision = previous["service_vision"]
+            services.llm_fallbacks = previous["service_fallbacks"]
             raise LLMReconfigurationError("runtime_reconfigure_failed") from exc
 
         return {"provider": candidate.primary_provider, "runtime_ready": True}
@@ -504,7 +533,10 @@ def init_brain(app_ref):
         .replace("'", "")
     )
 
+    deepseek_key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip().replace('"', "").replace("'", "")
+
     provider_env = dict(os.environ)
+    provider_env["DEEPSEEK_API_KEY"] = deepseek_key
     provider_env["GROQ_API_KEY"] = g_key
     provider_env["GOOGLE_API_KEY"] = google_key
     provider_env["GEMINI_API_KEY"] = google_key
@@ -513,23 +545,25 @@ def init_brain(app_ref):
     bt = get_bt()
     print(bt["log_brain_init"].format(model=provider_config.primary_model or "unconfigured"))
 
-    (
-        brain_state.llm,
-        brain_state.llm_fallback,
-        brain_state.llm_vision,
-        brain_state.llm_primary_provider,
-        brain_state.llm_fallback_provider,
-    ) = _build_llm_clients(provider_env)
+    clients = _build_llm_clients(provider_env)
+    brain_state.llm = clients.primary
+    brain_state.llm_fallbacks = clients.fallbacks
+    brain_state.llm_fallback = clients.fallbacks[0] if clients.fallbacks else None
+    brain_state.llm_vision = clients.vision
+    brain_state.llm_chain_providers = clients.providers
+    brain_state.llm_primary_provider = clients.providers[0] if clients.providers else ""
+    brain_state.llm_fallback_provider = clients.providers[1] if len(clients.providers) > 1 else ""
 
     if not provider_config.configured:
         log_warning(
             "llm_api_key_missing",
-            error="API keys missing for both Google Gemini and Groq",
+            error="No LLM provider configured",
         )
 
     services.llm = brain_state.llm
     services.llm_vision = brain_state.llm_vision
     services.llm_fallback = brain_state.llm_fallback
+    services.llm_fallbacks = brain_state.llm_fallbacks
 
     # Load plugins
     plugin_tools = tool_manager._cargar_plugins_dinamicos(app_ref, base_tools) if PLUGINS_ENABLED else []

@@ -72,6 +72,7 @@ class ServiceContainer:
         self.llm: Any = None
         self.llm_vision: Any = None
         self.llm_fallback: Any = None
+        self.llm_fallbacks: tuple[Any, ...] = ()
         self.llm_with_tools: Any = None
 
         from services.reminder_service import reminder_service

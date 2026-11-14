@@ -22,9 +22,20 @@ PLUGIN_LOCK = threading.RLock()
 llm: Any = None
 llm_vision: Any = None
 llm_fallback: Any = None
+llm_fallbacks: tuple[Any, ...] = ()
 llm_with_tools: Any = None
 llm_primary_provider = ""
 llm_fallback_provider = ""
+llm_chain_providers: tuple[str, ...] = ()
+
+
+def fallback_models() -> tuple[Any, ...]:
+    """Fallback clients in chain order, bridging the legacy single-fallback slot."""
+    if llm_fallbacks:
+        return llm_fallbacks
+    if llm_fallback is not None:
+        return (llm_fallback,)
+    return ()
 
 # Tool Registry
 tools_list: list = []

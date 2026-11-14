@@ -369,7 +369,7 @@ def test_reconfigure_llm_runtime_swaps_only_after_validation(monkeypatch):
     monkeypatch.setattr(
         llm_engine,
         "_build_llm_clients",
-        lambda _env: (candidate, None, None, "groq", ""),
+        lambda _env: llm_engine.LLMClientSet(primary=candidate, providers=("groq",)),
     )
     monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda model: model is candidate)
     monkeypatch.setattr(llm_engine, "_rebind_current_tools", lambda: None)
@@ -394,7 +394,7 @@ def test_reconfigure_llm_runtime_preserves_previous_clients_on_failure(monkeypat
     monkeypatch.setattr(
         llm_engine,
         "_build_llm_clients",
-        lambda _env: (candidate, None, None, "gemini", ""),
+        lambda _env: llm_engine.LLMClientSet(primary=candidate, providers=("gemini",)),
     )
     monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda _model: False)
 
@@ -420,7 +420,7 @@ def test_reconfigure_llm_runtime_rolls_back_when_tool_rebind_fails(monkeypatch):
     monkeypatch.setattr(
         llm_engine,
         "_build_llm_clients",
-        lambda _env: (candidate, None, None, "groq", ""),
+        lambda _env: llm_engine.LLMClientSet(primary=candidate, providers=("groq",)),
     )
     monkeypatch.setattr(llm_engine, "_validate_llm_candidate", lambda _model: True)
     monkeypatch.setattr(
