@@ -364,3 +364,55 @@ def test_primary_failure_event_names_provider(monkeypatch) -> None:
         name == "llm_fallback_succeeded" and f.get("provider") == "gemini"
         for name, f in events
     )
+
+
+def test_runtime_planner_binds_only_allowed_tools(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import pytest
+    from core.brain import brain_state
+    from core.command_pipeline.models import CommandRequest
+    from core.errors import LLMServiceError
+    from langchain_core.messages import AIMessage
+
+    bound_names = []
+
+    class BoundModel:
+        def invoke(self, _messages):
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "b", "args": {}, "id": "call-1"}],
+            )
+
+    class PlainModel:
+        def bind_tools(self, tools, **_kwargs):
+            bound_names.append([tool.name for tool in tools])
+            return BoundModel()
+
+    tool_a = SimpleNamespace(name="a")
+    tool_b = SimpleNamespace(name="b")
+    registry = SimpleNamespace(
+        tools=(tool_a, tool_b),
+        by_name={"a": tool_a, "b": tool_b},
+    )
+    prebound_full = object()
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(
+        brain_state,
+        "get_tooling_snapshot",
+        lambda: (prebound_full, PlainModel(), registry),
+    )
+    monkeypatch.setattr(brain_state, "llm_fallbacks", ())
+    monkeypatch.setattr(brain_state, "llm_fallback", None)
+
+    request = CommandRequest.create(
+        text="hello",
+        profile_id="admin",
+        channel="voice",
+        language="en",
+        allowed_tools={"a"},
+    )
+    with pytest.raises(LLMServiceError):
+        processor._RuntimeGroqPlanner().plan(request, [])
+
+    assert bound_names == [["a"]]

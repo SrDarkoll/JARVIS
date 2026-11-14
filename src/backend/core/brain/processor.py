@@ -3,8 +3,9 @@ import queue
 import re
 import threading
 import time as _time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timedelta
+from typing import Any
 
 from core import core_tools, jarvis_state
 from core.app_config import get_default_location
@@ -30,6 +31,7 @@ from core.command_pipeline.models import (
     PlanSource,
 )
 from core.command_pipeline.orchestrator import CommandOrchestrator
+from core.command_pipeline.reasoning import ReasoningMode
 from core.command_pipeline.responses import ResponseComposer
 from core.command_pipeline.synthesis import GroqResponseSynthesizer
 from core.errors import (
@@ -747,8 +749,17 @@ def _chain_provider_name(index: int) -> str:
     return providers[index] if 0 <= index < len(providers) else "unknown"
 
 
-def _bind_fallback_tools(model, registry, *, needs_tools: bool):
-    """Bind registry tools to a fallback model when the request needs them."""
+def _bind_fallback_tools(model, registry, *, needs_tools: bool, tool_names=None):
+    """Bind registry tools to a chain model when the request needs them.
+
+    A non-None ``tool_names`` scopes the binding to exactly those registry
+    tools and always applies, regardless of ``needs_tools``.
+    """
+    if tool_names is not None:
+        scoped = [registry.by_name[n] for n in sorted(tool_names) if n in registry.by_name]
+        if scoped and hasattr(model, "bind_tools"):
+            return model.bind_tools(scoped, tool_choice="auto"), tuple(t.name for t in scoped)
+        return model, ()
     if needs_tools and registry.tools and hasattr(model, "bind_tools"):
         bound = model.bind_tools(list(registry.tools), tool_choice="auto")
         return bound, tuple(registry.by_name)
@@ -776,7 +787,17 @@ class _RuntimeGroqPlanner:
             )
 
         needs_tools = necesita_tools(request.text)
-        if not needs_tools and plain_model is not None:
+        scope = request.allowed_tools
+        if scope is not None:
+            if plain_model is None:
+                raise LLMUnavailableError
+            model, allowed_tools = _bind_fallback_tools(
+                plain_model,
+                registry,
+                needs_tools=needs_tools,
+                tool_names=scope,
+            )
+        elif not needs_tools and plain_model is not None:
             model = plain_model
             allowed_tools: tuple[str, ...] = ()
         else:
@@ -810,6 +831,7 @@ class _RuntimeGroqPlanner:
                     raw_model,
                     registry,
                     needs_tools=needs_tools,
+                    tool_names=scope,
                 )
                 plan = GroqPlanner(
                     fallback_model,
@@ -956,6 +978,9 @@ def _build_command_request(
     profile_id: str,
     channel: str,
     request_id: str | None = None,
+    reasoning_mode: ReasoningMode | None = None,
+    allowed_tools: Iterable[str] | None = None,
+    extra_metadata: Mapping[str, Any] | None = None,
 ) -> CommandRequest:
     pid = jarvis_state.normalize_profile_id(
         profile_id,
@@ -971,7 +996,10 @@ def _build_command_request(
             "default_location": get_default_location(),
             "spotify_pending_choices": pending_spotify_selections.snapshot(pid),
             "last_media_source": get_last_media_source(pid),
+            **(extra_metadata or {}),
         },
+        reasoning_mode=reasoning_mode,
+        allowed_tools=allowed_tools,
     )
 
 

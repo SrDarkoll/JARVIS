@@ -6,6 +6,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from utils.jarvis_i18n import BACKEND_TRANSLATIONS
+
 from core.command_pipeline.execution import validate_plan_operations
 from core.command_pipeline.models import (
     ActionPlan,
@@ -78,6 +80,24 @@ class CommandOrchestrator:
             return history
         return self._message_factory(request, history)
 
+    def _effective_mode(self, request: CommandRequest) -> ReasoningMode:
+        return request.reasoning_mode or self._reasoning_mode
+
+    @staticmethod
+    def _out_of_scope(request: CommandRequest, plan: ActionPlan | None) -> bool:
+        if plan is None or request.allowed_tools is None:
+            return False
+        return any(step.tool_name not in request.allowed_tools for step in plan.steps)
+
+    @staticmethod
+    def _out_of_scope_plan(request: CommandRequest) -> ActionPlan:
+        language = "es" if request.language.startswith("es") else "en"
+        return ActionPlan(
+            request_id=request.request_id,
+            source=PlanSource.GROQ,
+            direct_response=BACKEND_TRANSLATIONS[language]["delegation_tool_out_of_scope"],
+        )
+
     @staticmethod
     def _offline_plan(request: CommandRequest) -> ActionPlan:
         if request.language.startswith("es"):
@@ -118,13 +138,16 @@ class CommandOrchestrator:
     ) -> ActionPlan:
         if candidate is not None:
             self._validate_plan(request, candidate)
-            if candidate.conversation_only:
+            if self._out_of_scope(request, candidate):
+                candidate = None
+            elif candidate.conversation_only:
                 return candidate
 
-        if self._reasoning_mode is ReasoningMode.OFFLINE:
+        mode = self._effective_mode(request)
+        if mode is ReasoningMode.OFFLINE:
             return candidate or self._offline_plan(request)
         if (
-            self._reasoning_mode is ReasoningMode.HYBRID
+            mode is ReasoningMode.HYBRID
             and candidate is not None
             and not any(step.tool_name in _REASONED_CANDIDATE_TOOLS for step in candidate.steps)
         ):
@@ -135,7 +158,7 @@ class CommandOrchestrator:
                 "type": "status",
                 "text": "planning",
                 "request_id": request.request_id,
-                "reasoning_mode": self._reasoning_mode.value,
+                "reasoning_mode": mode.value,
                 "candidate": candidate is not None,
             }
         )
@@ -153,13 +176,15 @@ class CommandOrchestrator:
                     "type": "status",
                     "text": "reasoning degraded",
                     "request_id": request.request_id,
-                    "reasoning_mode": self._reasoning_mode.value,
+                    "reasoning_mode": mode.value,
                     "fallback": "deterministic",
                 }
             )
             return candidate
 
         self._validate_plan(request, planned)
+        if self._out_of_scope(request, planned):
+            return self._out_of_scope_plan(request)
         if candidate is not None and self._keep_action_candidate(candidate, planned):
             return candidate
         return planned

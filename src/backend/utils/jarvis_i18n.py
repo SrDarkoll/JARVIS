@@ -366,6 +366,7 @@ These are real memories. Use them naturally. If the active user is not the {owne
         "log_telegram_active": "[JARVIS] Telegram bot active.",
         "log_morning_briefing": "  [SCHEDULER] Launching scheduled morning briefing...",
         "log_ready_to_serve": "Ready to serve.",
+        "delegation_tool_out_of_scope": "That action is not available when reasoning is delegated from voice.",
     },
     "es": {
         "status_active": "ACTIVO",
@@ -647,5 +648,6 @@ Estas son memorias reales. Úsalas con naturalidad. Si el usuario activo no es e
         "log_telegram_active": "[JARVIS] Bot de Telegram activo.",
         "log_morning_briefing": "  [SCHEDULER] Lanzando briefing matutino programado...",
         "log_ready_to_serve": "Listo para servir.",
+        "delegation_tool_out_of_scope": "Esa acción no está disponible cuando delego el razonamiento desde la voz.",
     },
 }

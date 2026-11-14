@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from core import jarvis_state
+from core.command_pipeline.reasoning import ReasoningMode
 
 
 class PlanSource(StrEnum):
@@ -83,6 +84,8 @@ class CommandRequest:
     language: str
     received_at: datetime
     metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    reasoning_mode: ReasoningMode | None = None
+    allowed_tools: frozenset[str] | None = None
 
     @classmethod
     def create(
@@ -94,6 +97,8 @@ class CommandRequest:
         language: str = "en",
         request_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        reasoning_mode: ReasoningMode | None = None,
+        allowed_tools: Iterable[str] | None = None,
     ) -> CommandRequest:
         normalized_text = str(text or "").strip()
         if not normalized_text:
@@ -107,6 +112,8 @@ class CommandRequest:
             language=str(language or "en").strip().lower(),
             received_at=datetime.now(UTC),
             metadata=_frozen_mapping(metadata),
+            reasoning_mode=None if reasoning_mode is None else ReasoningMode(reasoning_mode),
+            allowed_tools=None if allowed_tools is None else frozenset(allowed_tools),
         )
 
 

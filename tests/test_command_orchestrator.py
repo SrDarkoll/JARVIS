@@ -626,3 +626,77 @@ def test_hybrid_non_music_candidate_still_skips_the_llm() -> None:
     orchestrator.process(_request())
 
     assert executor.calls == [("request-1", "w-1", "obtener_clima")]
+
+
+def _weather_plan(request_id: str = "request-1", source=PlanSource.DETERMINISTIC) -> ActionPlan:
+    return ActionPlan(
+        request_id=request_id,
+        source=source,
+        steps=(ActionStep(step_id="step-1", tool_name="obtener_clima", arguments={"ciudad": "Matamoros"}),),
+    )
+
+
+def _pc_plan(request_id: str = "request-1", source=PlanSource.DETERMINISTIC) -> ActionPlan:
+    return ActionPlan(
+        request_id=request_id,
+        source=source,
+        steps=(ActionStep(step_id="step-1", tool_name="controlar_pc", arguments={}),),
+    )
+
+
+def test_request_reasoning_mode_overrides_orchestrator_mode() -> None:
+    groq = FakeGroqPlanner(_weather_plan(source=PlanSource.GROQ))
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(_weather_plan()),
+        groq=groq,
+        executor=RecordingExecutor(),
+        reasoning_mode=ReasoningMode.HYBRID,
+    )
+
+    orchestrator.process(_request())
+    assert groq.calls == []
+
+    orchestrator.process(replace(_request(), reasoning_mode=ReasoningMode.ALWAYS))
+    assert len(groq.calls) == 1
+
+
+def test_out_of_scope_candidate_is_discarded() -> None:
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(_pc_plan()),
+        groq=FakeGroqPlanner(_weather_plan(source=PlanSource.GROQ)),
+        executor=executor,
+    )
+    request = CommandRequest.create(
+        text="clima", profile_id="admin", channel="voice", language="es",
+        request_id="request-1", allowed_tools={"obtener_clima"},
+    )
+
+    orchestrator.process(request)
+
+    assert executor.calls == [("request-1", "step-1", "obtener_clima")]
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("es", "Esa acción no está disponible cuando delego el razonamiento desde la voz."),
+        ("en", "That action is not available when reasoning is delegated from voice."),
+    ],
+)
+def test_out_of_scope_llm_plan_is_not_executed(language, expected) -> None:
+    executor = RecordingExecutor()
+    orchestrator = _orchestrator(
+        deterministic=FakeDeterministicPlanner(None),
+        groq=FakeGroqPlanner(_pc_plan(source=PlanSource.GROQ)),
+        executor=executor,
+    )
+    request = CommandRequest.create(
+        text="apaga todo", profile_id="admin", channel="voice", language=language,
+        request_id="request-1", allowed_tools={"obtener_clima"},
+    )
+
+    response = orchestrator.process(request)
+
+    assert executor.calls == []
+    assert response.text == expected
