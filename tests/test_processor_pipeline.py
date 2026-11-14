@@ -232,3 +232,135 @@ def test_legacy_pipeline_is_only_used_when_explicitly_enabled(
     )
 
     assert processor.procesar_mensaje("hola") == ("legacy", True)
+
+
+def _chain_models(calls, final_text):
+    from langchain_core.messages import AIMessage
+
+    def failing(name):
+        class _Failing:
+            def invoke(self, _messages):
+                calls.append(name)
+                raise RuntimeError(f"{name} unavailable")
+
+        return _Failing()
+
+    class _Working:
+        def invoke(self, _messages):
+            calls.append("f2")
+            return AIMessage(content=final_text)
+
+    return failing("primary"), failing("f1"), _Working()
+
+
+def _install_chain(monkeypatch, primary, fallbacks, *, bound=True):
+    from core.brain import brain_state
+    from core.command_pipeline.tool_registry import ToolRegistryService
+
+    registry = ToolRegistryService().snapshot()
+    monkeypatch.setattr(processor, "_llm_calls_disabled_for_tests", lambda: False)
+    monkeypatch.setattr(
+        brain_state,
+        "get_tooling_snapshot",
+        lambda: (primary if bound else None, primary, registry),
+    )
+    monkeypatch.setattr(brain_state, "llm_fallbacks", tuple(fallbacks))
+    monkeypatch.setattr(brain_state, "llm_fallback", None)
+
+
+def _chain_request():
+    from core.command_pipeline.models import CommandRequest
+
+    return CommandRequest.create(
+        text="hello",
+        profile_id="admin",
+        channel="web",
+        language="en",
+    )
+
+
+def test_runtime_planner_walks_full_chain(monkeypatch) -> None:
+    calls = []
+    primary, f1, f2 = _chain_models(calls, "f2 answer")
+    _install_chain(monkeypatch, primary, (f1, f2))
+
+    plan = processor._RuntimeGroqPlanner().plan(_chain_request(), [])
+
+    assert plan.direct_response == "f2 answer"
+    assert calls == ["primary", "f1", "f2"]
+
+
+def test_runtime_planner_raises_service_error_when_chain_exhausted(
+    monkeypatch,
+) -> None:
+    import pytest
+
+    from core.errors import LLMServiceError
+
+    calls = []
+    primary, f1, _f2 = _chain_models(calls, "unused")
+    _install_chain(monkeypatch, primary, (f1,))
+
+    with pytest.raises(LLMServiceError):
+        processor._RuntimeGroqPlanner().plan(_chain_request(), [])
+    assert calls == ["primary", "f1"]
+
+
+def test_runtime_synthesizer_walks_full_chain(monkeypatch) -> None:
+    from core.command_pipeline.models import ActionPlan, PlanSource
+
+    calls = []
+    primary, f1, f2 = _chain_models(calls, "f2 synthesis")
+    _install_chain(monkeypatch, primary, (f1, f2), bound=False)
+    request = _chain_request()
+    plan = ActionPlan(
+        request_id=request.request_id,
+        source=PlanSource.GROQ,
+        direct_response="",
+    )
+
+    result = processor._RuntimeResponseSynthesizer().synthesize(
+        request, plan, (), "deterministic fallback"
+    )
+
+    assert result == "f2 synthesis"
+    assert calls == ["primary", "f1", "f2"]
+
+
+def test_primary_failure_event_names_provider(monkeypatch) -> None:
+    from core.brain import brain_state
+
+    events = []
+
+    class Boom:
+        def invoke(self, _messages):
+            raise PermissionError("denied")
+
+    class Ok:
+        def invoke(self, _messages):
+            from langchain_core.messages import AIMessage
+
+            return AIMessage(content="ok")
+
+    _install_chain(monkeypatch, Boom(), (Ok(),))
+    monkeypatch.setattr(brain_state, "llm_chain_providers", ("deepseek", "gemini"))
+    monkeypatch.setattr(
+        processor,
+        "obs_event",
+        lambda name, **fields: events.append((name, fields)),
+    )
+
+    processor._RuntimeGroqPlanner().plan(_chain_request(), [])
+
+    assert (
+        "primary_planner_failed",
+        {
+            "provider": "deepseek",
+            "error": "PermissionError",
+            "request_id": events[0][1]["request_id"],
+        },
+    ) in events
+    assert any(
+        name == "llm_fallback_succeeded" and f.get("provider") == "gemini"
+        for name, f in events
+    )

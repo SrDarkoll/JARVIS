@@ -616,14 +616,24 @@ def _ejecutar_cerebro_llm(user_input: str, pid: str) -> tuple[str, bool]:
         reply = brain_utils._limpiar_thinking(response.content or "")
     except Exception as exc:
         obs_event("llm_brain_error", error=type(exc).__name__)
-        fallback = brain_state.llm_fallback or brain_state.llm
-        if fallback is None:
+        candidates = [*brain_state.fallback_models()]
+        if brain_state.llm is not None:
+            candidates.append(brain_state.llm)
+        if not candidates:
             raise LLMServiceError from None
-        fallback_response = _invoke_model(
-            fallback,
-            messages,
-            event="llm_fallback_invoke_failed",
-        )
+        fallback_response = None
+        for candidate in candidates:
+            try:
+                fallback_response = _invoke_model(
+                    candidate,
+                    messages,
+                    event="llm_fallback_invoke_failed",
+                )
+                break
+            except Exception:
+                continue
+        if fallback_response is None:
+            raise LLMServiceError from None
         reply = brain_utils._limpiar_thinking(fallback_response.content or "")
 
     return _finalize_reply(reply, messages, user_input, pid, "final")
@@ -732,6 +742,19 @@ def _legacy_pipeline_enabled() -> bool:
     }
 
 
+def _chain_provider_name(index: int) -> str:
+    providers = brain_state.llm_chain_providers
+    return providers[index] if 0 <= index < len(providers) else "unknown"
+
+
+def _bind_fallback_tools(model, registry, *, needs_tools: bool):
+    """Bind registry tools to a fallback model when the request needs them."""
+    if needs_tools and registry.tools and hasattr(model, "bind_tools"):
+        bound = model.bind_tools(list(registry.tools), tool_choice="auto")
+        return bound, tuple(registry.by_name)
+    return model, ()
+
+
 class _RuntimeGroqPlanner:
     """Build a planner from the latest primary and fallback LLMs."""
 
@@ -772,42 +795,47 @@ class _RuntimeGroqPlanner:
         except Exception as exc:
             obs_event(
                 "primary_planner_failed",
+                provider=_chain_provider_name(0),
                 error=type(exc).__name__,
                 request_id=request.request_id,
             )
 
-        fallback_model = brain_state.llm_fallback
-        if fallback_model is None:
+        fallbacks = brain_state.fallback_models()
+        if not fallbacks:
             raise LLMServiceError from None
-        fallback_allowed_tools: tuple[str, ...] = ()
-        try:
-            if needs_tools and registry.tools and hasattr(fallback_model, "bind_tools"):
-                fallback_model = fallback_model.bind_tools(
-                    list(registry.tools),
-                    tool_choice="auto",
+        for index, raw_model in enumerate(fallbacks):
+            provider = _chain_provider_name(index + 1)
+            try:
+                fallback_model, fallback_allowed_tools = _bind_fallback_tools(
+                    raw_model,
+                    registry,
+                    needs_tools=needs_tools,
                 )
-                fallback_allowed_tools = tuple(registry.by_name)
-            plan = GroqPlanner(
-                fallback_model,
-                allowed_tools=fallback_allowed_tools,
-            ).plan(
-                request,
-                messages,
-                candidate_plan=candidate_plan,
-            )
+                plan = GroqPlanner(
+                    fallback_model,
+                    allowed_tools=fallback_allowed_tools,
+                ).plan(
+                    request,
+                    messages,
+                    candidate_plan=candidate_plan,
+                )
+            except Exception as exc:
+                obs_event(
+                    "fallback_planner_failed",
+                    provider=provider,
+                    index=index,
+                    error=type(exc).__name__,
+                    request_id=request.request_id,
+                )
+                continue
             obs_event(
                 "llm_fallback_succeeded",
                 stage="planner",
+                provider=provider,
                 request_id=request.request_id,
             )
             return plan
-        except Exception as exc:
-            obs_event(
-                "fallback_planner_failed",
-                error=type(exc).__name__,
-                request_id=request.request_id,
-            )
-            raise LLMServiceError from None
+        raise LLMServiceError from None
 
 
 class _RuntimeResponseSynthesizer:
@@ -837,33 +865,40 @@ class _RuntimeResponseSynthesizer:
         except Exception as exc:
             obs_event(
                 "primary_response_synthesis_failed",
+                provider=_chain_provider_name(0),
                 error=type(exc).__name__,
                 request_id=request.request_id,
             )
 
-        fallback_model = brain_state.llm_fallback
-        if fallback_model is None:
+        fallbacks = brain_state.fallback_models()
+        if not fallbacks:
             raise LLMServiceError from None
-        try:
-            response = GroqResponseSynthesizer(fallback_model).synthesize(
-                request,
-                plan,
-                receipts,
-                fallback_text,
-            )
+        for index, fallback_model in enumerate(fallbacks):
+            provider = _chain_provider_name(index + 1)
+            try:
+                response = GroqResponseSynthesizer(fallback_model).synthesize(
+                    request,
+                    plan,
+                    receipts,
+                    fallback_text,
+                )
+            except Exception as exc:
+                obs_event(
+                    "fallback_response_synthesis_failed",
+                    provider=provider,
+                    index=index,
+                    error=type(exc).__name__,
+                    request_id=request.request_id,
+                )
+                continue
             obs_event(
                 "llm_fallback_succeeded",
                 stage="response_synthesis",
+                provider=provider,
                 request_id=request.request_id,
             )
             return response
-        except Exception as exc:
-            obs_event(
-                "fallback_response_synthesis_failed",
-                error=type(exc).__name__,
-                request_id=request.request_id,
-            )
-            raise LLMServiceError from None
+        raise LLMServiceError from None
 
 
 def _build_planner_messages(
